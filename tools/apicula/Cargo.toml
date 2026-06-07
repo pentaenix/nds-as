@@ -1,0 +1,19 @@
+[package]
+name = "apicula"
+version = "0.1.1-dev"
+authors = ["scurest <scurest@users.noreply.github.com>"]
+license = "0BSD"
+edition = "2021"
+
+[dependencies]
+cgmath = "0.16.0"
+glium = { git = "https://github.com/scurest/glium.git", branch = "vsync" }
+json = "0.12.4"
+log = { version = "0.4.6", features = ["std"] }
+png = "0.17"
+termcolor = "1"
+time = "0.1.36"
+wild = "2.0.2"
+
+[profile.release]
+panic = "abort"
