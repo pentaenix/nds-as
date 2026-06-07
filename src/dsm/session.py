@@ -3,12 +3,10 @@ from __future__ import annotations
 
 import json
 import zipfile
-from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from .asset_graph import AssetGraph, AssetRelation
 from .scanner import Asset
 
 Progress = Callable[[str], None]
@@ -24,7 +22,6 @@ def save_session_zip(
     path: str | Path,
     *,
     assets: list[Asset],
-    graph: AssetGraph,
     rom_path: str | None,
     profile_text: str = "",
     mapping_id: str = "",
@@ -33,21 +30,15 @@ def save_session_zip(
 ) -> Path:
     """Write a self-contained DSM session.
 
-    The session contains the detected asset payloads and the current relationship
-    graph. It intentionally does not store or require the original ROM after it is
-    created. Sessions may contain copyrighted extracted data, so the repo .gitignore
-    must keep saves/ out of version control.
+    The session contains the detected asset payloads. It intentionally does not
+    store or require the original ROM after it is created. Sessions may contain
+    copyrighted extracted data, so the repo .gitignore must keep saves/ out of
+    version control.
     """
     target = Path(path)
     if target.suffix.lower() not in {".dsmsession", ".zip"}:
         target = target.with_suffix(".dsmsession")
     target.parent.mkdir(parents=True, exist_ok=True)
-
-    rels = {
-        source: [asdict(row) for row in rows]
-        for source, rows in graph.relations.items()
-    }
-    groups = {key: list(ids) for key, ids in graph.groups.items()}
 
     manifest_assets = []
     total = len(assets)
@@ -90,7 +81,6 @@ def save_session_zip(
             "profile_text": profile_text,
             "mapping_id": mapping_id,
             "pinned_texture_asset_id": pinned_texture_asset_id,
-            "graph": {"relations": rels, "groups": groups},
             "assets": manifest_assets,
         }
         zf.writestr("manifest.json", json.dumps(manifest, indent=2))
@@ -134,21 +124,6 @@ def load_session_zip(path: str | Path, *, progress: Progress | None = None) -> d
                 mapping_label=str(raw.get("mapping_label", "")),
                 mapping_confidence=str(raw.get("mapping_confidence", "")),
             ))
-        graph = AssetGraph()
-        graph_data = manifest.get("graph", {}) or {}
-        for key, ids in (graph_data.get("groups", {}) or {}).items():
-            graph.groups[str(key)] = [str(x) for x in ids]
-        for source_id, rows in (graph_data.get("relations", {}) or {}).items():
-            graph.relations[str(source_id)] = [
-                AssetRelation(
-                    target_id=str(row.get("target_id", "")),
-                    relation=str(row.get("relation", "related")),
-                    score=int(row.get("score", 0)),
-                    reason=str(row.get("reason", "")),
-                )
-                for row in rows
-                if row.get("target_id")
-            ]
     if progress:
-        progress(f"Session loaded: {len(assets)} asset(s), {sum(len(v) for v in graph.relations.values())} relationship edge(s).")
-    return {"manifest": manifest, "assets": assets, "graph": graph, "path": source}
+        progress(f"Session loaded: {len(assets)} asset(s).")
+    return {"manifest": manifest, "assets": assets, "path": source}

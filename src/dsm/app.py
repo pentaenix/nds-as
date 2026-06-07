@@ -25,14 +25,13 @@ from .exporter import (
     texture_outputs,
 )
 from .nitro_names import asset_browser_name, asset_filename_label, extract_nitro_names, texture_match_report
-from .asset_resolver import build_related_assets, pokemon_path_texture_candidates, texture_matches_for_model
-from .asset_graph import AssetGraph, build_asset_graph_for_selected, graph_to_manifest
+from .asset_resolver import MODEL_ANIMATION_MAGICS, build_related_assets, folder_sibling_assets, pokemon_path_texture_candidates, texture_matches_for_model
 from .session import save_session_zip, load_session_zip
 from .nds import NDSRom
 from .profiles import detect_profile
 from .mapping import choose_mapping, mapping_summary
 from .scanner import Asset, asset_search_text, filter_assets, filter_assets_by_types, filter_assets_indexed, scan_nds_path
-from .nitro_textures import decode_btx_images, make_contact_sheet, save_decoded_images
+from .nitro_textures import decode_btx_images, decode_guided_tex0_images, make_contact_sheet, parse_tex0_manifest, save_decoded_images
 from .texture_library import TextureLibrary, TextureLibraryStore
 from .model_texture_resolver import resolve_model_textures, write_resolution_images
 from .nitro_2d import decode_nitro2d_preview, decode_nitro2d_related_preview, save_preview_images
@@ -40,7 +39,7 @@ from .util import human_size
 from .install import project_root
 
 try:
-    from PySide6.QtCore import Qt, QThread, Signal, QTimer, QEvent
+    from PySide6.QtCore import Qt, QThread, Signal, QTimer, QEvent, QSize, QPoint
     from PySide6.QtGui import QAction, QPixmap, QColor, QBrush, QGuiApplication, QPainter, QPalette, QSurfaceFormat, QWheelEvent
     from PySide6.QtWidgets import (
         QApplication,
@@ -74,6 +73,7 @@ try:
         QStyle,
         QFrame,
         QGridLayout,
+        QSizePolicy,
     )
 except Exception as exc:  # pragma: no cover - only used when UI deps are absent.
     raise SystemExit(
@@ -198,7 +198,7 @@ class ScanWorker(QThread):
 
     def run(self) -> None:
         try:
-            self.progress.emit("Fast scan: reading ROM filesystem and known containers only. Relationship graph and mapped tree leaves are skipped during load.")
+            self.progress.emit("Fast scan: reading ROM filesystem and known containers only. Mapped tree leaves are skipped during load.")
             assets = scan_nds_path(
                 self.rom_path,
                 progress=self.progress.emit,
@@ -211,42 +211,15 @@ class ScanWorker(QThread):
             self.failed.emit(str(exc))
 
 
-class RelationshipWorker(QThread):
-    progress = Signal(str)
-    finished_ok = Signal(object)
-    failed = Signal(str)
-
-    def __init__(self, assets: list[Asset], selected_ids: list[str], texture_library: TextureLibrary | None = None):
-        super().__init__()
-        self.assets = list(assets)
-        self.selected_ids = list(selected_ids)
-        self.texture_library = texture_library
-
-    def run(self) -> None:
-        try:
-            graph = build_asset_graph_for_selected(
-                self.assets,
-                self.selected_ids,
-                progress=self.progress.emit,
-                texture_library=self.texture_library,
-            )
-            self.finished_ok.emit(graph)
-        except Exception as exc:
-            self.failed.emit(str(exc))
-
-
-
-
 class SessionSaveWorker(QThread):
     progress = Signal(str)
     finished_ok = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, target: Path, assets: list[Asset], graph: AssetGraph, *, rom_path: str | None, profile_text: str, mapping_id: str, pinned_texture_asset_id: str | None):
+    def __init__(self, target: Path, assets: list[Asset], *, rom_path: str | None, profile_text: str, mapping_id: str, pinned_texture_asset_id: str | None):
         super().__init__()
         self.target = target
         self.assets = list(assets)
-        self.graph = graph
         self.rom_path = rom_path
         self.profile_text = profile_text
         self.mapping_id = mapping_id
@@ -257,7 +230,6 @@ class SessionSaveWorker(QThread):
             written = save_session_zip(
                 self.target,
                 assets=self.assets,
-                graph=self.graph,
                 rom_path=self.rom_path,
                 profile_text=self.profile_text,
                 mapping_id=self.mapping_id,
@@ -311,7 +283,7 @@ class PreviewWorker(QThread):
     finished_ok = Signal(str, object)
     failed = Signal(str, str)
 
-    def __init__(self, asset: Asset, out_dir: Path, all_assets: list[Asset], pinned_texture_asset_id: str | None = None, graph_related_assets: list[Asset] | None = None):
+    def __init__(self, asset: Asset, out_dir: Path, all_assets: list[Asset], pinned_texture_asset_id: str | None = None):
         super().__init__()
         self.asset = asset
         self.out_dir = out_dir
@@ -319,7 +291,6 @@ class PreviewWorker(QThread):
         # Kept for geometry-only fallback when textured preview fails. Normal model
         # preview runs texture resolution automatically via TextureResolveWorker.
         self.pinned_texture_asset_id = pinned_texture_asset_id
-        self.graph_related_assets = list(graph_related_assets or [])
 
     def run(self) -> None:
         try:
@@ -349,7 +320,6 @@ class TextureResolveWorker(QThread):
         out_dir: Path,
         all_assets: list[Asset],
         pinned_texture_asset_id: str | None = None,
-        graph_related_assets: list[Asset] | None = None,
         *,
         texture_library: TextureLibrary | None = None,
         texture_store: TextureLibraryStore | None = None,
@@ -359,7 +329,6 @@ class TextureResolveWorker(QThread):
         self.out_dir = out_dir
         self.all_assets = list(all_assets)
         self.pinned_texture_asset_id = pinned_texture_asset_id
-        self.graph_related_assets = list(graph_related_assets or [])
         self.texture_library = texture_library
         self.texture_store = texture_store
 
@@ -423,9 +392,13 @@ class TextureResolveWorker(QThread):
             else:
                 self.progress.emit("Set Textures: no exact verified texture binding found. DSM will not pin a fuzzy candidate.")
 
-            # Keep animation siblings deterministic/safe: same folder/container only.
-            for item in self.graph_related_assets:
-                if item.magic in {"BCA0", "BTA0", "BTP0", "BMA0", "BVA0", "BPC0"} and item.asset_id != self.asset.asset_id:
+            for item in folder_sibling_assets(
+                self.asset,
+                self.all_assets,
+                allowed_magics=MODEL_ANIMATION_MAGICS,
+                limit=16,
+            ):
+                if item.asset_id != self.asset.asset_id:
                     siblings.append(item)
             seen = {self.asset.asset_id}
             unique_siblings = []
@@ -657,6 +630,146 @@ def _qcolor_rgbf(hex_color: str) -> tuple[float, float, float, float]:
     return color.redF(), color.greenF(), color.blueF(), 1.0
 
 
+class PreviewImageLabel(QLabel):
+    """Image viewport that zooms without changing layout/window size."""
+
+    def __init__(self):
+        super().__init__()
+        self._preview_pixmap: QPixmap | None = None
+        self._pan_x = 0
+        self._pan_y = 0
+        self._dragging = False
+        self._drag_global_start = QPoint()
+        self._pan_drag_start = (0, 0)
+        self.setAlignment(Qt.AlignCenter)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
+        self.setMinimumSize(0, 0)
+        self.setMouseTracking(True)
+        self.setStyleSheet("background: transparent;")
+
+    def sizeHint(self) -> QSize:
+        return QSize(0, 0)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(0, 0)
+
+    def can_pan(self) -> bool:
+        if self._preview_pixmap is None or self._preview_pixmap.isNull():
+            return False
+        return self._preview_pixmap.width() > self.width() or self._preview_pixmap.height() > self.height()
+
+    def is_panning(self) -> bool:
+        return self._dragging
+
+    def reset_pan(self) -> None:
+        self._pan_x = 0
+        self._pan_y = 0
+        self._dragging = False
+        self.unsetCursor()
+
+    def set_preview_pixmap(self, pixmap: QPixmap | None) -> None:
+        self._preview_pixmap = pixmap
+        self.clamp_pan()
+        self.update()
+
+    def clear(self) -> None:
+        self._preview_pixmap = None
+        self.reset_pan()
+        super().clear()
+
+    def clamp_pan(self) -> None:
+        if self._preview_pixmap is None or self._preview_pixmap.isNull():
+            self._pan_x = 0
+            self._pan_y = 0
+            return
+        pw = self._preview_pixmap.width()
+        ph = self._preview_pixmap.height()
+        ww = max(1, self.width())
+        wh = max(1, self.height())
+        if pw <= ww:
+            self._pan_x = 0
+        else:
+            left = (ww - pw) // 2 + self._pan_x
+            if left > 0:
+                self._pan_x -= left
+            right = left + pw
+            if right < ww:
+                self._pan_x += ww - right
+        if ph <= wh:
+            self._pan_y = 0
+        else:
+            top = (wh - ph) // 2 + self._pan_y
+            if top > 0:
+                self._pan_y -= top
+            bottom = top + ph
+            if bottom < wh:
+                self._pan_y += wh - bottom
+
+    def start_pan_at_global(self, global_pos: QPoint) -> bool:
+        if not self.can_pan():
+            return False
+        self._dragging = True
+        self._drag_global_start = QPoint(global_pos)
+        self._pan_drag_start = (self._pan_x, self._pan_y)
+        self.setCursor(Qt.ClosedHandCursor)
+        return True
+
+    def move_pan_at_global(self, global_pos: QPoint) -> None:
+        if not self._dragging:
+            return
+        delta = global_pos - self._drag_global_start
+        self._pan_x = self._pan_drag_start[0] + delta.x()
+        self._pan_y = self._pan_drag_start[1] + delta.y()
+        self.clamp_pan()
+        self.update()
+
+    def end_pan(self) -> None:
+        self._dragging = False
+        self._update_cursor()
+
+    def _update_cursor(self) -> None:
+        if self.can_pan():
+            self.setCursor(Qt.OpenHandCursor)
+        else:
+            self.unsetCursor()
+
+    def _event_global_pos(self, event) -> QPoint:
+        if hasattr(event, "globalPosition"):
+            return event.globalPosition().toPoint()
+        return event.globalPos()
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton and self.start_pan_at_global(self._event_global_pos(event)):
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._dragging:
+            self.move_pan_at_global(self._event_global_pos(event))
+            event.accept()
+            return
+        self._update_cursor()
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton and self._dragging:
+            self.end_pan()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event) -> None:
+        if self._preview_pixmap is None or self._preview_pixmap.isNull():
+            return
+        painter = QPainter(self)
+        painter.setClipRect(self.rect())
+        x = (self.width() - self._preview_pixmap.width()) // 2 + self._pan_x
+        y = (self.height() - self._preview_pixmap.height()) // 2 + self._pan_y
+        painter.drawPixmap(x, y, self._preview_pixmap)
+        painter.end()
+
+
 class PreviewCanvas(QFrame):
     """Painted viewport background for empty/image preview modes."""
 
@@ -840,11 +953,10 @@ class PreviewWidget(QWidget):
             placeholder.setAttribute(Qt.WA_TransparentForMouseEvents, True)
             canvas_layout.addWidget(placeholder, 0, 0)
 
-        self._image_label = QLabel()
-        self._image_label.setAlignment(Qt.AlignCenter)
-        self._image_label.setWordWrap(True)
-        self._image_label.setStyleSheet("background: transparent;")
+        self._image_label = PreviewImageLabel()
         canvas_layout.addWidget(self._image_label, 0, 0)
+        canvas_layout.setRowStretch(0, 1)
+        canvas_layout.setColumnStretch(0, 1)
         self._image_label.hide()
         self._image_label.installEventFilter(self)
 
@@ -964,9 +1076,38 @@ class PreviewWidget(QWidget):
         )
         # Keep DS sprite pixels crisp on HiDPI displays.
         scaled.setDevicePixelRatio(1.0)
-        self._image_label.setPixmap(scaled)
+        self._image_label.set_preview_pixmap(scaled)
+
+    def _image_pan_global_pos(self, event) -> QPoint:
+        if hasattr(event, "globalPosition"):
+            return event.globalPosition().toPoint()
+        return event.globalPos()
+
+    def _handle_image_pan_event(self, watched, event) -> bool:
+        if not self._image_label.isVisible() or self._image_source is None:
+            return False
+        et = event.type()
+        if et == QEvent.Type.MouseButtonPress and event.button() == Qt.LeftButton:
+            return self._image_label.start_pan_at_global(self._image_pan_global_pos(event))
+        if et == QEvent.Type.MouseMove and self._image_label.is_panning():
+            self._image_label.move_pan_at_global(self._image_pan_global_pos(event))
+            return True
+        if et == QEvent.Type.MouseButtonRelease and event.button() == Qt.LeftButton and self._image_label.is_panning():
+            self._image_label.end_pan()
+            return True
+        return False
 
     def eventFilter(self, watched, event) -> bool:
+        if self._image_label.isVisible() and watched in {self._canvas, self._image_label}:
+            et = event.type()
+            if et in {
+                QEvent.Type.MouseButtonPress,
+                QEvent.Type.MouseMove,
+                QEvent.Type.MouseButtonRelease,
+            }:
+                if self._handle_image_pan_event(watched, event):
+                    event.accept()
+                    return True
         if event.type() == QEvent.Type.Wheel and watched in {self, self._canvas, self._view, self._image_label}:
             self.wheelEvent(event)
             return True
@@ -982,6 +1123,7 @@ class PreviewWidget(QWidget):
         self._clear_meshes()
         self._image_source = None
         self._image_zoom = 1.0
+        self._image_label.reset_pan()
         self._image_label.clear()
         self._image_label.hide()
         self._message_label.clear()
@@ -1018,6 +1160,7 @@ class PreviewWidget(QWidget):
         self._message_label.hide()
         self._image_source = pixmap
         self._image_zoom = 1.0
+        self._image_label.reset_pan()
         if self._view is not None:
             self._view.hide()
         self._refresh_image_display()
@@ -1498,7 +1641,6 @@ class MainWindow(QMainWindow):
         self.assets: list[Asset] = []
         self.visible_assets: list[Asset] = []
         self.worker: ScanWorker | None = None
-        self.relationship_worker: RelationshipWorker | None = None
         self.preview_worker: PreviewWorker | None = None
         self.image_preview_worker: ImagePreviewWorker | None = None
         self.texture_worker: TextureWorker | None = None
@@ -1517,7 +1659,6 @@ class MainWindow(QMainWindow):
         self._name_cache: dict[str, set[str]] = {}
         self._display_name_cache: dict[str, str] = {}
         self.current_mapping = None
-        self.asset_graph = AssetGraph()
         self.assets_by_id: dict[str, Asset] = {}
         self._selected_asset_id: str | None = None
         self.page_size = 500
@@ -1526,15 +1667,14 @@ class MainWindow(QMainWindow):
         self._type_filter_preferences: dict[str, bool] = {}
         self._tree_group_rows: dict[tuple[str, ...], list[int]] = {}
         self._tree_loaded_groups: set[tuple[str, ...]] = set()
-        self._relationship_source_ids: set[str] = set()
-        self._relationship_target_ids: set[str] = set()
         self.session_path: str | None = None
-        self._relationship_request_asset_id: str | None = None
         self._last_texture_resolve_report: dict[str, str] = {}
         self._preview_status_by_asset_id: dict[str, str] = {}
         self._preview_fallback_count_by_asset_id: dict[str, int] = {}
         self._raw_tree_group_rows: dict[tuple[str, ...], list[int]] = {}
         self._raw_tree_loaded_groups: set[tuple[str, ...]] = set()
+        self._btx0_texture_entries_cache: dict[str, list[tuple[str, int, int, int]]] = {}
+        self._selected_btx0_texture_name: str | None = None
 
         self._build_ui()
         self._update_status("Open a local .nds ROM to start. Use ./dsm run next time to launch this app.")
@@ -1582,9 +1722,6 @@ class MainWindow(QMainWindow):
         view_menu.addAction(show_terminal_action)
 
         advanced_menu = menubar.addMenu("&Advanced")
-        build_rel_action = QAction("Build Relationships", self)
-        build_rel_action.triggered.connect(self.build_relationships_for_selected)
-        advanced_menu.addAction(build_rel_action)
         pin_texture_action = QAction("Pin Selected BTX0", self)
         pin_texture_action.triggered.connect(self.pin_selected_texture)
         advanced_menu.addAction(pin_texture_action)
@@ -1706,21 +1843,8 @@ class MainWindow(QMainWindow):
         self.log_box.setMinimumHeight(130)
         self.log_box.setStyleSheet("font-family: Menlo, Consolas, monospace; font-size: 11px;")
 
-        self.related_table = QTableWidget(0, 5)
-        self.related_table.setHorizontalHeaderLabels(["Relation", "Magic", "Score", "Asset", "Reason"])
-        self.related_table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.related_table.setSelectionMode(QTableWidget.SingleSelection)
-        self.related_table.itemSelectionChanged.connect(self.on_related_selection_changed)
-        rel_header = self.related_table.horizontalHeader()
-        rel_header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        rel_header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        rel_header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        rel_header.setSectionResizeMode(3, QHeaderView.Stretch)
-        rel_header.setSectionResizeMode(4, QHeaderView.Stretch)
-
         self.info_tabs = QTabWidget()
         self.info_tabs.addTab(self.details, "Details")
-        self.info_tabs.addTab(self.related_table, "Related")
         self.info_tabs.addTab(self.log_box, "Terminal")
         info_corner = QWidget()
         info_corner_layout = QHBoxLayout(info_corner)
@@ -1851,15 +1975,6 @@ class MainWindow(QMainWindow):
         text = ""
         if widget in {self.details, self.log_box}:
             text = widget.toPlainText()
-        elif widget is self.related_table:
-            lines: list[str] = []
-            for row in range(self.related_table.rowCount()):
-                cols = []
-                for col in range(self.related_table.columnCount()):
-                    item = self.related_table.item(row, col)
-                    cols.append(item.text() if item else "")
-                lines.append("\t".join(cols))
-            text = "\n".join(lines)
         if text.strip():
             QGuiApplication.clipboard().setText(text)
             self._update_status("Copied panel contents to clipboard.")
@@ -1872,8 +1987,6 @@ class MainWindow(QMainWindow):
             widget.clear()
         elif widget is self.log_box:
             widget.clear()
-        elif widget is self.related_table:
-            self.related_table.setRowCount(0)
         self._update_status("Cleared the current info panel.")
 
     def _schedule_apply_filter(self) -> None:
@@ -2060,10 +2173,11 @@ class MainWindow(QMainWindow):
         self._asset_search_text = {}
         self._mapped_tree_parts_by_id = {}
         self._raw_tree_parts_by_id = {}
+        child_map = self._build_raw_folder_child_map(self.assets)
         for asset in self.assets:
             self._asset_search_text[asset.asset_id] = asset_search_text(asset)
             self._mapped_tree_parts_by_id[asset.asset_id] = self._tree_parts_for_asset(asset)
-            self._raw_tree_parts_by_id[asset.asset_id] = self._raw_tree_parts_for_asset(asset)
+            self._raw_tree_parts_by_id[asset.asset_id] = self._raw_tree_parts_for_asset(asset, child_map)
 
     def _compute_filtered_assets(self) -> list[Asset]:
         assets = self.assets
@@ -2111,6 +2225,19 @@ class MainWindow(QMainWindow):
         self.texture_warmup_worker = None
         self._texture_library_store.clear()
         self._texture_resolution_cache.clear()
+        self._btx0_texture_entries_cache.clear()
+
+    def _btx0_texture_entries(self, asset: Asset) -> list[tuple[str, int, int, int]]:
+        cached = self._btx0_texture_entries_cache.get(asset.asset_id)
+        if cached is not None:
+            return cached
+        manifest = parse_tex0_manifest(asset.data)
+        if not manifest or not manifest.textures:
+            self._btx0_texture_entries_cache[asset.asset_id] = []
+            return []
+        entries = [(tex.name, tex.format_id, tex.width, tex.height) for tex in manifest.textures]
+        self._btx0_texture_entries_cache[asset.asset_id] = entries
+        return entries
 
     def _texture_library_for_session(self) -> TextureLibrary | None:
         if not self.assets:
@@ -2119,6 +2246,12 @@ class MainWindow(QMainWindow):
             return self._texture_library_store.library
         return None
 
+    def _focus_terminal(self, *, banner: str | None = None) -> None:
+        if hasattr(self, "info_tabs") and hasattr(self, "log_box"):
+            self.info_tabs.setCurrentWidget(self.log_box)
+        if banner:
+            self._update_status(banner)
+
     def _warm_texture_library_async(self) -> None:
         if not self.assets:
             return
@@ -2126,16 +2259,28 @@ class MainWindow(QMainWindow):
             return
         if self.texture_warmup_worker is not None and self.texture_warmup_worker.isRunning():
             return
+        count, _digest = self._texture_library_store.fingerprint(self.assets)
+        self._focus_terminal(
+            banner=(
+                f"Building texture dictionary index for {count:,} BTX0/BMD0 archive(s) in the background. "
+                "DSM is not frozen — model preview will be faster once this finishes."
+            ),
+        )
         self.texture_warmup_worker = TextureLibraryWarmupWorker(self.assets, self._texture_library_store)
         self.texture_warmup_worker.progress.connect(self._update_status)
         self.texture_warmup_worker.finished_ok.connect(self._texture_warmup_finished)
         self.texture_warmup_worker.failed.connect(self._texture_warmup_failed)
         self.texture_warmup_worker.start()
 
+    def _texture_warmup_running(self) -> bool:
+        return self.texture_warmup_worker is not None and self.texture_warmup_worker.isRunning()
+
     def _texture_warmup_finished(self) -> None:
-        self._update_status("Texture dictionary index is ready for Set Textures.")
+        self._focus_terminal()
+        self._update_status("Texture dictionary index is ready. Model preview and Set Textures can use exact NSBTX lookups immediately.")
 
     def _texture_warmup_failed(self, message: str) -> None:
+        self._focus_terminal()
         self._update_status(f"Background texture indexing failed: {message}")
 
     def _texture_resolution_cache_key(self, asset_id: str, pinned_texture_asset_id: str | None) -> str:
@@ -2198,18 +2343,15 @@ class MainWindow(QMainWindow):
         self._name_cache.clear()
         self._display_name_cache.clear()
         self.current_mapping = None
-        self.asset_graph = AssetGraph()
         self.assets_by_id = {}
-        self._relationship_source_ids = set()
-        self._relationship_target_ids = set()
         self.session_path = None
         self._selected_asset_id = None
+        self._selected_btx0_texture_name = None
         self._tree_group_rows = {}
         self._tree_loaded_groups = set()
         self._raw_tree_group_rows = {}
         self._raw_tree_loaded_groups = set()
         self.browser_page = 0
-        self._relationship_request_asset_id = None
         if hasattr(self, "preset_box"):
             self.preset_box.setCurrentIndex(0)
         self.table.setRowCount(0)
@@ -2218,12 +2360,13 @@ class MainWindow(QMainWindow):
         if hasattr(self, "raw_tree"):
             self.raw_tree.clear()
         self.details.clear()
-        if hasattr(self, 'related_table'):
-            self.related_table.setRowCount(0)
         self.preview.clear()
-        self.preview.show_message("Opening ROM...\n\nDSM is building a fast asset index only. Relationship matching, model conversion, and audio expansion run only when you ask for them.")
+        self.preview.show_message("Opening ROM...\n\nDSM is building a fast asset index. Model conversion and audio expansion run only when you ask for them.")
+        self._focus_terminal(
+            banner="Opening ROM… watch this panel for scan and texture-index progress. The UI stays responsive while background workers run.",
+        )
         mode = "deep" if self.deep_scan_action.isChecked() else "fast"
-        self._update_status(f"Fast scanning {path} in {mode} mode. Full relationship graph will not run during load.")
+        self._update_status(f"Fast scanning {path} in {mode} mode.")
 
         self.worker = ScanWorker(path, deep_scan=self.deep_scan_action.isChecked())
         self.worker.progress.connect(self._update_status)
@@ -2231,14 +2374,14 @@ class MainWindow(QMainWindow):
         self.worker.failed.connect(self._scan_failed)
         self.worker.start()
 
-    def _scan_finished(self, assets: list[Asset], graph: object = None) -> None:
+    def _scan_finished(self, assets: list[Asset]) -> None:
         self.assets = assets
         self.assets_by_id = {a.asset_id: a for a in assets}
-        self.asset_graph = AssetGraph()
+        self._focus_terminal(banner=f"ROM scan complete: {len(assets):,} asset(s) found. Starting texture dictionary index before you preview models…")
+        self._warm_texture_library_async()
         self._rebuild_asset_filter_indexes()
         self._rebuild_show_types_menu()
         self.apply_filter()
-        self._warm_texture_library_async()
         bmd_count = sum(1 for a in assets if a.magic == "BMD0")
         texture_count = sum(1 for a in assets if a.magic == "BTX0")
         tile_count = sum(1 for a in assets if a.magic in {"RGCN", "RLCN", "RCSN", "RECN", "RNAN", "NFTR"})
@@ -2279,9 +2422,8 @@ class MainWindow(QMainWindow):
             "How to work efficiently",
             "  1. Use the mapped tree or filters to narrow the list.",
             "  2. Browse models with automatic texture preview; use Set Textures to force a refresh or after pinning a BTX0 manually.",
-            "  3. Related assets are marked in the browser and listed here in Details.",
-            "  4. Export Selected offers the options that make sense for the selected asset.",
-            "  5. Save Session writes a self-contained .dsmsession file in saves/ so you can continue later without reopening the ROM.",
+            "  3. Export Selected offers the options that make sense for the selected asset.",
+            "  4. Save Session writes a self-contained .dsmsession file in saves/ so you can continue later without reopening the ROM.",
         ]
         if self.profile_text:
             lines.extend(["", "Game profile", self.profile_text])
@@ -2391,7 +2533,6 @@ class MainWindow(QMainWindow):
                     item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 source_row = start + row
                 item.setData(Qt.UserRole, source_row)
-                self._style_table_item(item, asset)
                 self.table.setItem(row, col, item)
         self.table.setSortingEnabled(False)
         self.table.setUpdatesEnabled(True)
@@ -2422,23 +2563,50 @@ class MainWindow(QMainWindow):
             return tuple(parts)
         return tuple(parts[:-1])
 
-    def _initial_rom_folder_segments(self) -> tuple[str, ...]:
-        mapping = self.current_mapping
-        if mapping and mapping.mapping_id in {"pokemon_bw2", "pokemon_bw"}:
-            return ("a",)
-        if mapping:
-            for archive in mapping.archives:
-                path = archive.path.strip("/")
-                if path.startswith("a/"):
-                    return ("a",)
-        counts: Counter[str] = Counter()
-        for asset in self.assets:
-            segments = self._rom_folder_segments_for_asset(asset)
-            if segments:
-                counts[segments[0]] += 1
-        if not counts:
+    def _build_raw_folder_child_map(self, assets: list[Asset]) -> dict[tuple[str, ...], set[str]]:
+        children: dict[tuple[str, ...], set[str]] = {}
+        for asset in assets:
+            parts = self._rom_folder_segments_for_asset(asset)
+            for index, segment in enumerate(parts):
+                children.setdefault(parts[:index], set()).add(segment)
+        return children
+
+    def _collapse_raw_folder_parts(
+        self,
+        folder_parts: tuple[str, ...],
+        child_map: dict[tuple[str, ...], set[str]],
+    ) -> tuple[str, ...]:
+        """Merge single-child ROM folder chains like a/0/0/8 into one tree node."""
+        if len(folder_parts) <= 1:
+            return folder_parts
+        collapsed: list[str] = []
+        index = 0
+        while index < len(folder_parts):
+            end = index
+            while end + 1 < len(folder_parts):
+                prefix = folder_parts[: end + 1]
+                kids = child_map.get(prefix, set())
+                if len(kids) == 1 and folder_parts[end + 1] in kids:
+                    end += 1
+                else:
+                    break
+            collapsed.append("/".join(folder_parts[index : end + 1]))
+            index = end + 1
+        return tuple(collapsed)
+
+    def _initial_raw_tree_folder_parts(self, assets: list[Asset] | None = None) -> tuple[str, ...]:
+        assets = assets if assets is not None else self.visible_assets
+        if not assets:
             return ()
-        return (counts.most_common(1)[0][0],)
+        child_map = self._build_raw_folder_child_map(assets)
+        counts: Counter[tuple[str, ...]] = Counter()
+        for asset in assets:
+            folder_parts = self._collapse_raw_folder_parts(self._rom_folder_segments_for_asset(asset), child_map)
+            if folder_parts:
+                counts[folder_parts] += 1
+        if counts:
+            return counts.most_common(1)[0][0]
+        return ()
 
     def _find_raw_tree_folder_item(self, parts: tuple[str, ...]) -> QTreeWidgetItem | None:
         if not parts or not hasattr(self, "raw_tree"):
@@ -2477,19 +2645,39 @@ class MainWindow(QMainWindow):
         self._populate_raw_tree(self.visible_assets)
         self._browser_tab_versions[id(self.raw_tree)] = self._visible_assets_version
 
-        segments = self._initial_rom_folder_segments()
-        if not segments:
+        parts = self._initial_raw_tree_folder_parts(self.visible_assets)
+        if not parts:
             return
-        for depth in range(1, len(segments) + 1):
-            item = self._find_raw_tree_folder_item(segments[:depth])
-            if item is not None:
-                item.setExpanded(True)
-        final = self._find_raw_tree_folder_item(segments)
-        if final is None:
+        item = self._find_raw_tree_folder_item(parts)
+        if item is None:
             return
-        self.raw_tree.setCurrentItem(final)
-        self.raw_tree.scrollToItem(final)
+        self._expand_raw_folder_chain(item)
+        self.raw_tree.setCurrentItem(item)
+        self.raw_tree.scrollToItem(item)
         self.on_selection_changed()
+
+    def _expand_raw_folder_chain(self, item: QTreeWidgetItem) -> None:
+        item.setExpanded(True)
+        while item.childCount() == 1:
+            child = item.child(0)
+            data = child.data(0, Qt.UserRole)
+            if isinstance(data, dict) and data.get("placeholder"):
+                parent_data = item.data(0, Qt.UserRole)
+                if isinstance(parent_data, dict) and "folder" in parent_data:
+                    parts = tuple(parent_data["folder"])
+                    if parts not in self._raw_tree_loaded_groups:
+                        self._populate_folder_children(item, parts, True)
+                        self._raw_tree_loaded_groups.add(parts)
+                break
+            if isinstance(data, dict) and "folder" in data:
+                parts = tuple(data["folder"])
+                if parts not in self._raw_tree_loaded_groups:
+                    self._populate_folder_children(child, parts, True)
+                    self._raw_tree_loaded_groups.add(parts)
+                item = child
+                item.setExpanded(True)
+                continue
+            break
 
     def _tree_parts_for_asset(self, asset: Asset) -> tuple[str, ...]:
         """Return compact tree folders for an asset.
@@ -2506,8 +2694,16 @@ class MainWindow(QMainWindow):
         label = asset.mapping_label or "Detected by signature"
         return (category, label, rom_folder)
 
-    def _raw_tree_parts_for_asset(self, asset: Asset) -> tuple[str, ...]:
+    def _raw_tree_parts_for_asset(
+        self,
+        asset: Asset,
+        child_map: dict[tuple[str, ...], set[str]] | None = None,
+    ) -> tuple[str, ...]:
         folder_parts = self._rom_folder_segments_for_asset(asset)
+        if folder_parts:
+            if child_map is None:
+                child_map = self._build_raw_folder_child_map(self.assets or [asset])
+            folder_parts = self._collapse_raw_folder_parts(folder_parts, child_map)
         magic = asset.magic or asset.kind or "unknown"
         return (*folder_parts, magic) if folder_parts else (magic,)
 
@@ -2549,9 +2745,6 @@ class MainWindow(QMainWindow):
                     placeholder.setData(0, Qt.UserRole, {"placeholder": True})
                     item.addChild(placeholder)
 
-            for parts, item in folder_nodes.items():
-                self._style_folder_item(item, parts)
-
             root = self.tree.invisibleRootItem()
             expand_limit = min(root.childCount(), 32)
             for i in range(expand_limit):
@@ -2581,9 +2774,10 @@ class MainWindow(QMainWindow):
                 folder_nodes[parts] = item
                 return item
 
+            child_map = self._build_raw_folder_child_map(assets)
             parts_cache = self._raw_tree_parts_by_id
             for row, asset in enumerate(assets):
-                parts = parts_cache.get(asset.asset_id) or self._raw_tree_parts_for_asset(asset)
+                parts = parts_cache.get(asset.asset_id) or self._raw_tree_parts_for_asset(asset, child_map)
                 self._raw_tree_group_rows.setdefault(parts, []).append(row)
                 get_folder(parts)
 
@@ -2597,14 +2791,22 @@ class MainWindow(QMainWindow):
                     placeholder.setData(0, Qt.UserRole, {"placeholder": True})
                     item.addChild(placeholder)
 
-            for parts, item in folder_nodes.items():
-                self._style_folder_item(item, parts, raw=True)
+            initial_parts = self._initial_raw_tree_folder_parts(assets)
+            if initial_parts:
+                initial_item = folder_nodes.get(initial_parts)
+                if initial_item is not None:
+                    self._expand_raw_folder_chain(initial_item)
         finally:
             self.raw_tree.blockSignals(False)
             self.raw_tree.setUpdatesEnabled(True)
 
     def _on_tree_item_expanded(self, item: QTreeWidgetItem) -> None:
         data = item.data(0, Qt.UserRole)
+        if isinstance(data, dict) and "btx0_archive" in data:
+            if data.get("loaded"):
+                return
+            self._populate_btx0_texture_children(item, str(data["btx0_archive"]))
+            return
         if not isinstance(data, dict) or "folder" not in data:
             return
         parts = tuple(data["folder"])
@@ -2614,6 +2816,42 @@ class MainWindow(QMainWindow):
             return
         self._populate_folder_children(item, parts, is_raw)
         loaded_groups.add(parts)
+
+    def _make_btx0_archive_tree_item(self, asset: Asset) -> QTreeWidgetItem:
+        entries = self._btx0_texture_entries(asset)
+        node = QTreeWidgetItem([
+            self._asset_display_name(asset),
+            self._asset_file_label(asset),
+            f"BTX0 ({len(entries)} texture{'s' if len(entries) != 1 else ''})",
+            asset.virtual_path,
+        ])
+        node.setData(0, Qt.UserRole, {"btx0_archive": asset.asset_id})
+        placeholder = QTreeWidgetItem([f"Open to browse {len(entries)} texture(s)", "", "", ""])
+        placeholder.setData(0, Qt.UserRole, {"placeholder": True})
+        node.addChild(placeholder)
+        return node
+
+    def _populate_btx0_texture_children(self, item: QTreeWidgetItem, asset_id: str) -> None:
+        asset = self.assets_by_id.get(asset_id)
+        if asset is None:
+            return
+        entries = self._btx0_texture_entries(asset)
+        item.takeChildren()
+        for index, (name, fmt, width, height) in enumerate(entries):
+            child = QTreeWidgetItem([
+                name,
+                "",
+                f"fmt {fmt} {width}x{height}",
+                asset.virtual_path,
+            ])
+            child.setData(0, Qt.UserRole, {
+                "btx0_texture": asset_id,
+                "texture_name": name,
+                "texture_index": index,
+            })
+            item.addChild(child)
+        item.setData(0, Qt.UserRole, {"btx0_archive": asset_id, "loaded": True})
+        self._update_status(f"Loaded {len(entries)} texture name(s) from {asset.virtual_path}")
 
     def _populate_folder_children(self, item: QTreeWidgetItem, parts: tuple[str, ...], is_raw: bool) -> None:
         tree = self.raw_tree if is_raw and hasattr(self, "raw_tree") else self.tree
@@ -2627,109 +2865,16 @@ class MainWindow(QMainWindow):
             if not (0 <= source_row < len(self.visible_assets)):
                 continue
             asset = self.visible_assets[source_row]
+            if asset.magic == "BTX0" and self._btx0_texture_entries(asset):
+                item.addChild(self._make_btx0_archive_tree_item(asset))
+                continue
             leaf = QTreeWidgetItem(self._browser_row_values(asset))
             leaf.setData(0, Qt.UserRole, source_row)
-            self._style_tree_asset_item(leaf, asset)
             item.addChild(leaf)
         item.setData(0, Qt.UserRole, {"folder": parts, "raw": is_raw})
         tree.blockSignals(False)
         tree_name = "Raw Folders" if is_raw else "Mapped Tree"
         self._update_status(f"Loaded {len(rows)} asset(s) in {tree_name}: {' / '.join(parts)}.")
-
-    def _relationship_state(self, asset_id: str) -> str:
-        if asset_id in self._relationship_source_ids:
-            return "built"
-        if asset_id in self._relationship_target_ids:
-            return "related"
-        return ""
-
-    def _style_table_item(self, item: QTableWidgetItem, asset: Asset) -> None:
-        state = self._relationship_state(asset.asset_id)
-        if state == "built":
-            item.setBackground(QBrush(QColor(220, 245, 225)))
-        elif state == "related":
-            item.setBackground(QBrush(QColor(225, 238, 255)))
-
-    def _style_tree_asset_item(self, item: QTreeWidgetItem, asset: Asset) -> None:
-        # Remove any previous relationship prefix before restyling. Relationship
-        # marks can be refreshed many times in one session.
-        base_text = item.text(0)
-        for prefix in ("✓ ", "↳ "):
-            if base_text.startswith(prefix):
-                base_text = base_text[len(prefix):]
-        for col in range(item.columnCount()):
-            item.setBackground(col, QBrush())
-
-        state = self._relationship_state(asset.asset_id)
-        if state == "built":
-            color = QColor(220, 245, 225)
-            item.setText(0, "✓ " + base_text)
-        elif state == "related":
-            color = QColor(225, 238, 255)
-            item.setText(0, "↳ " + base_text)
-        else:
-            item.setText(0, base_text)
-            return
-        brush = QBrush(color)
-        for col in range(item.columnCount()):
-            item.setBackground(col, brush)
-
-    def _style_folder_item(self, item: QTreeWidgetItem, parts: tuple[str, ...], *, raw: bool = False) -> None:
-        rows = (self._raw_tree_group_rows if raw else self._tree_group_rows).get(parts, [])
-        if not rows:
-            return
-        ids = [self.visible_assets[row].asset_id for row in rows if 0 <= row < len(self.visible_assets)]
-        if any(asset_id in self._relationship_source_ids for asset_id in ids):
-            item.setForeground(0, QBrush(QColor(20, 110, 45)))
-        elif any(asset_id in self._relationship_target_ids for asset_id in ids):
-            item.setForeground(0, QBrush(QColor(30, 80, 150)))
-
-    def _refresh_relationship_sets(self) -> None:
-        self._relationship_source_ids = {source for source, rows in self.asset_graph.relations.items() if rows}
-        targets: set[str] = set()
-        for rows in self.asset_graph.relations.values():
-            for row in rows:
-                targets.add(row.target_id)
-        self._relationship_target_ids = targets
-
-    def _refresh_browser_relationship_marks(self) -> None:
-        self._refresh_relationship_sets()
-        # Do not rebuild the tree here. Rebuilding collapses the user's folder
-        # location. Repaint only the currently visible rows/items.
-        self._repaint_table_relationship_marks()
-        self._repaint_tree_relationship_marks()
-
-    def _repaint_table_relationship_marks(self) -> None:
-        for row in range(self.table.rowCount()):
-            item0 = self.table.item(row, 0)
-            if item0 is None:
-                continue
-            source_row = item0.data(Qt.UserRole)
-            if not isinstance(source_row, int) or not (0 <= source_row < len(self.visible_assets)):
-                continue
-            asset = self.visible_assets[source_row]
-            for col in range(self.table.columnCount()):
-                item = self.table.item(row, col)
-                if item is not None:
-                    item.setBackground(QBrush())
-                    self._style_table_item(item, asset)
-
-    def _repaint_tree_relationship_marks(self) -> None:
-        def visit(item: QTreeWidgetItem) -> None:
-            data = item.data(0, Qt.UserRole)
-            if isinstance(data, int) and 0 <= data < len(self.visible_assets):
-                self._style_tree_asset_item(item, self.visible_assets[data])
-            elif isinstance(data, dict) and "folder" in data:
-                self._style_folder_item(item, tuple(data["folder"]), raw=bool(data.get("raw")))
-            for i in range(item.childCount()):
-                visit(item.child(i))
-
-        for tree in (self.tree, getattr(self, "raw_tree", None)):
-            if tree is None:
-                continue
-            root = tree.invisibleRootItem()
-            for i in range(root.childCount()):
-                visit(root.child(i))
 
     def selected_folder(self) -> tuple[tuple[str, ...], bool] | None:
         if not hasattr(self, "browser_tabs"):
@@ -2753,35 +2898,45 @@ class MainWindow(QMainWindow):
                 assets.append(self.visible_assets[row])
         return assets
 
-    def selected_asset(self) -> Asset | None:
-        # If the user is inspecting the Related tab, keep that related asset active
-        # without moving the main mapped tree selection.
-        try:
-            if hasattr(self, "related_table") and QApplication.focusWidget() is self.related_table and self._selected_asset_id:
-                asset = self.assets_by_id.get(self._selected_asset_id)
+    def _asset_from_tree_item_data(self, data: object) -> Asset | None:
+        if isinstance(data, dict):
+            if "btx0_texture" in data:
+                self._selected_btx0_texture_name = str(data.get("texture_name") or "")
+                asset = self.assets_by_id.get(str(data.get("btx0_texture") or ""))
                 if asset is not None:
-                    return asset
-        except Exception:
-            pass
+                    self._selected_asset_id = asset.asset_id
+                return asset
+            if "btx0_archive" in data:
+                self._selected_btx0_texture_name = None
+                asset = self.assets_by_id.get(str(data["btx0_archive"]))
+                if asset is not None:
+                    self._selected_asset_id = asset.asset_id
+                return asset
+        if isinstance(data, int) and 0 <= data < len(self.visible_assets):
+            self._selected_btx0_texture_name = None
+            self._selected_asset_id = self.visible_assets[data].asset_id
+            return self.visible_assets[data]
+        return None
+
+    def selected_asset(self) -> Asset | None:
         # Prefer the currently active browser tab. Both the tree and flat list store
         # indexes into visible_assets in Qt.UserRole.
         if hasattr(self, "browser_tabs") and self.browser_tabs.currentWidget() in {self.tree, getattr(self, "raw_tree", None)}:
             active_tree = self.browser_tabs.currentWidget()
             items = active_tree.selectedItems() if active_tree is not None else []
             if items:
-                source_row = items[0].data(0, Qt.UserRole)
-                if isinstance(source_row, int) and 0 <= source_row < len(self.visible_assets):
-                    self._selected_asset_id = self.visible_assets[source_row].asset_id
-                    return self.visible_assets[source_row]
+                asset = self._asset_from_tree_item_data(items[0].data(0, Qt.UserRole))
+                if asset is not None:
+                    return asset
         rows = self.table.selectionModel().selectedRows()
         if rows:
             visual_row = rows[0].row()
             item = self.table.item(visual_row, 0)
             if item is not None:
                 source_row = item.data(Qt.UserRole)
-                if isinstance(source_row, int) and 0 <= source_row < len(self.visible_assets):
-                    self._selected_asset_id = self.visible_assets[source_row].asset_id
-                    return self.visible_assets[source_row]
+                asset = self._asset_from_tree_item_data(source_row)
+                if asset is not None:
+                    return asset
         # Fallback to last selected asset id if a folder selection temporarily took focus.
         if self._selected_asset_id:
             return self.assets_by_id.get(self._selected_asset_id)
@@ -2827,57 +2982,10 @@ class MainWindow(QMainWindow):
         # runs in a worker thread and is queued if another preview is active.
         self.preview_selected_asset(manual=False, force=False)
 
-    def on_related_selection_changed(self) -> None:
-        if not hasattr(self, "related_table"):
-            return
-        rows = self.related_table.selectionModel().selectedRows()
-        if not rows:
-            return
-        item = self.related_table.item(rows[0].row(), 0)
-        if item is None:
-            return
-        asset_id = item.data(Qt.UserRole)
-        if isinstance(asset_id, str) and asset_id in self.assets_by_id:
-            self._select_asset_by_id(asset_id, preview=True)
-
-    def _select_asset_by_id(self, asset_id: str, *, preview: bool = False) -> None:
-        asset = self.assets_by_id.get(asset_id)
-        if not asset:
-            return
-        self._selected_asset_id = asset_id
-        # Keep the main folder tree where it is; this method is used from the
-        # Related tab so users can inspect a candidate without losing their model.
-        self.show_selected_details()
-        if preview:
-            self.preview_selected_asset(manual=False, force=False)
-
-    def _populate_related_table_for_asset(self, asset: Asset | None) -> None:
-        if not hasattr(self, "related_table"):
-            return
-        self.related_table.blockSignals(True)
-        self.related_table.setRowCount(0)
-        if not asset or not getattr(self, "asset_graph", None):
-            self.related_table.blockSignals(False)
-            return
-        rows = sorted(self.asset_graph.relations.get(asset.asset_id, []), key=lambda r: (-r.score, r.relation, r.target_id))
-        self.related_table.setRowCount(len(rows))
-        for row, rel in enumerate(rows):
-            target = self.assets_by_id.get(rel.target_id)
-            values = [rel.relation, target.magic if target else "?", str(rel.score), target.virtual_path if target else rel.target_id, rel.reason]
-            for col, value in enumerate(values):
-                item = QTableWidgetItem(value)
-                if col == 0:
-                    item.setData(Qt.UserRole, rel.target_id)
-                if col == 2:
-                    item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                self.related_table.setItem(row, col, item)
-        self.related_table.blockSignals(False)
-
     def show_selected_details(self) -> None:
         asset = self.selected_asset()
         if not asset:
             self.details.clear()
-            self._populate_related_table_for_asset(None)
             return
         details = [
             f"Name: {self._asset_display_name(asset)}",
@@ -2900,15 +3008,6 @@ class MainWindow(QMainWindow):
         if asset.container_chain:
             details.append("Containers:")
             details.extend(f"  - {c}" for c in asset.container_chain)
-        relation_lines = self.asset_graph.relation_summary(asset.asset_id, self.assets_by_id, limit=18) if getattr(self, "asset_graph", None) else []
-        rel_state = self._relationship_state(asset.asset_id)
-        details.append(f"Relationships: {'built for this asset' if rel_state == 'built' else 'related to another asset' if rel_state == 'related' else 'not built yet'}")
-        if relation_lines:
-            details.append("")
-            details.append("Related assets")
-            details.extend(f"  - {line}" for line in relation_lines)
-        elif asset.magic in {"BMD0", "BTX0", "RGCN", "RLCN", "RCSN", "RECN", "RNAN", "SDAT", "SWAR", "SWAV", "STRM", "SSEQ", "SSAR", "SBNK"}:
-            details.append("  Set Textures handles model texture decoding; Export Selected… creates focused readable bundles when DSM can pair related files.")
 
         hunt_report = self._last_texture_resolve_report.get(asset.asset_id)
         if hunt_report:
@@ -2929,13 +3028,24 @@ class MainWindow(QMainWindow):
                 details.append("")
                 details.append("Tip: build apicula in tools/apicula/target/release/apicula or set DSM_APICULA to its path.")
         elif asset.magic == "BTX0":
-            names = sorted(self._asset_names(asset))
+            entries = self._btx0_texture_entries(asset)
+            names = [name for name, *_rest in entries] or sorted(self._asset_names(asset))
             details.append("")
-            details.append(f"Texture/palette names found: {len(names)}")
-            if names:
-                details.append("  " + ", ".join(names[:40]) + (" ..." if len(names) > 40 else ""))
+            if self._selected_btx0_texture_name:
+                entry = next((row for row in entries if row[0] == self._selected_btx0_texture_name), None)
+                details.append(f"Texture entry: {self._selected_btx0_texture_name}")
+                if entry:
+                    _name, fmt, width, height = entry
+                    details.append(f"  Format: {fmt}  Size: {width}x{height}")
+                details.append("  Expand the NSBTX file in the tree to browse other dictionary entries.")
+            else:
+                details.append(f"Texture dictionary entries: {len(entries) or len(names)}")
+                if names:
+                    details.append("  " + ", ".join(names[:40]) + (" ..." if len(names) > 40 else ""))
+                if len(entries) > 1:
+                    details.append("  Expand this BTX0 row in Mapped Tree or Raw Folders to preview each texture individually.")
             details.append("Texture preview/decode runs on a worker thread when you click or auto-preview this row, so large texture archives should not freeze the UI.")
-            details.append("Tip: click Use Selected BTX0 to pin this texture for the next BMD0 preview, or Extract Texture PNGs / Export Readable to save PNGs.")
+            details.append("Tip: click Use Selected BTX0 to pin this texture archive for the next BMD0 preview, or Extract Texture PNGs / Export Readable to save PNGs.")
         elif asset.magic in {"RGCN", "RLCN", "RCSN", "RECN", "RNAN", "NFTR"}:
             details.append("")
             if asset.magic in {"RGCN", "RLCN", "RCSN", "RECN", "RNAN"}:
@@ -2967,7 +3077,6 @@ class MainWindow(QMainWindow):
             details.append("")
             details.append("PNG preview/export supported directly.")
         self.details.setPlainText("\n".join(details))
-        self._populate_related_table_for_asset(asset)
         self._update_preview_details(asset)
 
     def _preview_result_text(self, path: Path, fallback_textures: list[Path] | None = None) -> str:
@@ -2995,9 +3104,6 @@ class MainWindow(QMainWindow):
             self.clear_pin_button.setVisible(False)
             return
 
-        rel_rows = list(getattr(self.asset_graph, "relations", {}).get(asset.asset_id, [])) if getattr(self, "asset_graph", None) else []
-        texture_rows = [r for r in rel_rows if r.relation in {"texture", "texture-candidate"}]
-        animation_rows = [r for r in rel_rows if "animation" in r.relation or r.relation in {"model-animation", "sprite-animation"}]
         pinned = self._pinned_texture_asset()
         lines = [
             "Selection",
@@ -3005,18 +3111,10 @@ class MainWindow(QMainWindow):
             f"  File: {asset_filename_label(asset.virtual_path)}",
             f"  {asset.magic or asset.kind}: {asset.virtual_path}",
             f"  Mapping: {asset.mapping_label or 'unmapped'}",
-            f"  Relationships: {len(rel_rows)} found" if rel_rows else "  Relationships: not built yet",
         ]
         if asset.magic == "BMD0":
             lines.append("")
             lines.append("Model texture status")
-            lines.append(f"  External texture links: {len(texture_rows)}")
-            if texture_rows:
-                best = self._best_texture_candidate(asset)
-                if best:
-                    tex, confidence, reason = best
-                    lines.append(f"  Resolved texture: {tex.virtual_path}")
-                    lines.append(f"  Confidence: {confidence} — {reason}")
             lines.append(f"  Pinned external texture: {pinned.virtual_path if pinned else 'none'}")
             fallback_count = self._preview_fallback_count_by_asset_id.get(asset.asset_id, 0)
             if fallback_count:
@@ -3026,8 +3124,6 @@ class MainWindow(QMainWindow):
                 lines.append("  Embedded NSBMD texture: decoded and available as DSM fallback PNGs")
             elif "embedded TEX0 texture block found" in report:
                 lines.append("  Embedded NSBMD texture: detected; Set Textures can decode/trace it")
-            if animation_rows:
-                lines.append(f"  Animation candidates: {len(animation_rows)}")
             status = self._preview_status_by_asset_id.get(asset.asset_id)
             if status:
                 lines.append(f"  {status}")
@@ -3058,90 +3154,6 @@ class MainWindow(QMainWindow):
         self.clear_pin_button.setVisible(pinned_active)
 
 
-    def build_relationships_for_selected(self) -> None:
-        asset = self.selected_asset()
-        if not asset:
-            QMessageBox.information(self, "No selection", "Select one asset first, then build relationships for it.")
-            return
-        if self.relationship_worker is not None and self.relationship_worker.isRunning():
-            self._update_status("Relationship graph worker is already running; wait for it to finish before starting another.")
-            self.info_tabs.setCurrentWidget(self.log_box)
-            return
-        self.info_tabs.setCurrentWidget(self.log_box)
-        self.preview.show_message(
-            "Building relationships for selected asset only...\n\n"
-            f"{asset.magic} — {asset.virtual_path}\n\n"
-            "DSM is matching likely palettes, textures, animations, or audio children without touching the whole ROM graph."
-        )
-        self._relationship_request_asset_id = asset.asset_id
-        self._selected_asset_id = asset.asset_id
-        self._update_status(f"Build Relationships started for {asset.virtual_path}")
-        self.relationship_worker = RelationshipWorker(
-            self.assets,
-            [asset.asset_id],
-            texture_library=self._texture_library_for_session(),
-        )
-        self.relationship_worker.progress.connect(self._update_status)
-        self.relationship_worker.finished_ok.connect(self._relationships_finished)
-        self.relationship_worker.failed.connect(self._relationships_failed)
-        self.relationship_worker.start()
-
-    def _relationships_finished(self, graph: object) -> None:
-        requested_id = self._relationship_request_asset_id
-        requested_asset = self.assets_by_id.get(requested_id or "")
-        if requested_id:
-            self._selected_asset_id = requested_id
-
-        if isinstance(graph, AssetGraph):
-            self.asset_graph.merge(graph)
-            rel_count = sum(len(v) for v in graph.relations.values())
-            self._refresh_browser_relationship_marks()
-            self._update_status(f"Relationships ready: {rel_count} edge(s) merged. The current tree location was preserved.")
-        else:
-            self._update_status("Build Relationships finished, but produced no graph object.")
-
-        self.show_selected_details()
-        current = requested_asset or self.selected_asset()
-        if current and current.magic == "BMD0":
-            self._apply_relationship_texture_for_model(current)
-        elif current and current.magic in {"RGCN", "RLCN", "RCSN", "RECN", "RNAN"}:
-            self._preview_decodable_images(current, current.kind)
-
-    def _apply_relationship_texture_for_model(self, asset: Asset) -> None:
-        best = self._best_texture_candidate(asset)
-        if best is None:
-            report = self._last_texture_resolve_report.get(asset.asset_id, "")
-            if "embedded TEX0 decoded" in report or "embedded TEX0 texture block found" in report:
-                self._update_status("This model uses embedded NSBMD texture data; no external BTX0 needs to be pinned. Set Textures shows the texture decode trace.")
-            else:
-                self._update_status("No exact external BTX0 texture binding was identified for this model. If it still looks gray, use Set Textures for the trace or pin a BTX0 manually as an override.")
-            return
-        tex, confidence, reason = best
-        self._pinned_texture_asset_id = tex.asset_id
-        self._update_status(f"Selected resolved texture for model: {tex.virtual_path} ({confidence}; {reason}).")
-        if apicula_available():
-            self._update_status("Rebuilding the model preview with the resolved texture applied first.")
-            self.preview_selected_asset(manual=True, force=True)
-        else:
-            self._update_status("apicula is not available, so DSM pinned the texture but could not rebuild the model preview.")
-
-    def _best_texture_candidate(self, asset: Asset) -> tuple[Asset, str, str] | None:
-        rows = list(getattr(self.asset_graph, "relations", {}).get(asset.asset_id, []))
-        texture_rows = [r for r in rows if r.relation in {"texture", "texture-candidate"}]
-        if not texture_rows:
-            return None
-        texture_rows.sort(key=lambda r: (0 if r.relation == "texture" else 1, -r.score, r.target_id))
-        for rel in texture_rows:
-            tex = self.assets_by_id.get(rel.target_id)
-            if tex and tex.magic == "BTX0":
-                confidence = "exact decoded binding" if rel.relation == "texture" else "manual/debug candidate"
-                return tex, confidence, rel.reason
-        return None
-
-    def _relationships_failed(self, message: str) -> None:
-        self.preview.show_message(f"Relationship graph failed:\n{message}")
-        self._update_status(f"Build Relationships failed: {message}")
-
     def find_and_load_texture_for_selected_model(self) -> None:
         asset = self.selected_asset()
         if not asset:
@@ -3171,14 +3183,12 @@ class MainWindow(QMainWindow):
             self.info_tabs.setCurrentWidget(self.details)
 
     def _start_texture_resolve_worker(self, asset: Asset) -> None:
-        graph_related = self._graph_related_assets(asset, limit=48)
         out_dir = self.preview_temp / asset.asset_id / "texture_resolve"
         self.texture_resolve_worker = TextureResolveWorker(
             asset,
             out_dir,
             self.assets,
             self._pinned_texture_asset_id,
-            graph_related_assets=graph_related,
             texture_library=self._texture_library_for_session(),
             texture_store=self._texture_library_store,
         )
@@ -3220,13 +3230,19 @@ class MainWindow(QMainWindow):
 
         self._selected_asset_id = asset.asset_id
         self._texture_preview_switch_to_details = switch_to_details
-        if switch_to_details:
-            self.info_tabs.setCurrentWidget(self.log_box)
+        if switch_to_details or self._texture_warmup_running():
+            self._focus_terminal()
         pinned = self._pinned_texture_asset()
         pin_note = f"\nPinned texture: {pinned.virtual_path}" if pinned else ""
+        warmup_note = (
+            "\n\nTexture dictionary index is still building in Terminal. Preview will continue in the background."
+            if self._texture_warmup_running()
+            else ""
+        )
         self.preview.show_message(
             f"Previewing model with textures...\n\n{asset.virtual_path}{pin_note}\n\n"
             "DSM is matching NSBMD materials to NSBTX dictionaries and converting the preview."
+            f"{warmup_note}"
         )
         self._update_status(f"Previewing textured model: {asset.virtual_path}")
         self._start_texture_resolve_worker(asset)
@@ -3360,6 +3376,38 @@ class MainWindow(QMainWindow):
             self._update_status("Texture extraction failed.")
 
 
+    def _preview_btx0_texture(self, asset: Asset, texture_name: str) -> None:
+        self.preview.show_message(f"Decoding texture '{texture_name}' from {asset.virtual_path}...")
+        images = decode_guided_tex0_images(
+            asset.data,
+            texture_requests=[(texture_name, None)],
+            max_images=8,
+        )
+        if not images:
+            images = [
+                image
+                for image in decode_btx_images(asset.data, max_images=32, mode="all-palettes")
+                if image.name == texture_name or image.name.startswith(f"{texture_name}__")
+            ]
+        if not images:
+            self.preview.show_message(
+                f"Could not decode texture '{texture_name}' from:\n{asset.virtual_path}\n\n"
+                "Try selecting the parent BTX0 archive for a contact-sheet preview, or Export Readable for diagnostics."
+            )
+            self._update_status(f"Texture decode failed: {texture_name} in {asset.virtual_path}")
+            return
+        image = images[0]
+        out = self.preview_temp / f"btx_{asset.asset_id}" / f"{texture_name}.png"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        image.save_png(out)
+        caption = (
+            f"{texture_name} — {image.width}x{image.height}"
+            f"{f' (palette {image.palette_name})' if image.palette_name else ''}"
+            f" from {Path(asset.virtual_path).name}"
+        )
+        self.preview.show_image_path(out, caption)
+        self._update_status(f"Previewing texture {texture_name} from {asset.virtual_path}")
+
     def preview_selected_asset(self, *, manual: bool = True, force: bool = False) -> None:
         asset = self.selected_asset()
         if not asset:
@@ -3370,7 +3418,10 @@ class MainWindow(QMainWindow):
             self.convert_preview_selected(manual=manual, force=force)
             return
         if asset.magic == "BTX0":
-            self._preview_decodable_images(asset, "BTX0 texture archive")
+            if self._selected_btx0_texture_name:
+                self._preview_btx0_texture(asset, self._selected_btx0_texture_name)
+            else:
+                self._preview_decodable_images(asset, "BTX0 texture archive")
             return
         if asset.magic in {"RGCN", "RLCN", "RCSN", "RECN", "RNAN"}:
             self._preview_decodable_images(asset, asset.kind)
@@ -3393,7 +3444,7 @@ class MainWindow(QMainWindow):
             self.preview.show_message(f"No visual preview decoder yet for this asset.\n\n{asset.kind} / {asset.magic}\n{asset.virtual_path}")
 
     def _quick_related_2d_assets(self, asset: Asset, *, limit: int = 16) -> list[Asset]:
-        """Cheap same-folder fallback so NCER/NANR can preview without a full graph.
+        """Cheap same-folder fallback so NCER/NANR can preview from nearby partners.
 
         Nitro 2D files rarely carry friendly cross-file names. The game usually
         loads a small group by archive/table context, so for browsing we rank
@@ -3451,9 +3502,7 @@ class MainWindow(QMainWindow):
             self._update_status(f"Image preview already running; queued selection will preview after it finishes if selected again.")
             return
         out = self.preview_temp / f"preview_{asset.asset_id}.png"
-        related = self._graph_related_assets(asset, limit=16)
-        if not related and asset.magic in {"RGCN", "RLCN", "RCSN", "RECN", "RNAN"}:
-            related = self._quick_related_2d_assets(asset, limit=16)
+        related = self._quick_related_2d_assets(asset, limit=16) if asset.magic in {"RGCN", "RLCN", "RCSN", "RECN", "RNAN"} else []
         related_note = f"\nUsing {len(related)} related asset(s)." if related else ""
         self.preview.show_message(f"Decoding preview off the UI thread...\n{asset.virtual_path}{related_note}")
         self._update_status(f"Starting preview decode for {asset.virtual_path}; related assets: {len(related)}")
@@ -3504,7 +3553,6 @@ class MainWindow(QMainWindow):
         self.session_save_worker = SessionSaveWorker(
             Path(target),
             self.assets,
-            self.asset_graph,
             rom_path=self.rom_path,
             profile_text=self.profile_text,
             mapping_id=mapping_id,
@@ -3532,8 +3580,8 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Session load running", "DSM is already opening a session. Progress is shown in Terminal.")
             self.info_tabs.setCurrentWidget(self.log_box)
             return
-        self.info_tabs.setCurrentWidget(self.log_box)
-        self.preview.show_message("Opening saved session...\n\nDSM will restore the asset index and saved relationship graph without reading the original ROM.")
+        self._focus_terminal(banner=f"Opening saved session {source}…")
+        self.preview.show_message("Opening saved session...\n\nDSM will restore the asset index without reading the original ROM.")
         self._update_status(f"Opening session {source}")
         self.session_load_worker = SessionLoadWorker(Path(source))
         self.session_load_worker.progress.connect(self._update_status)
@@ -3548,13 +3596,12 @@ class MainWindow(QMainWindow):
         self.session_path = str(data.get("path", ""))
         self.assets = list(data.get("assets", []))
         self.assets_by_id = {a.asset_id: a for a in self.assets}
-        self.asset_graph = data.get("graph") if isinstance(data.get("graph"), AssetGraph) else AssetGraph()
-        self._refresh_relationship_sets()
         manifest = data.get("manifest", {}) if isinstance(data.get("manifest"), dict) else {}
         self.profile_text = str(manifest.get("profile_text", ""))
         self._pinned_texture_asset_id = manifest.get("pinned_texture_asset_id") or None
         self.current_mapping = None
         self._selected_asset_id = None
+        self._selected_btx0_texture_name = None
         self._queued_preview_asset_id = None
         self._last_previewed_asset_id = None
         self._name_cache.clear()
@@ -3568,8 +3615,9 @@ class MainWindow(QMainWindow):
         self.tree.clear()
         self._rebuild_asset_filter_indexes()
         self._rebuild_show_types_menu()
-        self.apply_filter()
+        self._focus_terminal(banner=f"Session loaded: {len(self.assets):,} asset(s). Building texture dictionary index before model preview…")
         self._warm_texture_library_async()
+        self.apply_filter()
         self._focus_browser_on_rom_folders()
         total = len(self.assets)
         bmd_count = sum(1 for a in self.assets if a.magic == "BMD0")
@@ -3583,7 +3631,7 @@ class MainWindow(QMainWindow):
             counts=(total, bmd_count, texture_count, tile_count, png_count, audio_count),
         )
         self.details.setPlainText(overview)
-        self.preview.show_message("Session loaded. Select an asset to preview, build relationships, or export selected data.")
+        self.preview.show_message("Session loaded. Select an asset to preview or export selected data.")
         self._update_status(f"Session loaded: {total} assets restored. Original ROM is not required for this session.")
 
     def _session_load_failed(self, message: str) -> None:
@@ -3737,7 +3785,7 @@ class MainWindow(QMainWindow):
         options: list[tuple[str, str, str]] = [("raw", "Original / raw asset", "Save exactly this selected asset as DSM extracted it.")]
         if asset.magic == "BMD0":
             options.extend([
-                ("model_glb", "Model: GLB via apicula", "Convert selected model with graph-related textures/animations supplied to apicula."),
+                ("model_glb", "Model: GLB via apicula", "Convert selected model with resolved textures and same-folder animation siblings supplied to apicula."),
                 ("model_dae", "Model: DAE / Collada via apicula", "Useful for Blender import and debugging material names."),
                 ("model_obj", "Model: OBJ + MTL via GLB bridge", "Experimental: converts GLB output to OBJ/MTL using trimesh."),
                 ("model_bundle", "Model: full research bundle", "Raw model, related BTX0/animations, decoded texture PNGs, GLB, DAE, reports."),
@@ -3750,7 +3798,7 @@ class MainWindow(QMainWindow):
         elif asset.magic in {"RGCN", "RLCN", "RCSN", "RECN", "RNAN", "PNG"}:
             options.extend([
                 ("readable", "Readable PNG preview", "Export DSM's direct preview/contact sheet for this asset."),
-                ("related_png", "Combined PNG using related tiles/palettes/cells", "Use the asset graph to pair NCGR/NCLR/NSCR/NCER/NANR and compose the best preview DSM can."),
+                ("related_png", "Combined PNG using related tiles/palettes/cells", "Pair same-folder NCGR/NCLR/NSCR/NCER/NANR assets and compose the best preview DSM can."),
             ])
         elif asset.magic in {"SDAT", "SSEQ", "SSAR", "SBNK", "SWAR", "SWAV", "STRM"}:
             options.extend([
@@ -3807,8 +3855,8 @@ class MainWindow(QMainWindow):
             self._update_status("Running DSM readable decoder...")
             return export_readable_asset(asset, out)
         if choice == "related_png":
-            self._update_status("Composing PNG preview from graph-paired related assets...")
-            related = self._graph_related_assets(asset, limit=32)
+            self._update_status("Composing PNG preview from paired 2D assets...")
+            related = self._quick_related_2d_assets(asset, limit=32)
             images = decode_nitro2d_related_preview(asset, related)
             if images:
                 return save_preview_images(images, out / f"dsm_related_{asset.asset_id}", prefix=Path(asset.virtual_path).stem)
@@ -3823,7 +3871,6 @@ class MainWindow(QMainWindow):
             fmt = "glb" if choice == "model_glb" else "dae"
             model_out = out / f"dsm_model_{asset.asset_id}_{fmt}"
             related = self._model_related_assets(asset)
-            self._write_graph_manifest(asset, model_out)
             result = convert_with_apicula(asset, model_out, sibling_assets=related, output_format=fmt)
             if not result.ok:
                 raise RuntimeError(result.message)
@@ -3844,12 +3891,11 @@ class MainWindow(QMainWindow):
         return export_readable_asset(asset, out)
 
     def _model_related_assets(self, asset: Asset) -> list[Asset]:
-        graph_related = self._graph_related_assets(asset, limit=96)
         resolver_related = self._sibling_assets(asset)
         pinned = self._pinned_texture_asset()
         out: list[Asset] = []
         seen = {asset.asset_id}
-        for item in ([pinned] if pinned else []) + graph_related + resolver_related:
+        for item in ([pinned] if pinned else []) + resolver_related:
             if item and item.asset_id not in seen and item.magic in {"BTX0", "BCA0", "BTA0", "BTP0", "BMA0", "BVA0", "BPC0"}:
                 seen.add(item.asset_id)
                 out.append(item)
@@ -3871,7 +3917,6 @@ class MainWindow(QMainWindow):
         scene = trimesh.load(result.output_files[0], force="scene")
         obj_path = obj_dir / "model.obj"
         scene.export(obj_path)
-        self._write_graph_manifest(asset, obj_dir)
         return [obj_path] + list(obj_dir.glob("*.mtl")) + list(obj_dir.glob("*.png"))
 
     def _export_model_bundle_to(self, asset: Asset, out: Path) -> list[Path]:
@@ -3885,7 +3930,6 @@ class MainWindow(QMainWindow):
         related = self._model_related_assets(asset)
         written = [export_asset(asset, raw_dir, decoded=True)]
         written.extend(export_assets(related, raw_dir / "related", decoded=True))
-        self._write_graph_manifest(asset, base)
         # Decode resolved/manual textures directly; this is useful even if apicula does not embed them.
         for texture_asset in [r for r in related if r.magic == "BTX0"][:96]:
             try:
@@ -3907,12 +3951,6 @@ class MainWindow(QMainWindow):
         if not glb.ok and not dae.ok:
             raise RuntimeError(glb.message or dae.message)
         return written
-
-    def _write_graph_manifest(self, asset: Asset, out: Path) -> Path:
-        out.mkdir(parents=True, exist_ok=True)
-        path = out / "dsm_asset_graph.json"
-        path.write_text(json.dumps(graph_to_manifest(self.asset_graph, asset, self.assets_by_id), indent=2), encoding="utf-8")
-        return path
 
     def _open_path(self, path: Path) -> None:
         try:
@@ -4089,7 +4127,7 @@ class MainWindow(QMainWindow):
             "Texture resolution did not produce a textured preview for this model."
         )
         self._update_status(f"Starting geometry-only preview for {asset.virtual_path}...")
-        self.preview_worker = PreviewWorker(asset, out_dir, self.assets, self._pinned_texture_asset_id, graph_related_assets=[])
+        self.preview_worker = PreviewWorker(asset, out_dir, self.assets, self._pinned_texture_asset_id)
         self.preview_worker.progress.connect(self._update_status)
         self.preview_worker.finished_ok.connect(self._preview_finished)
         self.preview_worker.failed.connect(self._preview_failed)
@@ -4140,11 +4178,6 @@ class MainWindow(QMainWindow):
 
     def _pokemon_path_texture_candidates(self, asset: Asset, *, limit: int = 24) -> list[Asset]:
         return pokemon_path_texture_candidates(asset, self.assets, limit=limit)
-
-    def _graph_related_assets(self, asset: Asset, *, relation: str | None = None, limit: int = 64) -> list[Asset]:
-        if not getattr(self, "asset_graph", None):
-            return []
-        return self.asset_graph.related_assets(asset, self.assets_by_id, relation=relation, limit=limit)
 
     def _apply_tree_folder_labels(self, item: QTreeWidgetItem, parts: tuple[str, ...], rows: list[int], *, raw: bool) -> None:
         count = len(rows)

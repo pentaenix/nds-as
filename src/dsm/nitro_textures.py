@@ -94,6 +94,170 @@ class Tex0Info:
     block4: bytes
     textures: list[TextureEntry]
     palettes: list[PaletteEntry]
+    layout_name: str = ""
+
+
+@dataclass(slots=True)
+class TextureDecodeFailure:
+    texture_name: str
+    palette_hint: str | None
+    format_id: int
+    width: int
+    height: int
+    texture_offset: int
+    layout_name: str
+    reasons: list[str]
+
+
+@dataclass(slots=True)
+class GuidedDecodeReport:
+    images: list[DecodedImage]
+    failures: list[TextureDecodeFailure]
+    candidate_summaries: list[str]
+    selected_layout: str | None = None
+
+
+def texture_data_requirements(texture: TextureEntry) -> dict:
+    w = texture.width
+    h = texture.height
+    fmt = texture.format_id
+    if fmt == 1:
+        return {"block1": w * h, "palette_colors": 32}
+    if fmt == 2:
+        return {"block1": (w * h + 3) // 4, "palette_colors": 4}
+    if fmt == 3:
+        return {"block1": (w * h + 1) // 2, "palette_colors": 16}
+    if fmt == 4:
+        return {"block1": w * h, "palette_colors": 256}
+    if fmt == 5:
+        blocks_x = (w + 3) // 4
+        blocks_y = (h + 3) // 4
+        block_count = blocks_x * blocks_y
+        return {
+            "block2": block_count * 4,
+            "block3": block_count * 2,
+            "palette_colors": 4,
+        }
+    if fmt == 6:
+        return {"block1": w * h, "palette_colors": 8}
+    if fmt == 7:
+        return {"block1": w * h * 2, "palette_colors": 0}
+    return {"unsupported": True}
+
+
+def validate_texture_ranges(texture: TextureEntry, palette: PaletteEntry | None, tex0: Tex0Info) -> list[str]:
+    problems: list[str] = []
+    w, h = texture.width, texture.height
+    fmt = texture.format_id
+    if w <= 0 or h <= 0 or w > 4096 or h > 4096:
+        problems.append(f"invalid dimensions: {w}x{h}")
+        return problems
+    if fmt < 1 or fmt > 7:
+        problems.append(f"unsupported format id {fmt}")
+        return problems
+
+    req = texture_data_requirements(texture)
+    if req.get("unsupported"):
+        problems.append(f"unsupported format id {fmt}")
+        return problems
+
+    tex_off = texture.offset
+    if fmt in {1, 2, 3, 4, 6}:
+        need = req["block1"]
+        end = tex_off + need
+        if end > len(tex0.block1):
+            problems.append(f"block1 out of range: need end 0x{end:X}, block1 len 0x{len(tex0.block1):X}")
+    elif fmt == 5:
+        need2 = req["block2"]
+        need3 = req["block3"]
+        end2 = tex_off + need2
+        end3 = (tex_off // 2) + need3
+        if end2 > len(tex0.block2):
+            problems.append(f"block2 out of range: need end 0x{end2:X}, block2 len 0x{len(tex0.block2):X}")
+        if end3 > len(tex0.block3):
+            problems.append(f"block3 out of range: need end 0x{end3:X}, block3 len 0x{len(tex0.block3):X}")
+    elif fmt == 7:
+        need = req["block1"]
+        end = tex_off + need
+        if end > len(tex0.block1):
+            problems.append(f"block1 out of range: need end 0x{end:X}, block1 len 0x{len(tex0.block1):X}")
+
+    pal_colors = req.get("palette_colors", 0)
+    if pal_colors:
+        if palette is None:
+            problems.append(f"missing palette for indexed format {fmt}")
+        else:
+            pal_end = palette.offset + pal_colors * 2
+            if pal_end > len(tex0.block4):
+                problems.append(f"palette out of range: need end 0x{pal_end:X}, block4 len 0x{len(tex0.block4):X}")
+    return problems
+
+
+def attempt_decode_texture(texture: TextureEntry, palette: PaletteEntry | None, tex0: Tex0Info) -> tuple[DecodedImage | None, list[str]]:
+    problems = validate_texture_ranges(texture, palette, tex0)
+    if problems:
+        return None, problems
+    try:
+        decoded = decode_texture(texture, palette, tex0)
+    except Exception as exc:
+        return None, [f"decode exception: {exc}"]
+    if decoded is None:
+        if texture.format_id == 5:
+            return None, ["4x4 decode produced no visible blocks (palette index or texel data unreadable)"]
+        return None, ["decode returned no image"]
+    return decoded, []
+
+
+def _count_valid_texture_pairs(tex0: Tex0Info) -> int:
+    count = 0
+    paired_count = len(tex0.textures) if len(tex0.textures) == len(tex0.palettes) else None
+    for index, texture in enumerate(tex0.textures):
+        palettes = palette_options_for_texture(
+            texture,
+            tex0.palettes,
+            strict=True,
+            texture_index=index,
+            paired_count=paired_count,
+        )
+        if texture.format_id == 7:
+            palettes = [None]
+        for palette in palettes:
+            if not validate_texture_ranges(texture, palette, tex0):
+                count += 1
+    return count
+
+
+def score_tex0_candidate(
+    tex0: Tex0Info,
+    images: list[DecodedImage],
+    *,
+    requested_names: set[str] | None = None,
+) -> tuple[int, int, int, int, int]:
+    requested_cf = {name.casefold() for name in (requested_names or set())}
+    decoded_requested = 0
+    if requested_cf:
+        for image in images:
+            base_name = image.name.split("__", 1)[0]
+            if base_name.casefold() in requested_cf or image.name.casefold() in requested_cf:
+                decoded_requested += 1
+    palette_hint_matches = sum(1 for image in images if image.palette_name)
+    total = len(images)
+    valid_pairs = _count_valid_texture_pairs(tex0)
+    richness = len(tex0.textures) + len(tex0.palettes) + len(tex0.block1) + len(tex0.block2) + len(tex0.block3) + len(tex0.block4)
+    return (decoded_requested, palette_hint_matches, total, valid_pairs, richness)
+
+
+def _format_decode_failure(failure: TextureDecodeFailure, *, source_path: str = "") -> list[str]:
+    where = f"exact name {failure.texture_name} found in {source_path}" if source_path else f"exact name {failure.texture_name}"
+    lines = [
+        where,
+        f"  fmt={failure.format_id} size={failure.width}x{failure.height} tex_offset=0x{failure.texture_offset:X}"
+        + (f" palette={failure.palette_hint}" if failure.palette_hint else "")
+        + (f" layout={failure.layout_name}" if failure.layout_name else ""),
+    ]
+    for reason in failure.reasons:
+        lines.append(f"  decode failed: {reason}")
+    return lines
 
 
 def _decode_tex0_prepared(tex0: Tex0Info, *, max_images: int = 128, mode: str = "resolved") -> list[DecodedImage]:
@@ -115,10 +279,7 @@ def _decode_tex0_prepared(tex0: Tex0Info, *, max_images: int = 128, mode: str = 
         for palette in palettes:
             if len(images) >= max_images:
                 break
-            try:
-                decoded = decode_texture(texture, palette, tex0)
-            except Exception:
-                decoded = None
+            decoded, _problems = attempt_decode_texture(texture, palette, tex0)
             if decoded is not None:
                 if palette is not None and decoded.palette_name:
                     decoded.name = f"{decoded.name}__{decoded.palette_name}" if mode in {"all-palettes", "debug", "all"} else decoded.name
@@ -139,15 +300,16 @@ def decode_btx_images(data: bytes, *, max_images: int = 128, mode: str = "resolv
     if not candidates:
         return []
 
-    best: list[DecodedImage] = []
+    best_images: list[DecodedImage] = []
+    best_score: tuple[int, ...] = (-1, -1, -1, -1, -1)
     for candidate in candidates:
         prepared = prepare_tex0(candidate)
         images = _decode_tex0_prepared(prepared, max_images=max_images, mode=mode)
-        if len(images) > len(best):
-            best = images
-        if images:
-            return images[:max_images]
-    return best[:max_images]
+        score = score_tex0_candidate(prepared, images)
+        if score > best_score:
+            best_score = score
+            best_images = images
+    return best_images[:max_images]
 
 
 def decode_guided_tex0_images(
@@ -157,28 +319,52 @@ def decode_guided_tex0_images(
     max_images: int = 128,
 ) -> list[DecodedImage]:
     """Decode embedded/external TEX0 images using explicit material texture requests."""
+    return decode_guided_tex0_report(data, texture_requests=texture_requests, max_images=max_images).images
+
+
+def decode_guided_tex0_report(
+    data: bytes,
+    *,
+    texture_requests: Iterable[tuple[str, str | None]],
+    max_images: int = 128,
+) -> GuidedDecodeReport:
+    """Decode guided TEX0 images and return diagnostics for every candidate layout."""
+    requests = list(texture_requests)
+    requested_names = {name for name, _hint in requests if name}
     candidates = parse_tex0_candidates(data)
     if not candidates:
-        return []
+        return GuidedDecodeReport([], [], [])
 
-    best: list[DecodedImage] = []
-    for candidate in candidates:
+    best_images: list[DecodedImage] = []
+    best_failures: list[TextureDecodeFailure] = []
+    best_score: tuple[int, ...] = (-1, -1, -1, -1, -1)
+    best_layout: str | None = None
+    candidate_summaries: list[str] = []
+    selected_index: int | None = None
+
+    for cand_index, candidate in enumerate(candidates):
         tex0 = prepare_tex0(candidate)
         if not tex0.textures:
+            candidate_summaries.append(f"candidate {cand_index} ({tex0.layout_name or 'unknown'}): no textures parsed")
             continue
         tex_by_name = {t.name.casefold(): t for t in tex0.textures}
         paired_count = len(tex0.textures) if len(tex0.textures) == len(tex0.palettes) else None
         images: list[DecodedImage] = []
+        failures: list[TextureDecodeFailure] = []
         seen: set[tuple[str, str | None]] = set()
-        for texture_name, palette_hint in texture_requests:
+        common_failure = ""
+
+        for texture_name, palette_hint in requests:
             if len(images) >= max_images:
                 break
             texture = tex_by_name.get(texture_name.casefold())
             if texture is None:
                 continue
             texture_index = next((i for i, t in enumerate(tex0.textures) if t.name == texture.name), None)
+            decoded_any = False
+            last_reasons: list[str] = []
             for strict in (True, False):
-                if len(images) >= max_images:
+                if len(images) >= max_images or decoded_any:
                     break
                 palettes = palette_options_for_texture(
                     texture,
@@ -190,28 +376,122 @@ def decode_guided_tex0_images(
                 )
                 if texture.format_id == 7:
                     palettes = [None]
-                decoded_any = False
+                if not palettes and texture.format_id != 7:
+                    last_reasons = [f"missing palette for indexed format {texture.format_id}"]
+                    continue
                 for palette in palettes:
                     if len(images) >= max_images:
                         break
                     key = (texture.name, palette.name if palette else None)
                     if key in seen:
                         continue
-                    try:
-                        decoded = decode_texture(texture, palette, tex0)
-                    except Exception:
-                        decoded = None
+                    decoded, problems = attempt_decode_texture(texture, palette, tex0)
                     if decoded is not None:
                         seen.add(key)
                         images.append(decoded)
                         decoded_any = True
+                        break
+                    last_reasons = problems or last_reasons
                 if decoded_any:
                     break
-        if len(images) > len(best):
-            best = images
-        if images:
-            return images[:max_images]
-    return best[:max_images]
+            if not decoded_any:
+                failures.append(TextureDecodeFailure(
+                    texture_name=texture.name,
+                    palette_hint=palette_hint,
+                    format_id=texture.format_id,
+                    width=texture.width,
+                    height=texture.height,
+                    texture_offset=texture.offset,
+                    layout_name=tex0.layout_name,
+                    reasons=last_reasons or ["no palette/image could be decoded"],
+                ))
+                if last_reasons and not common_failure:
+                    common_failure = last_reasons[0]
+
+        score = score_tex0_candidate(tex0, images, requested_names=requested_names)
+        decoded_requested = score[0]
+        candidate_summaries.append(
+            f"candidate {cand_index} ({tex0.layout_name or 'unknown'}): decoded {decoded_requested} requested, {len(images)} total"
+            + (f", common failure {common_failure}" if common_failure and not images else "")
+        )
+        if score > best_score:
+            best_score = score
+            best_images = images
+            best_failures = failures
+            best_layout = tex0.layout_name or None
+            selected_index = cand_index
+
+    if selected_index is not None and 0 <= selected_index < len(candidate_summaries):
+        candidate_summaries[selected_index] += "; selected"
+    elif not best_images and candidates:
+        richest = max(
+            enumerate(candidates),
+            key=lambda item: (
+                len(item[1].textures),
+                len(item[1].palettes),
+                len(item[1].block1) + len(item[1].block2) + len(item[1].block3) + len(item[1].block4),
+            ),
+        )[0]
+        tex0 = prepare_tex0(candidates[richest])
+        _, failures = _guided_failures_for_candidate(tex0, requests)
+        if failures:
+            best_failures = failures
+
+    return GuidedDecodeReport(best_images[:max_images], best_failures, candidate_summaries, best_layout)
+
+
+def _guided_failures_for_candidate(
+    tex0: Tex0Info,
+    requests: list[tuple[str, str | None]],
+) -> tuple[list[DecodedImage], list[TextureDecodeFailure]]:
+    tex_by_name = {t.name.casefold(): t for t in tex0.textures}
+    paired_count = len(tex0.textures) if len(tex0.textures) == len(tex0.palettes) else None
+    images: list[DecodedImage] = []
+    failures: list[TextureDecodeFailure] = []
+    seen: set[tuple[str, str | None]] = set()
+    for texture_name, palette_hint in requests:
+        texture = tex_by_name.get(texture_name.casefold())
+        if texture is None:
+            continue
+        texture_index = next((i for i, t in enumerate(tex0.textures) if t.name == texture.name), None)
+        decoded_any = False
+        last_reasons: list[str] = []
+        for strict in (True, False):
+            palettes = palette_options_for_texture(
+                texture,
+                tex0.palettes,
+                strict=strict,
+                palette_hint=palette_hint,
+                texture_index=texture_index,
+                paired_count=paired_count,
+            )
+            if texture.format_id == 7:
+                palettes = [None]
+            for palette in palettes:
+                key = (texture.name, palette.name if palette else None)
+                if key in seen:
+                    continue
+                decoded, problems = attempt_decode_texture(texture, palette, tex0)
+                if decoded is not None:
+                    seen.add(key)
+                    images.append(decoded)
+                    decoded_any = True
+                    break
+                last_reasons = problems or last_reasons
+            if decoded_any:
+                break
+        if not decoded_any:
+            failures.append(TextureDecodeFailure(
+                texture_name=texture.name,
+                palette_hint=palette_hint,
+                format_id=texture.format_id,
+                width=texture.width,
+                height=texture.height,
+                texture_offset=texture.offset,
+                layout_name=tex0.layout_name,
+                reasons=last_reasons or ["no palette/image could be decoded"],
+            ))
+    return images, failures
 
 
 def parse_tex0_candidates(data: bytes) -> list[Tex0Info]:
@@ -228,11 +508,45 @@ def parse_tex0_candidates(data: bytes) -> list[Tex0Info]:
         ("scurest", 0x18, 0x20, 0x24, 0x2C, False, 0x30, 0x34),
         ("vgresource", 0x1C, 0x24, 0x28, 0x30, True, 0x34, 0x38),
     ]
-    for _name, block2_len_pos, block2_off_pos, block3_off_pos, block4_len_pos, block4_len_u32, palettes_off_pos, block4_off_pos in layouts:
-        info = _parse_tex0_layout(data, tex_off, block2_len_pos, block2_off_pos, block3_off_pos, block4_len_pos, block4_len_u32, palettes_off_pos, block4_off_pos)
+    for layout_name, block2_len_pos, block2_off_pos, block3_off_pos, block4_len_pos, block4_len_u32, palettes_off_pos, block4_off_pos in layouts:
+        info = _parse_tex0_layout(
+            data,
+            tex_off,
+            block2_len_pos,
+            block2_off_pos,
+            block3_off_pos,
+            block4_len_pos,
+            block4_len_u32,
+            palettes_off_pos,
+            block4_off_pos,
+            layout_name=layout_name,
+        )
         if info is not None:
             candidates.append(info)
     return candidates
+
+
+def _tex0_data_end(data: bytes, tex_off: int) -> int:
+    end = len(data)
+    if tex_off > 0 and len(data) >= 0x0C and data[:4] in {b"BMD0", b"BTX0"}:
+        container_size = read_u32le(data, 0x08)
+        if container_size > tex_off:
+            end = min(end, container_size)
+    return end
+
+
+def _rel_slice_between(data: bytes, tex_off: int, start_rel: int, end_rel: int, fallback_len: int) -> bytes:
+    if start_rel > 0 and end_rel > start_rel:
+        start = tex_off + start_rel
+        end = tex_off + end_rel
+        if 0 <= start < len(data) and end <= len(data) and end > start:
+            return data[start:end]
+    if start_rel > 0:
+        start = tex_off + start_rel
+        end = min(start + max(0, fallback_len), len(data))
+        if start < len(data) and end > start:
+            return data[start:end]
+    return b""
 
 
 def _parse_tex0_layout(
@@ -245,6 +559,8 @@ def _parse_tex0_layout(
     block4_len_u32: bool,
     palettes_off_pos: int,
     block4_off_pos: int,
+    *,
+    layout_name: str = "",
 ) -> Tex0Info | None:
     try:
         block1_len = read_u16le(data, tex_off + 0x0C) << 3
@@ -263,22 +579,24 @@ def _parse_tex0_layout(
     except Exception:
         return None
 
-    def rel_slice(off: int, length: int) -> bytes:
-        start = tex_off + off
-        end = start + max(0, length)
-        if off <= 0 or start < tex_off or start > len(data):
-            return b""
-        return data[start:min(end, len(data))]
+    tex0_end_rel = _tex0_data_end(data, tex_off) - tex_off
+
+    def slice_block(start_rel: int, next_rel: int, fallback_len: int) -> bytes:
+        if start_rel > 0 and next_rel > start_rel:
+            return _rel_slice_between(data, tex_off, start_rel, next_rel, 0)
+        if start_rel > 0 and tex0_end_rel > start_rel and next_rel <= 0:
+            return _rel_slice_between(data, tex_off, start_rel, tex0_end_rel, 0)
+        return _rel_slice_between(data, tex_off, start_rel, 0, fallback_len)
 
     if textures_off <= 0 or tex_off + textures_off >= len(data):
         return None
     if palettes_off <= 0 or tex_off + palettes_off >= len(data):
         return None
 
-    block1 = rel_slice(block1_off, block1_len)
-    block2 = rel_slice(block2_off, block2_len)
-    block3 = rel_slice(block3_off, max(block2_len // 2, 0))
-    block4 = rel_slice(block4_off, block4_len)
+    block1 = slice_block(block1_off, block2_off, block1_len)
+    block2 = slice_block(block2_off, block3_off, block2_len)
+    block3 = slice_block(block3_off, block4_off, max(block2_len // 2, 0))
+    block4 = slice_block(block4_off, tex0_end_rel, block4_len)
 
     textures: list[TextureEntry] = []
     for entry in parse_namelist(data, tex_off + textures_off, 8):
@@ -297,7 +615,15 @@ def _parse_tex0_layout(
 
     if not textures:
         return None
-    return Tex0Info(block1=block1, block2=block2, block3=block3, block4=block4, textures=textures, palettes=palettes)
+    return Tex0Info(
+        block1=block1,
+        block2=block2,
+        block3=block3,
+        block4=block4,
+        textures=textures,
+        palettes=palettes,
+        layout_name=layout_name,
+    )
 
 
 def parse_tex0(data: bytes) -> Tex0Info | None:
@@ -313,10 +639,10 @@ def parse_tex0(data: bytes) -> Tex0Info | None:
     if not candidates:
         return None
 
-    def richness(info: Tex0Info) -> tuple[int, int, int, int]:
+    def richness(info: Tex0Info) -> tuple[int, ...]:
         prepared = prepare_tex0(info)
-        decoded = len(_decode_tex0_prepared(prepared, max_images=32, mode="all-palettes"))
-        return (decoded, len(info.textures), len(info.palettes), len(info.block1) + len(info.block2) + len(info.block4))
+        images = _decode_tex0_prepared(prepared, max_images=32, mode="all-palettes")
+        return score_tex0_candidate(prepared, images)
 
     return max(candidates, key=richness)
 
@@ -432,6 +758,7 @@ def prepare_tex0(tex0: Tex0Info) -> Tex0Info:
         block4=block4,
         textures=tex0.textures,
         palettes=tex0.palettes,
+        layout_name=tex0.layout_name,
     )
 
 

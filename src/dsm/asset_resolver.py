@@ -12,6 +12,39 @@ from .model_texture_resolver import resolve_model_textures
 
 Progress = Callable[[str], None]
 
+MODEL_ANIMATION_MAGICS = frozenset({"BCA0", "BTA0", "BTP0", "BMA0", "BVA0", "BPC0"})
+
+
+def folder_sibling_assets(
+    asset: Asset,
+    assets: Iterable[Asset],
+    *,
+    allowed_magics: frozenset[str] | set[str] | None = None,
+    limit: int = 16,
+) -> list[Asset]:
+    """Return assets in the same ROM folder or container archive as ``asset``."""
+    allowed = set(allowed_magics or ())
+    out: list[Asset] = []
+    seen = {asset.asset_id}
+    for candidate in assets:
+        if candidate.asset_id in seen:
+            continue
+        if allowed and candidate.magic not in allowed:
+            continue
+        same_folder = bool(candidate.folder_key and candidate.folder_key == asset.folder_key)
+        same_container = bool(
+            asset.container_chain
+            and candidate.container_chain
+            and candidate.container_chain[: len(asset.container_chain)] == asset.container_chain
+        )
+        if not same_folder and not same_container:
+            continue
+        out.append(candidate)
+        seen.add(candidate.asset_id)
+        if len(out) >= limit:
+            break
+    return out
+
 
 @dataclass(slots=True)
 class RelatedAssetResult:

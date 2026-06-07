@@ -6,8 +6,8 @@ DSM does **not** download ROMs, bypass copy protection, or include extracted cop
 
 ## What v0.22 focuses on
 
-- Fast ROM indexing without building a global relationship graph at load time.
-- Lazy mapped folders that stay open while you preview, build relationships, or load textures.
+- Fast ROM indexing without heavy upfront analysis at load time.
+- Lazy mapped folders that stay open while you preview assets or load textures.
 - A right-side preview inspector: visual preview on top, selected-asset details and action buttons below.
 - Single-click preview for readable assets.
 - Selected-only smart export.
@@ -64,7 +64,7 @@ dsm.bat run
 3. Open the ROM.
 4. Browse the mapped tree or use filters like `BMD0`, `BTX0`, `cat:move-effects`, `mapped`, or `unmapped`.
 5. Select an asset to preview it.
-6. For models, use **Resolve Texture** to parse exact material/texture bindings, or **Build Relationships** to list deterministic texture/animation links.
+6. For models, use **Set Textures** to parse exact material/texture bindings and refresh the preview.
 7. Use **Export Selected…** for raw, readable, model, texture, or audio exports.
 8. Use **Save Session** when you want to continue later without rescanning the ROM.
 

@@ -33,7 +33,7 @@ KNOWN_EXTENSIONS = {
 
 # Hard safety caps. These keep DSM from turning a malformed/odd ROM blob into
 # a runaway allocation. Audio archives are expanded during explicit export or
-# relationship actions, not during initial ROM load.
+# explicit export actions, not during initial ROM load.
 MAX_LZ10_DECOMPRESSED_SIZE = 16 * 1024 * 1024
 MAX_SCAN_ASSETS = 50000
 MAX_CONTAINER_CHILDREN = 25000

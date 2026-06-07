@@ -6,7 +6,13 @@ from typing import Iterable, Literal
 
 from .scanner import Asset
 from .nitro_models import MaterialBinding, NsbmdManifest, parse_nsbmd_manifest
-from .nitro_textures import DecodedImage, decode_btx_images, decode_guided_tex0_images
+from .nitro_textures import (
+    DecodedImage,
+    _format_decode_failure,
+    decode_btx_images,
+    decode_guided_tex0_images,
+    decode_guided_tex0_report,
+)
 from .texture_library import TextureBinding, TextureLibrary
 
 ResolutionStatus = Literal[
@@ -99,15 +105,21 @@ def _embedded_resolution(
             embedded_reason = "embedded TEX0 in NSBMD; palette pairing was not proven, decoded inspectable variants"
             lines.append("- embedded TEX0 strict material/palette pairing did not decode; using embedded palette variants for preview/export")
     if not embedded_images and manifest.embedded_tex0 is not None:
-        guided = decode_guided_tex0_images(
+        guided_report = decode_guided_tex0_report(
             model.data,
             texture_requests=_material_texture_requests(manifest),
             max_images=128,
         )
-        if guided:
-            embedded_images = guided
+        if guided_report.images:
+            embedded_images = guided_report.images
             embedded_reason = "embedded TEX0 decoded via NSBMD material/dictionary requests"
             lines.append("- generic embedded decode failed; material-guided TEX0 decode succeeded")
+        elif guided_report.failures:
+            lines.append("- embedded TEX0 guided decode diagnostics:")
+            for failure in guided_report.failures[:12]:
+                lines.extend(f"- {line}" for line in _format_decode_failure(failure, source_path=model.virtual_path))
+            for summary in guided_report.candidate_summaries[:4]:
+                lines.append(f"- {summary}")
     if not embedded_images:
         return None
     lines.append(f"- embedded TEX0 decoded {len(embedded_images)} texture image(s)")
@@ -149,7 +161,7 @@ def _resolve_from_library(
             unresolved.append(material)
             continue
         for binding in matches:
-            image = texture_library.decode_binding(binding)
+            image, _diag_images, diag_lines = texture_library.decode_binding_with_diagnostics(binding)
             images_for_binding: list[DecodedImage] = []
             reason = binding.reason
             status_for_binding = "strict"
@@ -160,7 +172,11 @@ def _resolve_from_library(
                     status_for_binding = "palette-variant"
                 else:
                     unresolved.append(material)
-                    lines.append(f"- exact name {tex_name} found in {binding.texture_asset_path}, but no palette/image could be decoded")
+                    if diag_lines:
+                        for diag_line in diag_lines:
+                            lines.append(diag_line if diag_line.startswith("  ") else f"- {diag_line}")
+                    else:
+                        lines.append(f"- exact name {tex_name} found in {binding.texture_asset_path}, but no palette/image could be decoded")
                     continue
             else:
                 images_for_binding = [image]

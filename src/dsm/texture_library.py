@@ -5,7 +5,19 @@ from dataclasses import dataclass
 from typing import Callable, Iterable
 
 from .scanner import Asset
-from .nitro_textures import DecodedImage, Tex0Info, decode_texture, decode_btx_images, palette_options_for_texture, parse_tex0_candidates, prepare_tex0, parse_tex0_manifest
+from .nitro_textures import (
+    DecodedImage,
+    Tex0Info,
+    _format_decode_failure,
+    attempt_decode_texture,
+    decode_btx_images,
+    decode_guided_tex0_report,
+    palette_options_for_texture,
+    parse_tex0_candidates,
+    prepare_tex0,
+    parse_tex0_manifest,
+    score_tex0_candidate,
+)
 
 Progress = Callable[[str], None]
 
@@ -105,11 +117,20 @@ class TextureLibrary:
             ))
         return out
 
-    def _decode_texture_images(self, asset_id: str, texture_name: str) -> list[DecodedImage]:
+    def _decode_texture_images(self, asset_id: str, texture_name: str, palette_hint: str | None = None) -> list[DecodedImage]:
         asset = self.assets_by_id.get(asset_id)
         if asset is None:
             return []
-        tex = None
+        report = decode_guided_tex0_report(
+            asset.data,
+            texture_requests=[(texture_name, palette_hint)],
+            max_images=96,
+        )
+        if report.images:
+            return report.images
+
+        best_images: list[DecodedImage] = []
+        best_score: tuple[int, ...] = (-1, -1, -1, -1, -1)
         for candidate in parse_tex0_candidates(asset.data):
             prepared = prepare_tex0(candidate)
             tex = next((t for t in prepared.textures if t.name == texture_name), None)
@@ -117,44 +138,72 @@ class TextureLibrary:
                 continue
             paired_count = len(prepared.textures) if len(prepared.textures) == len(prepared.palettes) else None
             texture_index = next((i for i, t in enumerate(prepared.textures) if t.name == texture_name), None)
-            if tex.format_id == 7:
-                img = decode_texture(tex, None, prepared)
-                return [img] if img else []
             images: list[DecodedImage] = []
             palettes = palette_options_for_texture(
                 tex,
                 prepared.palettes,
                 strict=False,
+                palette_hint=palette_hint,
                 texture_index=texture_index,
                 paired_count=paired_count,
             )
+            if tex.format_id == 7:
+                palettes = [None]
             for palette in palettes:
-                try:
-                    img = decode_texture(tex, palette, prepared)
-                except Exception:
-                    img = None
-                if img is not None:
-                    img.name = f"{img.name}__{palette.name}" if palette is not None else img.name
-                    images.append(img)
-            if images:
-                return images
-        return []
+                decoded, _problems = attempt_decode_texture(tex, palette, prepared)
+                if decoded is not None:
+                    decoded.name = f"{decoded.name}__{palette.name}" if palette is not None else decoded.name
+                    images.append(decoded)
+            score = score_tex0_candidate(prepared, images, requested_names={texture_name})
+            if score > best_score:
+                best_score = score
+                best_images = images
+        return best_images
 
     def decode_texture_all_palettes(self, texture_asset_id: str, texture_name: str) -> list[DecodedImage]:
-        return self._decode_texture_images(texture_asset_id, texture_name)
+        asset = self.assets_by_id.get(texture_asset_id)
+        if asset is None:
+            return []
+        images = decode_btx_images(asset.data, max_images=128, mode="all-palettes")
+        return [
+            image
+            for image in images
+            if image.name == texture_name or image.name.startswith(f"{texture_name}__")
+        ]
+
+    def decode_binding_with_diagnostics(self, binding: TextureBinding) -> tuple[DecodedImage | None, list[DecodedImage], list[str]]:
+        asset = self.assets_by_id.get(binding.texture_asset_id)
+        if asset is None:
+            return None, [], ["texture asset not found in library"]
+        report = decode_guided_tex0_report(
+            asset.data,
+            texture_requests=[(binding.texture_name, binding.palette_name)],
+            max_images=96,
+        )
+        lines: list[str] = []
+        for failure in report.failures:
+            lines.extend(_format_decode_failure(failure, source_path=binding.texture_asset_path))
+        for summary in report.candidate_summaries[:4]:
+            lines.append(summary)
+        images = report.images
+        if not images:
+            images = self._decode_texture_images(binding.texture_asset_id, binding.texture_name, binding.palette_name)
+        image = None
+        if images:
+            if binding.palette_name:
+                for candidate in images:
+                    if candidate.palette_name == binding.palette_name or candidate.name.startswith(f"{binding.texture_name}__{binding.palette_name}"):
+                        image = candidate
+                        image.name = binding.texture_name
+                        break
+            if image is None:
+                image = images[0]
+                image.name = binding.texture_name
+        return image, images, lines
 
     def decode_binding(self, binding: TextureBinding) -> DecodedImage | None:
-        images = self._decode_texture_images(binding.texture_asset_id, binding.texture_name)
-        if not images:
-            return None
-        if binding.palette_name:
-            for image in images:
-                if image.palette_name == binding.palette_name or image.name.startswith(f"{binding.texture_name}__{binding.palette_name}"):
-                    image.name = binding.texture_name
-                    return image
-        first = images[0]
-        first.name = binding.texture_name
-        return first
+        image, _images, _lines = self.decode_binding_with_diagnostics(binding)
+        return image
 
 
 def texture_library_fingerprint(assets: Iterable[Asset]) -> tuple[int, str]:

@@ -138,7 +138,10 @@ def _parse_model_at(data: bytes, model_abs: int) -> tuple[list[MaterialBinding],
         material_list_abs = model_abs + materials_off
         mats = _parse_material_list(data, material_list_abs)
         if mats:
-            return mats, f"parsed material list at 0x{material_list_abs:X} ({len(mats)} material(s), model reports {num_materials})"
+            return mats, (
+                f"parsed material list at 0x{material_list_abs:X} "
+                f"({len(mats)} structural material binding(s); raw model byte +0x11 = {num_materials})"
+            )
         return [], f"material list present at 0x{material_list_abs:X}, but no structural material bindings parsed"
     except Exception as exc:
         return [], f"material parser failed: {exc}"

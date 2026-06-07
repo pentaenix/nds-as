@@ -1,4 +1,3 @@
-from dsm.asset_graph import AssetGraph, AssetRelation
 from dsm.scanner import Asset
 from dsm.session import save_session_zip, load_session_zip
 
@@ -28,11 +27,16 @@ def test_session_round_trip(tmp_path):
             mapping_category="textures",
         ),
     ]
-    graph = AssetGraph(relations={"a1": [AssetRelation("a2", "texture", 90, "test")], "a2": []})
-    path = save_session_zip(tmp_path / "work.dsmsession", assets=assets, graph=graph, rom_path="roms/game.nds", profile_text="profile", mapping_id="pokemon_bw2")
+    path = save_session_zip(
+        tmp_path / "work.dsmsession",
+        assets=assets,
+        rom_path="roms/game.nds",
+        profile_text="profile",
+        mapping_id="pokemon_bw2",
+    )
     loaded = load_session_zip(path)
     loaded_assets = loaded["assets"]
     assert len(loaded_assets) == 2
     assert loaded_assets[0].data == b"BMD0demo"
     assert loaded_assets[1].original_data == b"rawBTX0demo"
-    assert loaded["graph"].related_ids("a1") == ["a2"]
+    assert loaded["manifest"]["mapping_id"] == "pokemon_bw2"
