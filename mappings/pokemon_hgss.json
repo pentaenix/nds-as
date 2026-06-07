@@ -1,0 +1,742 @@
+{
+  "schemaVersion": 1,
+  "mappingId": "pokemon_hgss",
+  "generatedOn": "2026-06-05",
+  "gameFamily": "pokemon_gen4",
+  "coverage": "strong-public-narc-map-partial-relations",
+  "notes": "HGSS has strong public numbered NARC notes. This seed favors asset extraction/rendering categories and includes known model↔texture relationship archives.",
+  "games": [
+    {
+      "title": "Pokémon HeartGold",
+      "shortTitle": "HeartGold",
+      "romCodes": [
+        "IPK*"
+      ],
+      "regions": [
+        "JP",
+        "US",
+        "EU",
+        "KR"
+      ]
+    },
+    {
+      "title": "Pokémon SoulSilver",
+      "shortTitle": "SoulSilver",
+      "romCodes": [
+        "IPG*"
+      ],
+      "regions": [
+        "JP",
+        "US",
+        "EU",
+        "KR"
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "id": "pp_hgss_fs",
+      "name": "Project Pokémon: HGSS File System",
+      "url": "https://projectpokemon.org/home/docs/gen-4/hgss-file-system-r21/",
+      "type": "community_filelist"
+    },
+    {
+      "id": "hiro_hgss",
+      "name": "HG/SS File Descriptions / NARC table",
+      "url": "https://hirotdk.neocities.org/NARCTableHGSS.txt",
+      "type": "community_filelist"
+    },
+    {
+      "id": "nsbmd_docs",
+      "name": "scurest NSBMD/NSBTX docs",
+      "url": "https://github.com/scurest/nsbmd_docs/blob/master/nsbmd_docs.txt",
+      "type": "format_reference"
+    },
+    {
+      "id": "dspre",
+      "name": "DSPRE README",
+      "url": "https://github.com/DS-Pokemon-Rom-Editor/DSPRE/blob/main/README.md",
+      "type": "tool_reference"
+    },
+    {
+      "id": "pdsms",
+      "name": "Pokémon DS Map Studio releases",
+      "url": "https://github.com/Trifindo/Pokemon-DS-Map-Studio/releases",
+      "type": "tool_reference"
+    },
+    {
+      "id": "nitropaint",
+      "name": "NitroPaint README",
+      "url": "https://github.com/Garhoogin/NitroPaint",
+      "type": "tool_reference"
+    }
+  ],
+  "archiveAliases": [],
+  "archives": [
+    {
+      "path": "/a/0/4/2",
+      "label": "Area data: assigns area_build and map_tex_set to maps",
+      "category": "map-relations",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC"
+      ],
+      "sources": [
+        "hiro_hgss",
+        "pp_hgss_fs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/4/3",
+      "label": "Area build: assigns textures to models",
+      "category": "map-relations",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC"
+      ],
+      "sources": [
+        "hiro_hgss",
+        "pp_hgss_fs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/4/4",
+      "label": "Map textures / area_map_texset",
+      "category": "textures",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "BTX0",
+        "NSBTX"
+      ],
+      "sources": [
+        "hiro_hgss",
+        "pp_hgss_fs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/7/0",
+      "label": "Building textures / areabm_texset",
+      "category": "textures",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "BTX0",
+        "NSBTX"
+      ],
+      "sources": [
+        "hiro_hgss",
+        "pp_hgss_fs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/4/0",
+      "label": "Exterior building/map models / bm_field",
+      "category": "models",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "BMD0",
+        "NSBMD"
+      ],
+      "sources": [
+        "hiro_hgss",
+        "pp_hgss_fs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/1/4/8",
+      "label": "Interior building/room models / bm_room",
+      "category": "models",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "BMD0",
+        "NSBMD"
+      ],
+      "sources": [
+        "hiro_hgss",
+        "pp_hgss_fs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/1/0/6",
+      "label": "Building/model animation files / bm_anime",
+      "category": "animations",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NSBCA",
+        "NSBTA",
+        "NSBTP",
+        "NSBMA"
+      ],
+      "sources": [
+        "hiro_hgss",
+        "pp_hgss_fs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/1/0/7",
+      "label": "Exterior model animation list",
+      "category": "model-metadata",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "DAT"
+      ],
+      "sources": [
+        "hiro_hgss",
+        "pp_hgss_fs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/1/0/8",
+      "label": "Interior model animation list",
+      "category": "model-metadata",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "DAT"
+      ],
+      "sources": [
+        "hiro_hgss",
+        "pp_hgss_fs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/fielddata/build_model/bm_field_matshp.dat",
+      "label": "Exterior building material/shape metadata",
+      "category": "model-metadata",
+      "confidence": "community-known",
+      "assetTypes": [
+        "DAT"
+      ],
+      "sources": [
+        "hiro_hgss"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/fielddata/build_model/bm_room_matshp.dat",
+      "label": "Interior building material/shape metadata",
+      "category": "model-metadata",
+      "confidence": "community-known",
+      "assetTypes": [
+        "DAT"
+      ],
+      "sources": [
+        "hiro_hgss"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/6/5",
+      "label": "Map files / land_data",
+      "category": "maps",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC"
+      ],
+      "sources": [
+        "hiro_hgss",
+        "pp_hgss_fs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/4/1",
+      "label": "Map matrix/connections",
+      "category": "maps",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC"
+      ],
+      "sources": [
+        "hiro_hgss",
+        "pp_hgss_fs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/fielddata/maptable/mapname.bin",
+      "label": "Internal map names",
+      "category": "maps",
+      "confidence": "community-known",
+      "assetTypes": [
+        "BIN"
+      ],
+      "sources": [
+        "hiro_hgss"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/1/0/3",
+      "label": "Field effects / fldeff",
+      "category": "effects",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC"
+      ],
+      "sources": [
+        "hiro_hgss",
+        "pp_hgss_fs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/1/3/9",
+      "label": "Field animations / fldtanime",
+      "category": "effects",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC"
+      ],
+      "sources": [
+        "hiro_hgss",
+        "pp_hgss_fs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/8/1",
+      "label": "Overworld character models / mmodel",
+      "category": "models",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "BMD0",
+        "NSBMD"
+      ],
+      "sources": [
+        "hiro_hgss",
+        "pp_hgss_fs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/9/2",
+      "label": "Move model list",
+      "category": "map-relations",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC"
+      ],
+      "sources": [
+        "hiro_hgss",
+        "pp_hgss_fs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/0/4",
+      "label": "Pokémon battle sprites / pokegra",
+      "category": "pokemon-sprites",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR"
+      ],
+      "sources": [
+        "hiro_hgss",
+        "pp_hgss_fs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/1/1/1",
+      "label": "Pokémon sprite animation data / pokeanm",
+      "category": "pokemon-sprites",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NANR"
+      ],
+      "sources": [
+        "hiro_hgss",
+        "pp_hgss_fs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/2/0",
+      "label": "Pokémon icons",
+      "category": "icons",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR"
+      ],
+      "sources": [
+        "hiro_hgss",
+        "pp_hgss_fs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/2/2/8",
+      "label": "Leftover DP Pokémon icons",
+      "category": "icons",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR"
+      ],
+      "sources": [
+        "hiro_hgss"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/0/6",
+      "label": "Trainer backsprites",
+      "category": "trainer-sprites",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR"
+      ],
+      "sources": [
+        "hiro_hgss",
+        "pp_hgss_fs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/5/8",
+      "label": "Trainer front sprites",
+      "category": "trainer-sprites",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR"
+      ],
+      "sources": [
+        "hiro_hgss",
+        "pp_hgss_fs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/2/2",
+      "label": "Move effect tiles / wechar",
+      "category": "move-effects",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR"
+      ],
+      "sources": [
+        "hiro_hgss",
+        "pp_hgss_fs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/2/3",
+      "label": "Move effect palettes / wepltt",
+      "category": "move-effects",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCLR"
+      ],
+      "sources": [
+        "hiro_hgss",
+        "pp_hgss_fs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/2/4",
+      "label": "Move effect cells / wecell",
+      "category": "move-effects",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCER"
+      ],
+      "sources": [
+        "hiro_hgss",
+        "pp_hgss_fs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/2/5",
+      "label": "Move effect animations / wecellanm",
+      "category": "move-effects",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NANR"
+      ],
+      "sources": [
+        "hiro_hgss",
+        "pp_hgss_fs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/1/8",
+      "label": "Item icons",
+      "category": "icons",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR"
+      ],
+      "sources": [
+        "hiro_hgss",
+        "pp_hgss_fs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/4/6",
+      "label": "Title screen graphics",
+      "category": "ui",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR",
+        "NSCR"
+      ],
+      "sources": [
+        "hiro_hgss",
+        "pp_hgss_fs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/2/3/8",
+      "label": "S.S. / ship demo assets",
+      "category": "cutscene",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "BMD0",
+        "BTX0",
+        "NCGR",
+        "NCLR"
+      ],
+      "sources": [
+        "hiro_hgss"
+      ],
+      "tags": [],
+      "notes": [
+        "Likely relevant for ship/boat-related research in HGSS."
+      ]
+    },
+    {
+      "path": "/a/0/2/9",
+      "label": "Move particle data / waza_particle",
+      "category": "move-effects",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "binary-particle"
+      ],
+      "sources": [
+        "hiro_hgss"
+      ],
+      "tags": [
+        "battle",
+        "move",
+        "particle",
+        "effect"
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "id": "hgss_area_data_selects_texture_sets",
+      "from": "/a/0/4/2",
+      "to": [
+        "/a/0/4/3",
+        "/a/0/4/4"
+      ],
+      "relationship": "area-selects-build-and-map-textures",
+      "confidence": "community-known",
+      "sources": [
+        "hiro_hgss"
+      ]
+    },
+    {
+      "id": "hgss_area_build_assigns_textures",
+      "from": "/a/0/4/3",
+      "to": [
+        "/a/0/4/0",
+        "/a/1/4/8",
+        "/a/0/7/0",
+        "/a/0/4/4"
+      ],
+      "relationship": "assigns-textures-to-models",
+      "confidence": "community-known",
+      "sources": [
+        "hiro_hgss"
+      ]
+    },
+    {
+      "id": "hgss_build_model_to_areabm_texset",
+      "from": [
+        "/a/0/4/0",
+        "/a/1/4/8"
+      ],
+      "to": "/a/0/7/0",
+      "relationship": "candidate-external-texture-pack",
+      "method": "area_build + material names",
+      "confidence": "community-known",
+      "sources": [
+        "hiro_hgss",
+        "nsbmd_docs"
+      ]
+    },
+    {
+      "id": "hgss_sprite_palette_pairing",
+      "from": "NCGR/RGCN entries",
+      "to": "NCLR/RLCN entries",
+      "relationship": "palette-pair",
+      "method": "same archive index/name first; then known bundle rules",
+      "confidence": "heuristic",
+      "sources": [
+        "nitropaint"
+      ]
+    }
+  ],
+  "uiGroups": [
+    {
+      "label": "Maps & World",
+      "categories": [
+        "maps",
+        "models",
+        "textures",
+        "map-relations",
+        "model-metadata",
+        "effects",
+        "cutscene"
+      ]
+    },
+    {
+      "label": "Sprites & 2D",
+      "categories": [
+        "pokemon-sprites",
+        "trainer-sprites",
+        "icons"
+      ]
+    },
+    {
+      "label": "Battle & Moves",
+      "categories": [
+        "move-effects"
+      ]
+    },
+    {
+      "label": "UI",
+      "categories": [
+        "ui"
+      ]
+    }
+  ],
+  "decoderHints": [
+    {
+      "format": "NARC",
+      "role": "container",
+      "notes": "Parse and index child files lazily."
+    },
+    {
+      "format": "BMD0/NSBMD",
+      "role": "3d-model",
+      "notes": "May embed textures or reference external BTX0/NSBTX texture/palette data."
+    },
+    {
+      "format": "BTX0/NSBTX",
+      "role": "3d-texture-pack",
+      "notes": "Decode texture entries and palettes to PNG; use names to match model materials."
+    },
+    {
+      "format": "RGCN/NCGR",
+      "role": "2d-tile-graphics",
+      "notes": "Needs NCLR palette and often NSCR/NCER layout for meaningful preview."
+    },
+    {
+      "format": "RLCN/NCLR",
+      "role": "palette",
+      "notes": "Pair with NCGR/NSCR/NCER/NANR where possible."
+    },
+    {
+      "format": "RCSN/NSCR",
+      "role": "tilemap",
+      "notes": "Pair with NCGR and NCLR."
+    },
+    {
+      "format": "RECN/NCER",
+      "role": "sprite-cells",
+      "notes": "Pair with NCGR, NCLR, and optionally NANR."
+    },
+    {
+      "format": "RNAN/NANR",
+      "role": "sprite-animation",
+      "notes": "Pair with NCER/NCGR/NCLR."
+    }
+  ],
+  "searchPresets": [
+    {
+      "id": "battle_move_effects",
+      "label": "Battle move effects / grass sprite hunt",
+      "query": "cat:move-effects|cat:move-animations|path:wazaeffect|path:a/0/2/2|path:a/0/2/3|path:a/0/2/4|path:a/0/2/5|path:a/0/2/9|path:a/0/6/6",
+      "description": "Start here for move VFX such as grass/leaves/vines: tiles/graphics, palettes, cell layouts, cell animations, particles, and move animation scripts.",
+      "workflow": [
+        "Filter shows the known move-effect archives first.",
+        "Open tile/texture rows (NCGR/RGCN/BTX0) and use Export Readable to create PNG/contact sheets.",
+        "Open palette rows (NCLR/RLCN) beside them and export swatches.",
+        "Open cell/cell-animation rows (NCER/RECN and NANR/RNAN) as raw exports until DSM can fully compose those animations.",
+        "For Gen 5, move animation scripts are often separate from the sprite graphics, so search scripts and visual archives together."
+      ]
+    },
+    {
+      "id": "battle_assets",
+      "label": "Battle assets",
+      "query": "cat:battle|cat:battle-textures|cat:move-effects|cat:move-animations|label:battle|path:battle|path:waza|path:a/0/1/1|path:a/0/6/6",
+      "description": "Battle backgrounds, battle UI/objects, move-effect graphics, and animation/script candidates.",
+      "workflow": [
+        "Use this when you know the asset appears in battle but do not know if it is a sprite, background, texture, or script."
+      ]
+    },
+    {
+      "id": "models_with_textures",
+      "label": "Models + likely textures",
+      "query": "magic:BMD0|magic:BTX0|cat:models|cat:textures|cat:model-metadata|cat:map-relations",
+      "description": "Show models, texture packs, and mapping/area relation archives used to bind models to textures.",
+      "workflow": [
+        "Click BMD0 for model preview. If gray, select a BTX0 from the same mapped group and Use Selected BTX0."
+      ]
+    },
+    {
+      "id": "music_sfx",
+      "label": "Music / SFX",
+      "query": "cat:audio|magic:SDAT|magic:SSEQ|magic:SSAR|magic:SBNK|magic:SWAR|magic:SWAV|magic:STRM",
+      "description": "Sound archives, sequence music, SFX archives, banks, wave archives, samples, and streams.",
+      "workflow": [
+        "Use Export Readable for a lossless audio bundle and WAV previews when DSM can decode sample/stream data."
+      ]
+    }
+  ]
+}

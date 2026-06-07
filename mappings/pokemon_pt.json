@@ -1,0 +1,726 @@
+{
+  "schemaVersion": 1,
+  "mappingId": "pokemon_pt",
+  "generatedOn": "2026-06-05",
+  "gameFamily": "pokemon_gen4",
+  "coverage": "good-filelist-partial-semantic",
+  "notes": "Platinum paths are based on Project Pokémon rawdb. Many DP assets remain, with Platinum-specific copies and additions.",
+  "games": [
+    {
+      "title": "Pokémon Platinum",
+      "shortTitle": "Platinum",
+      "romCodes": [
+        "CPU*"
+      ],
+      "regions": [
+        "JP",
+        "US",
+        "EU",
+        "KR"
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "id": "pp_platinum_rawdb",
+      "name": "Project Pokémon rawdb: Pokémon Platinum internal filelist",
+      "url": "https://projectpokemon.org/rawdb/platinum/",
+      "type": "community_filelist"
+    },
+    {
+      "id": "pp_diamond_rawdb",
+      "name": "Project Pokémon rawdb: Pokémon Diamond internal filelist",
+      "url": "https://projectpokemon.org/rawdb/diamond/",
+      "type": "community_filelist"
+    },
+    {
+      "id": "nsbmd_docs",
+      "name": "scurest NSBMD/NSBTX docs",
+      "url": "https://github.com/scurest/nsbmd_docs/blob/master/nsbmd_docs.txt",
+      "type": "format_reference"
+    },
+    {
+      "id": "dspre",
+      "name": "DSPRE README",
+      "url": "https://github.com/DS-Pokemon-Rom-Editor/DSPRE/blob/main/README.md",
+      "type": "tool_reference"
+    },
+    {
+      "id": "pdsms",
+      "name": "Pokémon DS Map Studio releases",
+      "url": "https://github.com/Trifindo/Pokemon-DS-Map-Studio/releases",
+      "type": "tool_reference"
+    },
+    {
+      "id": "nitropaint",
+      "name": "NitroPaint README",
+      "url": "https://github.com/Garhoogin/NitroPaint",
+      "type": "tool_reference"
+    }
+  ],
+  "archiveAliases": [],
+  "archives": [
+    {
+      "path": "/fielddata/areadata/area_build_model/area_build.narc",
+      "label": "Area/build model assignment data",
+      "category": "map-relations",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/fielddata/areadata/area_build_model/areabm_texset.narc",
+      "label": "Area building texture sets",
+      "category": "textures",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "BTX0",
+        "NSBTX"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/fielddata/areadata/area_data.narc",
+      "label": "Area data",
+      "category": "map-relations",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/fielddata/areadata/area_map_tex/map_tex_set.narc",
+      "label": "Map texture sets",
+      "category": "textures",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "BTX0",
+        "NSBTX"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/fielddata/areadata/area_move_model/move_model_list.narc",
+      "label": "Move model list",
+      "category": "map-relations",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/fielddata/build_model/build_model.narc",
+      "label": "3D building/map models",
+      "category": "models",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "BMD0",
+        "NSBMD"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/fielddata/build_model/build_model_matshp.dat",
+      "label": "Building model material/shape data",
+      "category": "model-metadata",
+      "confidence": "community-known",
+      "assetTypes": [
+        "DAT"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/fielddata/land_data/land_data.narc",
+      "label": "Map/land data",
+      "category": "maps",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/fielddata/mapmatrix/map_matrix.narc",
+      "label": "Map matrix/connections",
+      "category": "maps",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/fielddata/maptable/mapname.bin",
+      "label": "Internal map names",
+      "category": "maps",
+      "confidence": "community-known",
+      "assetTypes": [
+        "BIN"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/fielddata/eventdata/zone_event.narc",
+      "label": "Zone events",
+      "category": "events",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/fielddata/script/scr_seq.narc",
+      "label": "Scripts",
+      "category": "scripts",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/fielddata/tornworld/tw_arc.narc",
+      "label": "Distortion World/Torn World map data",
+      "category": "maps",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/fielddata/tornworld/tw_arc_attr.narc",
+      "label": "Distortion World/Torn World attributes",
+      "category": "maps",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/data/mmodel/mmodel.narc",
+      "label": "Map/field moving models",
+      "category": "models",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "BMD0",
+        "NSBMD"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/data/mmodel/fldeff.narc",
+      "label": "Field effects",
+      "category": "effects",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/data/*.nsbtx",
+      "label": "Loose field/minimap texture files",
+      "category": "textures",
+      "confidence": "community-known",
+      "assetTypes": [
+        "BTX0",
+        "NSBTX"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/data/*.NCGR",
+      "label": "Loose 2D tile graphics",
+      "category": "tiles",
+      "confidence": "community-known",
+      "assetTypes": [
+        "RGCN",
+        "NCGR"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/data/*.NCLR",
+      "label": "Loose 2D palettes",
+      "category": "palettes",
+      "confidence": "community-known",
+      "assetTypes": [
+        "RLCN",
+        "NCLR"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/data/*.NSCR",
+      "label": "Loose 2D screen/tilemaps",
+      "category": "tilemaps",
+      "confidence": "community-known",
+      "assetTypes": [
+        "RCSN",
+        "NSCR"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/data/*.NCER",
+      "label": "Loose sprite cell layouts",
+      "category": "sprites",
+      "confidence": "community-known",
+      "assetTypes": [
+        "RECN",
+        "NCER"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/data/*.NANR",
+      "label": "Loose sprite animations",
+      "category": "animations",
+      "confidence": "community-known",
+      "assetTypes": [
+        "RNAN",
+        "NANR"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/poketool/pokegra/pl_pokegra.narc",
+      "label": "Platinum Pokémon battle sprites",
+      "category": "pokemon-sprites",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/poketool/pokegra/pokegra.narc",
+      "label": "DP Pokémon battle sprites retained in Platinum",
+      "category": "pokemon-sprites",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/poketool/pokegra/pl_otherpoke.narc",
+      "label": "Platinum alternate-form Pokémon sprites",
+      "category": "pokemon-sprites",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/poketool/pokegra/otherpoke.narc",
+      "label": "DP alternate-form Pokémon sprites retained in Platinum",
+      "category": "pokemon-sprites",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/poketool/icongra/pl_poke_icon.narc",
+      "label": "Platinum Pokémon icons",
+      "category": "icons",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/poketool/icongra/poke_icon.narc",
+      "label": "DP Pokémon icons retained in Platinum",
+      "category": "icons",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/poketool/trgra/trfgra.narc",
+      "label": "Trainer front sprites",
+      "category": "trainer-sprites",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/poketool/trgra/trbgra.narc",
+      "label": "Trainer back sprites",
+      "category": "trainer-sprites",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/battle/graphic/pl_batt_bg.narc",
+      "label": "Platinum battle backgrounds",
+      "category": "battle",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR",
+        "NSCR"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/battle/graphic/pl_batt_obj.narc",
+      "label": "Platinum battle object graphics",
+      "category": "battle",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR",
+        "NCER",
+        "NANR"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/battle/graphic/batt_bg.narc",
+      "label": "DP battle backgrounds retained",
+      "category": "battle",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR",
+        "NSCR"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/battle/graphic/batt_obj.narc",
+      "label": "DP battle object graphics retained",
+      "category": "battle",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR",
+        "NCER",
+        "NANR"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/graphic/*.narc",
+      "label": "General UI and field graphics",
+      "category": "ui",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR",
+        "NSCR",
+        "NCER",
+        "NANR"
+      ],
+      "sources": [
+        "pp_platinum_rawdb"
+      ],
+      "tags": []
+    }
+  ],
+  "relationships": [
+    {
+      "id": "pt_area_to_map_textures",
+      "from": "/fielddata/areadata/area_data.narc",
+      "to": "/fielddata/areadata/area_map_tex/map_tex_set.narc",
+      "relationship": "area-selects-map-texture-set",
+      "confidence": "heuristic",
+      "sources": [
+        "pp_platinum_rawdb"
+      ]
+    },
+    {
+      "id": "pt_build_models_to_textures",
+      "from": "/fielddata/build_model/build_model.narc",
+      "to": "/fielddata/areadata/area_build_model/areabm_texset.narc",
+      "relationship": "candidate-external-texture-pack",
+      "method": "area_build/map role + NSBMD material name ↔ NSBTX texture/palette name",
+      "confidence": "heuristic",
+      "sources": [
+        "pp_platinum_rawdb",
+        "nsbmd_docs"
+      ]
+    },
+    {
+      "id": "dp_sprites_palette_pairing",
+      "from": "NCGR/RGCN entries",
+      "to": "NCLR/RLCN entries",
+      "relationship": "palette-pair",
+      "method": "same archive index/name first; then known bundle rules",
+      "confidence": "heuristic",
+      "sources": [
+        "nitropaint"
+      ]
+    }
+  ],
+  "uiGroups": [
+    {
+      "label": "Maps & World",
+      "categories": [
+        "maps",
+        "models",
+        "textures",
+        "map-relations",
+        "model-metadata",
+        "effects"
+      ]
+    },
+    {
+      "label": "Sprites & 2D",
+      "categories": [
+        "pokemon-sprites",
+        "trainer-sprites",
+        "icons",
+        "tiles",
+        "palettes",
+        "tilemaps",
+        "sprites",
+        "animations"
+      ]
+    },
+    {
+      "label": "Battle & Moves",
+      "categories": [
+        "battle",
+        "move-effects"
+      ]
+    },
+    {
+      "label": "UI",
+      "categories": [
+        "ui"
+      ]
+    }
+  ],
+  "decoderHints": [
+    {
+      "format": "NARC",
+      "role": "container",
+      "notes": "Parse and index child files lazily."
+    },
+    {
+      "format": "BMD0/NSBMD",
+      "role": "3d-model",
+      "notes": "May embed textures or reference external BTX0/NSBTX texture/palette data."
+    },
+    {
+      "format": "BTX0/NSBTX",
+      "role": "3d-texture-pack",
+      "notes": "Decode texture entries and palettes to PNG; use names to match model materials."
+    },
+    {
+      "format": "RGCN/NCGR",
+      "role": "2d-tile-graphics",
+      "notes": "Needs NCLR palette and often NSCR/NCER layout for meaningful preview."
+    },
+    {
+      "format": "RLCN/NCLR",
+      "role": "palette",
+      "notes": "Pair with NCGR/NSCR/NCER/NANR where possible."
+    },
+    {
+      "format": "RCSN/NSCR",
+      "role": "tilemap",
+      "notes": "Pair with NCGR and NCLR."
+    },
+    {
+      "format": "RECN/NCER",
+      "role": "sprite-cells",
+      "notes": "Pair with NCGR, NCLR, and optionally NANR."
+    },
+    {
+      "format": "RNAN/NANR",
+      "role": "sprite-animation",
+      "notes": "Pair with NCER/NCGR/NCLR."
+    }
+  ],
+  "searchPresets": [
+    {
+      "id": "battle_move_effects",
+      "label": "Battle move effects / grass sprite hunt",
+      "query": "cat:move-effects|cat:move-animations|path:wazaeffect|path:a/0/2/2|path:a/0/2/3|path:a/0/2/4|path:a/0/2/5|path:a/0/2/9|path:a/0/6/6",
+      "description": "Start here for move VFX such as grass/leaves/vines: tiles/graphics, palettes, cell layouts, cell animations, particles, and move animation scripts.",
+      "workflow": [
+        "Filter shows the known move-effect archives first.",
+        "Open tile/texture rows (NCGR/RGCN/BTX0) and use Export Readable to create PNG/contact sheets.",
+        "Open palette rows (NCLR/RLCN) beside them and export swatches.",
+        "Open cell/cell-animation rows (NCER/RECN and NANR/RNAN) as raw exports until DSM can fully compose those animations.",
+        "For Gen 5, move animation scripts are often separate from the sprite graphics, so search scripts and visual archives together."
+      ]
+    },
+    {
+      "id": "battle_assets",
+      "label": "Battle assets",
+      "query": "cat:battle|cat:battle-textures|cat:move-effects|cat:move-animations|label:battle|path:battle|path:waza|path:a/0/1/1|path:a/0/6/6",
+      "description": "Battle backgrounds, battle UI/objects, move-effect graphics, and animation/script candidates.",
+      "workflow": [
+        "Use this when you know the asset appears in battle but do not know if it is a sprite, background, texture, or script."
+      ]
+    },
+    {
+      "id": "models_with_textures",
+      "label": "Models + likely textures",
+      "query": "magic:BMD0|magic:BTX0|cat:models|cat:textures|cat:model-metadata|cat:map-relations",
+      "description": "Show models, texture packs, and mapping/area relation archives used to bind models to textures.",
+      "workflow": [
+        "Click BMD0 for model preview. If gray, select a BTX0 from the same mapped group and Use Selected BTX0."
+      ]
+    },
+    {
+      "id": "music_sfx",
+      "label": "Music / SFX",
+      "query": "cat:audio|magic:SDAT|magic:SSEQ|magic:SSAR|magic:SBNK|magic:SWAR|magic:SWAV|magic:STRM",
+      "description": "Sound archives, sequence music, SFX archives, banks, wave archives, samples, and streams.",
+      "workflow": [
+        "Use Export Readable for a lossless audio bundle and WAV previews when DSM can decode sample/stream data."
+      ]
+    }
+  ]
+}

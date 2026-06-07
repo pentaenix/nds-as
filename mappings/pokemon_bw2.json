@@ -1,0 +1,875 @@
+{
+  "schemaVersion": 1,
+  "mappingId": "pokemon_bw2",
+  "generatedOn": "2026-06-05",
+  "gameFamily": "pokemon_gen5",
+  "coverage": "strong-public-narc-map-with-unknowns",
+  "notes": "B2W2 has a rich community list, but many entries remain uncertain. This seed focuses on model/texture/sprite/animation discovery and keeps uncertain entries marked.",
+  "games": [
+    {
+      "title": "Pokémon Black 2",
+      "shortTitle": "Black 2",
+      "romCodes": [
+        "IRE*"
+      ],
+      "regions": [
+        "JP",
+        "US",
+        "EU",
+        "KR"
+      ]
+    },
+    {
+      "title": "Pokémon White 2",
+      "shortTitle": "White 2",
+      "romCodes": [
+        "IRD*"
+      ],
+      "regions": [
+        "JP",
+        "US",
+        "EU",
+        "KR"
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "id": "platinum_master_bw2",
+      "name": "PlatinumMaster B2W2 NARC list",
+      "url": "https://gist.github.com/PlatinumMaster/9a12681f6c001a052444b21a27eb9f11",
+      "type": "community_filelist"
+    },
+    {
+      "id": "pp_bwbw2",
+      "name": "Project Pokémon: BW/BW2 Narc Locations download page",
+      "url": "https://projectpokemon.org/home/files/file/2113-bwbw2-narc-locations/",
+      "type": "community_filelist"
+    },
+    {
+      "id": "nsbmd_docs",
+      "name": "scurest NSBMD/NSBTX docs",
+      "url": "https://github.com/scurest/nsbmd_docs/blob/master/nsbmd_docs.txt",
+      "type": "format_reference"
+    },
+    {
+      "id": "dspre",
+      "name": "DSPRE README",
+      "url": "https://github.com/DS-Pokemon-Rom-Editor/DSPRE/blob/main/README.md",
+      "type": "tool_reference"
+    },
+    {
+      "id": "pdsms",
+      "name": "Pokémon DS Map Studio releases",
+      "url": "https://github.com/Trifindo/Pokemon-DS-Map-Studio/releases",
+      "type": "tool_reference"
+    },
+    {
+      "id": "nitropaint",
+      "name": "NitroPaint README",
+      "url": "https://github.com/Garhoogin/NitroPaint",
+      "type": "tool_reference"
+    },
+    {
+      "id": "pp_bw_move_anim_thread",
+      "name": "Project Pokémon: BW adding new move animations discussion",
+      "url": "https://projectpokemon.org/home/forums/topic/37539-solved-pok%C3%A9mon-black-amp-white-adding-new-move-animations/",
+      "type": "forum_research"
+    }
+  ],
+  "archiveAliases": [],
+  "archives": [
+    {
+      "path": "/a/0/0/4",
+      "label": "Pokémon battle sprites / pokegra",
+      "category": "pokemon-sprites",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/0/7",
+      "label": "Pokémon icons",
+      "category": "icons",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/0/8",
+      "label": "3D models / maps",
+      "category": "models",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "BMD0",
+        "NSBMD"
+      ],
+      "sources": [
+        "platinum_master_bw2",
+        "pp_bwbw2"
+      ],
+      "tags": [],
+      "notes": [
+        "Some sources call this models; Project Pokémon download notes call /a/0/0/8 maps. Treat as primary Gen 5 map/model archive."
+      ]
+    },
+    {
+      "path": "/a/0/1/1",
+      "label": "Battle backgrounds, generic map textures, battle UI",
+      "category": "battle-textures",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "BTX0",
+        "NSBTX",
+        "NCGR",
+        "NCLR",
+        "NSCR"
+      ],
+      "sources": [
+        "platinum_master_bw2",
+        "pp_bwbw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/1/2",
+      "label": "ZoneData / map association table",
+      "category": "map-relations",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC"
+      ],
+      "sources": [
+        "platinum_master_bw2",
+        "pp_bwbw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/1/3",
+      "label": "AreaData / building and lighting config",
+      "category": "map-relations",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/1/4",
+      "label": "Overworld map textures",
+      "category": "textures",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "BTX0",
+        "NSBTX"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/1/5",
+      "label": "Edge color tables",
+      "category": "maps",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/3/0",
+      "label": "Overworld hero sprites",
+      "category": "overworld-sprites",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR",
+        "NCER",
+        "NANR"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/3/1",
+      "label": "Overworld sprites for certain NPCs",
+      "category": "overworld-sprites",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR",
+        "NCER",
+        "NANR"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/4/8",
+      "label": "Overworld sprites",
+      "category": "overworld-sprites",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR",
+        "NCER",
+        "NANR"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/1/2/6",
+      "label": "Overworlds",
+      "category": "overworld-sprites",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR",
+        "NCER",
+        "NANR"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/6/8",
+      "label": "Material/material SRT animations",
+      "category": "animations",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NSBMA",
+        "NSBTA"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/6/9",
+      "label": "Animated overworld textures",
+      "category": "textures",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "BTX0",
+        "NSBTX",
+        "NSBTP",
+        "NSBTA"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/7/1",
+      "label": "Trainer front sprites / trfgra",
+      "category": "trainer-sprites",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/7/2",
+      "label": "Trainer back sprites / trbgra",
+      "category": "trainer-sprites",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/7/3",
+      "label": "BMD0 shadow4_test",
+      "category": "models",
+      "confidence": "community-known",
+      "assetTypes": [
+        "BMD0",
+        "NSBMD"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/7/4",
+      "label": "Overworld ambient textures",
+      "category": "textures",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "BTX0",
+        "NSBTX"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/8/2",
+      "label": "UI tiles, PC box tiles, type sprites",
+      "category": "ui",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR",
+        "NSCR"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/8/4",
+      "label": "Map layout tiles",
+      "category": "maps",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR",
+        "NSCR"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/1/1/6",
+      "label": "Large key-item textures, mugshot backgrounds, Keldeo form change, NPC fly action animations",
+      "category": "cutscene-textures",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "BTX0",
+        "NSBTX",
+        "NCGR",
+        "NCLR",
+        "NANR"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/1/3/3",
+      "label": "Isshu city system",
+      "category": "maps",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/1/3/6",
+      "label": "Isshu zone system",
+      "category": "maps",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/1/4/6",
+      "label": "Isshu dungeon system",
+      "category": "maps",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/1/4/7",
+      "label": "Isshu route/area switch system",
+      "category": "maps",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/1/4/8",
+      "label": "Moving car textures",
+      "category": "textures",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "BTX0",
+        "NSBTX"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/1/5/2",
+      "label": "Wood/metal/ice textures",
+      "category": "textures",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "BTX0",
+        "NSBTX"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/1/5/6",
+      "label": "Map camera movement triggers",
+      "category": "map-relations",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/1/5/8",
+      "label": "Cutscene assets",
+      "category": "cutscene",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "BMD0",
+        "BTX0",
+        "NCGR",
+        "NCLR",
+        "NSCR",
+        "NANR"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": [],
+      "notes": [
+        "Known community target for boat/cutscene/map textures."
+      ]
+    },
+    {
+      "path": "/a/1/6/0",
+      "label": "Dragon gym textures",
+      "category": "textures",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "BTX0",
+        "NSBTX"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/1/7/4",
+      "label": "Map textures",
+      "category": "textures",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "BTX0",
+        "NSBTX"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/1/7/5",
+      "label": "More map textures",
+      "category": "textures",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "BTX0",
+        "NSBTX"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/1/8/2",
+      "label": "Isshu 3D system",
+      "category": "maps",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "BMD0",
+        "BTX0"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/1/8/7",
+      "label": "Water textures",
+      "category": "textures",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "BTX0",
+        "NSBTX"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/2/0/4",
+      "label": "out25 bushes and flowers textures",
+      "category": "textures",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "BTX0",
+        "NSBTX"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/2/1/7",
+      "label": "Car/truck textures",
+      "category": "textures",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "BTX0",
+        "NSBTX"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/2/6/0",
+      "label": "Elevator/gate textures",
+      "category": "textures",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "BTX0",
+        "NSBTX"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/6/6",
+      "label": "Move animation scripts / battle move animations",
+      "category": "move-animations",
+      "confidence": "community-known-bw-researched-bw2-candidate",
+      "assetTypes": [
+        "NARC",
+        "binary-script"
+      ],
+      "sources": [
+        "pp_bw_move_anim_thread"
+      ],
+      "tags": [
+        "battle",
+        "move",
+        "animation",
+        "script"
+      ],
+      "notes": [
+        "Community BW research identifies a/0/6/6 as move animation scripts; B2W2 uses a related Gen 5 battle animation system, so DSM treats this as a priority candidate until verified per-ROM."
+      ]
+    },
+    {
+      "path": "/a/0/2/1",
+      "label": "Move data table candidate",
+      "category": "move-data",
+      "confidence": "heuristic-bw2-candidate",
+      "assetTypes": [
+        "NARC",
+        "binary-table"
+      ],
+      "sources": [
+        "pp_bw_move_anim_thread"
+      ],
+      "tags": [
+        "battle",
+        "move",
+        "data"
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "id": "bw2_zonedata_areadata_pairing",
+      "from": "/a/0/1/2",
+      "to": "/a/0/1/3",
+      "relationship": "zone-selects-area-config",
+      "confidence": "community-known",
+      "sources": [
+        "platinum_master_bw2",
+        "pp_bwbw2"
+      ]
+    },
+    {
+      "id": "bw2_model_texture_candidates_primary",
+      "from": "/a/0/0/8",
+      "to": [
+        "/a/0/1/4",
+        "/a/1/7/4",
+        "/a/1/7/5",
+        "/a/1/8/7",
+        "/a/0/7/4",
+        "/a/0/6/9"
+      ],
+      "relationship": "candidate-external-texture-pack",
+      "method": "Gen 5 map/model archive role + NSBMD material name ↔ NSBTX texture/palette name",
+      "confidence": "heuristic",
+      "sources": [
+        "platinum_master_bw2",
+        "nsbmd_docs"
+      ]
+    },
+    {
+      "id": "bw2_cutscene_texture_candidates",
+      "from": "/a/1/5/8",
+      "to": [
+        "/a/1/5/8",
+        "/a/1/1/6",
+        "/a/1/5/2",
+        "/a/1/4/8",
+        "/a/2/1/7"
+      ],
+      "relationship": "candidate-cutscene-texture-pack",
+      "confidence": "heuristic",
+      "sources": [
+        "platinum_master_bw2"
+      ]
+    },
+    {
+      "id": "bw2_sprite_palette_pairing",
+      "from": "NCGR/RGCN entries",
+      "to": "NCLR/RLCN entries",
+      "relationship": "palette-pair",
+      "method": "same archive index/name first; then known bundle rules",
+      "confidence": "heuristic",
+      "sources": [
+        "nitropaint"
+      ]
+    }
+  ],
+  "uiGroups": [
+    {
+      "label": "Maps & World",
+      "categories": [
+        "maps",
+        "models",
+        "textures",
+        "map-relations",
+        "battle-textures"
+      ]
+    },
+    {
+      "label": "Cutscenes & Props",
+      "categories": [
+        "cutscene",
+        "cutscene-textures"
+      ]
+    },
+    {
+      "label": "Sprites & 2D",
+      "categories": [
+        "pokemon-sprites",
+        "trainer-sprites",
+        "overworld-sprites",
+        "icons"
+      ]
+    },
+    {
+      "label": "Animations",
+      "categories": [
+        "animations"
+      ]
+    },
+    {
+      "label": "UI",
+      "categories": [
+        "ui"
+      ]
+    }
+  ],
+  "decoderHints": [
+    {
+      "format": "NARC",
+      "role": "container",
+      "notes": "Parse and index child files lazily."
+    },
+    {
+      "format": "BMD0/NSBMD",
+      "role": "3d-model",
+      "notes": "May embed textures or reference external BTX0/NSBTX texture/palette data."
+    },
+    {
+      "format": "BTX0/NSBTX",
+      "role": "3d-texture-pack",
+      "notes": "Decode texture entries and palettes to PNG; use names to match model materials."
+    },
+    {
+      "format": "RGCN/NCGR",
+      "role": "2d-tile-graphics",
+      "notes": "Needs NCLR palette and often NSCR/NCER layout for meaningful preview."
+    },
+    {
+      "format": "RLCN/NCLR",
+      "role": "palette",
+      "notes": "Pair with NCGR/NSCR/NCER/NANR where possible."
+    },
+    {
+      "format": "RCSN/NSCR",
+      "role": "tilemap",
+      "notes": "Pair with NCGR and NCLR."
+    },
+    {
+      "format": "RECN/NCER",
+      "role": "sprite-cells",
+      "notes": "Pair with NCGR, NCLR, and optionally NANR."
+    },
+    {
+      "format": "RNAN/NANR",
+      "role": "sprite-animation",
+      "notes": "Pair with NCER/NCGR/NCLR."
+    }
+  ],
+  "searchPresets": [
+    {
+      "id": "battle_move_effects",
+      "label": "Battle move effects / grass sprite hunt",
+      "query": "cat:move-effects|cat:move-animations|path:wazaeffect|path:a/0/2/2|path:a/0/2/3|path:a/0/2/4|path:a/0/2/5|path:a/0/2/9|path:a/0/6/6",
+      "description": "Start here for move VFX such as grass/leaves/vines: tiles/graphics, palettes, cell layouts, cell animations, particles, and move animation scripts.",
+      "workflow": [
+        "Filter shows the known move-effect archives first.",
+        "Open tile/texture rows (NCGR/RGCN/BTX0) and use Export Readable to create PNG/contact sheets.",
+        "Open palette rows (NCLR/RLCN) beside them and export swatches.",
+        "Open cell/cell-animation rows (NCER/RECN and NANR/RNAN) as raw exports until DSM can fully compose those animations.",
+        "For Gen 5, move animation scripts are often separate from the sprite graphics, so search scripts and visual archives together."
+      ]
+    },
+    {
+      "id": "battle_assets",
+      "label": "Battle assets",
+      "query": "cat:battle|cat:battle-textures|cat:move-effects|cat:move-animations|label:battle|path:battle|path:waza|path:a/0/1/1|path:a/0/6/6",
+      "description": "Battle backgrounds, battle UI/objects, move-effect graphics, and animation/script candidates.",
+      "workflow": [
+        "Use this when you know the asset appears in battle but do not know if it is a sprite, background, texture, or script."
+      ]
+    },
+    {
+      "id": "models_with_textures",
+      "label": "Models + likely textures",
+      "query": "magic:BMD0|magic:BTX0|cat:models|cat:textures|cat:model-metadata|cat:map-relations",
+      "description": "Show models, texture packs, and mapping/area relation archives used to bind models to textures.",
+      "workflow": [
+        "Click BMD0 for model preview. If gray, select a BTX0 from the same mapped group and Use Selected BTX0."
+      ]
+    },
+    {
+      "id": "music_sfx",
+      "label": "Music / SFX",
+      "query": "cat:audio|magic:SDAT|magic:SSEQ|magic:SSAR|magic:SBNK|magic:SWAR|magic:SWAV|magic:STRM",
+      "description": "Sound archives, sequence music, SFX archives, banks, wave archives, samples, and streams.",
+      "workflow": [
+        "Use Export Readable for a lossless audio bundle and WAV previews when DSM can decode sample/stream data."
+      ]
+    }
+  ]
+}

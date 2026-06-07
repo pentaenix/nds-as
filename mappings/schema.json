@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/dsm/mappings/schema.json",
+  "title": "DSM community mapping schema",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "mappingId",
+    "gameFamily",
+    "games",
+    "sources",
+    "archives"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer"
+    },
+    "mappingId": {
+      "type": "string"
+    },
+    "gameFamily": {
+      "type": "string"
+    },
+    "coverage": {
+      "type": "string"
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "games": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "archiveAliases": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "archives": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "relationships": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "uiGroups": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "decoderHints": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "searchPresets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "workflow": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

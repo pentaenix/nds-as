@@ -1,0 +1,325 @@
+{
+  "schemaVersion": 1,
+  "mappingId": "generic_nds",
+  "generatedOn": "2026-06-05",
+  "gameFamily": "generic_nds",
+  "coverage": "format-signature-only",
+  "notes": "Generic mapping has no game-specific archive semantics. It is for raw browsing, signature detection, and community discovery.",
+  "games": [
+    {
+      "title": "Generic Nintendo DS game",
+      "shortTitle": "Generic DS",
+      "romCodes": [
+        "*"
+      ],
+      "regions": [
+        "any"
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "id": "nsbmd_docs",
+      "name": "scurest NSBMD/NSBTX docs",
+      "url": "https://github.com/scurest/nsbmd_docs/blob/master/nsbmd_docs.txt",
+      "type": "format_reference"
+    },
+    {
+      "id": "nitropaint",
+      "name": "NitroPaint README",
+      "url": "https://github.com/Garhoogin/NitroPaint",
+      "type": "tool_reference"
+    }
+  ],
+  "archiveAliases": [],
+  "archives": [
+    {
+      "path": "**/*.narc",
+      "label": "Nintendo DS archive/container files",
+      "category": "containers",
+      "confidence": "verified-design-rule",
+      "assetTypes": [
+        "NARC"
+      ],
+      "sources": [
+        "nitropaint"
+      ],
+      "tags": []
+    },
+    {
+      "path": "**/*.{nsbmd,bmd0,BMD0}",
+      "label": "Nitro 3D models",
+      "category": "models",
+      "confidence": "verified-design-rule",
+      "assetTypes": [
+        "BMD0",
+        "NSBMD"
+      ],
+      "sources": [
+        "nsbmd_docs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "**/*.{nsbtx,btx0,BTX0}",
+      "label": "Nitro 3D texture packs",
+      "category": "textures",
+      "confidence": "verified-design-rule",
+      "assetTypes": [
+        "BTX0",
+        "NSBTX"
+      ],
+      "sources": [
+        "nsbmd_docs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "**/*.{nsbca,bca0,BCA0}",
+      "label": "Nitro skeletal animations",
+      "category": "animations",
+      "confidence": "verified-design-rule",
+      "assetTypes": [
+        "BCA0",
+        "NSBCA"
+      ],
+      "sources": [
+        "nsbmd_docs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "**/*.{nsbtp,btp0,BTP0}",
+      "label": "Nitro texture-pattern animations",
+      "category": "animations",
+      "confidence": "verified-design-rule",
+      "assetTypes": [
+        "BTP0",
+        "NSBTP"
+      ],
+      "sources": [
+        "nsbmd_docs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "**/*.{nsbta,bta0,BTA0}",
+      "label": "Nitro texture SRT animations",
+      "category": "animations",
+      "confidence": "verified-design-rule",
+      "assetTypes": [
+        "BTA0",
+        "NSBTA"
+      ],
+      "sources": [
+        "nsbmd_docs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "**/*.{nsbma,bma0,BMA0}",
+      "label": "Nitro material animations",
+      "category": "animations",
+      "confidence": "verified-design-rule",
+      "assetTypes": [
+        "BMA0",
+        "NSBMA"
+      ],
+      "sources": [
+        "nsbmd_docs"
+      ],
+      "tags": []
+    },
+    {
+      "path": "**/*.{ncgr,NCGR,rgcn,RGCN}",
+      "label": "2D tile graphics",
+      "category": "tiles",
+      "confidence": "verified-design-rule",
+      "assetTypes": [
+        "RGCN",
+        "NCGR"
+      ],
+      "sources": [
+        "nitropaint"
+      ],
+      "tags": []
+    },
+    {
+      "path": "**/*.{nclr,NCLR,rlcn,RLCN}",
+      "label": "2D palettes",
+      "category": "palettes",
+      "confidence": "verified-design-rule",
+      "assetTypes": [
+        "RLCN",
+        "NCLR"
+      ],
+      "sources": [
+        "nitropaint"
+      ],
+      "tags": []
+    },
+    {
+      "path": "**/*.{nscr,NSCR,rcsn,RCSN}",
+      "label": "2D tilemaps/screens",
+      "category": "tilemaps",
+      "confidence": "verified-design-rule",
+      "assetTypes": [
+        "RCSN",
+        "NSCR"
+      ],
+      "sources": [
+        "nitropaint"
+      ],
+      "tags": []
+    },
+    {
+      "path": "**/*.{ncer,NCER,recn,RECN}",
+      "label": "2D sprite cell layouts",
+      "category": "sprites",
+      "confidence": "verified-design-rule",
+      "assetTypes": [
+        "RECN",
+        "NCER"
+      ],
+      "sources": [
+        "nitropaint"
+      ],
+      "tags": []
+    },
+    {
+      "path": "**/*.{nanr,NANR,rnan,RNAN}",
+      "label": "2D sprite animations",
+      "category": "animations",
+      "confidence": "verified-design-rule",
+      "assetTypes": [
+        "RNAN",
+        "NANR"
+      ],
+      "sources": [
+        "nitropaint"
+      ],
+      "tags": []
+    },
+    {
+      "path": "**/*.{nftr,NFTR}",
+      "label": "Nintendo DS font files",
+      "category": "fonts",
+      "confidence": "verified-design-rule",
+      "assetTypes": [
+        "NFTR"
+      ],
+      "sources": [
+        "nitropaint"
+      ],
+      "tags": []
+    },
+    {
+      "path": "**/*.{png,PNG,bmp,BMP}",
+      "label": "Standard bitmap images",
+      "category": "images",
+      "confidence": "verified-design-rule",
+      "assetTypes": [
+        "PNG",
+        "BMP"
+      ],
+      "sources": [],
+      "tags": []
+    }
+  ],
+  "relationships": [
+    {
+      "id": "generic_model_texture_name_match",
+      "from": "BMD0/NSBMD material refs",
+      "to": "BTX0/NSBTX texture/palette entries",
+      "relationship": "candidate-external-texture-pack",
+      "method": "exact texture name + palette name; fallback same container/path",
+      "confidence": "verified-design-rule",
+      "sources": [
+        "nsbmd_docs"
+      ]
+    },
+    {
+      "id": "generic_2d_triplet",
+      "from": "NCGR/RGCN",
+      "to": [
+        "NCLR/RLCN",
+        "NSCR/RCSN"
+      ],
+      "relationship": "tile-palette-map-composition",
+      "method": "same base name/container/index; user-pinned palette fallback",
+      "confidence": "verified-design-rule",
+      "sources": [
+        "nitropaint"
+      ]
+    }
+  ],
+  "uiGroups": [
+    {
+      "label": "3D",
+      "categories": [
+        "models",
+        "textures",
+        "animations"
+      ]
+    },
+    {
+      "label": "2D",
+      "categories": [
+        "tiles",
+        "palettes",
+        "tilemaps",
+        "sprites",
+        "fonts",
+        "images"
+      ]
+    },
+    {
+      "label": "Containers",
+      "categories": [
+        "containers"
+      ]
+    }
+  ],
+  "decoderHints": [
+    {
+      "format": "NARC",
+      "role": "container",
+      "notes": "Parse and index child files lazily."
+    },
+    {
+      "format": "BMD0/NSBMD",
+      "role": "3d-model",
+      "notes": "May embed textures or reference external BTX0/NSBTX texture/palette data."
+    },
+    {
+      "format": "BTX0/NSBTX",
+      "role": "3d-texture-pack",
+      "notes": "Decode texture entries and palettes to PNG; use names to match model materials."
+    },
+    {
+      "format": "RGCN/NCGR",
+      "role": "2d-tile-graphics",
+      "notes": "Needs NCLR palette and often NSCR/NCER layout for meaningful preview."
+    },
+    {
+      "format": "RLCN/NCLR",
+      "role": "palette",
+      "notes": "Pair with NCGR/NSCR/NCER/NANR where possible."
+    },
+    {
+      "format": "RCSN/NSCR",
+      "role": "tilemap",
+      "notes": "Pair with NCGR and NCLR."
+    },
+    {
+      "format": "RECN/NCER",
+      "role": "sprite-cells",
+      "notes": "Pair with NCGR, NCLR, and optionally NANR."
+    },
+    {
+      "format": "RNAN/NANR",
+      "role": "sprite-animation",
+      "notes": "Pair with NCER/NCGR/NCLR."
+    }
+  ]
+}

@@ -1,0 +1,510 @@
+{
+  "schemaVersion": 1,
+  "mappingId": "pokemon_bw",
+  "generatedOn": "2026-06-05",
+  "gameFamily": "pokemon_gen5",
+  "coverage": "partial-public-map",
+  "notes": "BW1 public mapping is less complete than B2W2. This seed includes archives repeatedly referenced by community threads and entries inferred from B2W2 notes that explicitly mention BW1 copies. Treat as a starting point and verify against ROM signatures/counts.",
+  "games": [
+    {
+      "title": "Pokémon Black",
+      "shortTitle": "Black",
+      "romCodes": [
+        "IRB*"
+      ],
+      "regions": [
+        "JP",
+        "US",
+        "EU",
+        "KR"
+      ]
+    },
+    {
+      "title": "Pokémon White",
+      "shortTitle": "White",
+      "romCodes": [
+        "IRA*"
+      ],
+      "regions": [
+        "JP",
+        "US",
+        "EU",
+        "KR"
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "id": "gbatemp_bw",
+      "name": "GBAtemp: Pokémon Black/White hacking documentation thread",
+      "url": "https://gbatemp.net/threads/pokemon-black-white-hacking-documentation.255124/",
+      "type": "forum_research"
+    },
+    {
+      "id": "platinum_master_bw2",
+      "name": "PlatinumMaster B2W2 NARC list",
+      "url": "https://gist.github.com/PlatinumMaster/9a12681f6c001a052444b21a27eb9f11",
+      "type": "community_filelist"
+    },
+    {
+      "id": "pp_bwbw2",
+      "name": "Project Pokémon: BW/BW2 Narc Locations download page",
+      "url": "https://projectpokemon.org/home/files/file/2113-bwbw2-narc-locations/",
+      "type": "community_filelist"
+    },
+    {
+      "id": "nsbmd_docs",
+      "name": "scurest NSBMD/NSBTX docs",
+      "url": "https://github.com/scurest/nsbmd_docs/blob/master/nsbmd_docs.txt",
+      "type": "format_reference"
+    },
+    {
+      "id": "dspre",
+      "name": "DSPRE README",
+      "url": "https://github.com/DS-Pokemon-Rom-Editor/DSPRE/blob/main/README.md",
+      "type": "tool_reference"
+    },
+    {
+      "id": "pdsms",
+      "name": "Pokémon DS Map Studio releases",
+      "url": "https://github.com/Trifindo/Pokemon-DS-Map-Studio/releases",
+      "type": "tool_reference"
+    },
+    {
+      "id": "nitropaint",
+      "name": "NitroPaint README",
+      "url": "https://github.com/Garhoogin/NitroPaint",
+      "type": "tool_reference"
+    },
+    {
+      "id": "pp_bw_move_anim_thread",
+      "name": "Project Pokémon: BW adding new move animations discussion",
+      "url": "https://projectpokemon.org/home/forums/topic/37539-solved-pok%C3%A9mon-black-amp-white-adding-new-move-animations/",
+      "type": "forum_research"
+    }
+  ],
+  "archiveAliases": [],
+  "archives": [
+    {
+      "path": "/a/0/0/2",
+      "label": "Script archive",
+      "category": "scripts",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC"
+      ],
+      "sources": [
+        "gbatemp_bw"
+      ],
+      "tags": [],
+      "notes": [
+        "Forum research explicitly identifies a/0/0/2 as scripts for BW1."
+      ]
+    },
+    {
+      "path": "/a/0/0/4",
+      "label": "Pokémon battle sprites / pokegra",
+      "category": "pokemon-sprites",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR"
+      ],
+      "sources": [
+        "gbatemp_bw",
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/0/7",
+      "label": "In-menu Pokémon sprites/icons",
+      "category": "icons",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR"
+      ],
+      "sources": [
+        "gbatemp_bw",
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/0/8",
+      "label": "In-menu Pokémon sprites/icons or map/model-related archive",
+      "category": "models",
+      "confidence": "conflict",
+      "assetTypes": [
+        "NARC",
+        "BMD0",
+        "NSBMD"
+      ],
+      "sources": [
+        "gbatemp_bw",
+        "platinum_master_bw2"
+      ],
+      "tags": [],
+      "notes": [
+        "BW1 community notes conflict/are incomplete. In B2W2, /a/0/0/8 is models/maps; BW1 threads mention in-menu Pokémon sprites. DSM should inspect signatures before assigning a strong role."
+      ]
+    },
+    {
+      "path": "/a/0/1/1",
+      "label": "Battle backgrounds / generic map textures / battle UI candidate",
+      "category": "battle-textures",
+      "confidence": "heuristic",
+      "assetTypes": [
+        "NARC",
+        "BTX0",
+        "NSBTX",
+        "NCGR",
+        "NCLR",
+        "NSCR"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": [],
+      "notes": [
+        "Inherited from B2W2 notes; verify against BW1."
+      ]
+    },
+    {
+      "path": "/a/0/1/2",
+      "label": "ZoneData / map association candidate",
+      "category": "map-relations",
+      "confidence": "heuristic",
+      "assetTypes": [
+        "NARC"
+      ],
+      "sources": [
+        "pp_bwbw2"
+      ],
+      "tags": [],
+      "notes": [
+        "B2W2 Project Pokémon page notes /a/0/1/2 ZoneData; verify BW1 counts."
+      ]
+    },
+    {
+      "path": "/a/0/1/3",
+      "label": "AreaData / building/lighting config candidate",
+      "category": "map-relations",
+      "confidence": "heuristic",
+      "assetTypes": [
+        "NARC"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/1/4",
+      "label": "Overworld map textures candidate",
+      "category": "textures",
+      "confidence": "heuristic",
+      "assetTypes": [
+        "NARC",
+        "BTX0",
+        "NSBTX"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/4/8",
+      "label": "Overworld sprites candidate",
+      "category": "overworld-sprites",
+      "confidence": "heuristic",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR",
+        "NCER",
+        "NANR"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/6/8",
+      "label": "Material/material SRT animation candidate",
+      "category": "animations",
+      "confidence": "heuristic",
+      "assetTypes": [
+        "NARC",
+        "NSBMA",
+        "NSBTA"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/6/9",
+      "label": "Animated overworld textures candidate",
+      "category": "textures",
+      "confidence": "heuristic",
+      "assetTypes": [
+        "NARC",
+        "BTX0",
+        "NSBTX",
+        "NSBTP",
+        "NSBTA"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/7/1",
+      "label": "Trainer front sprites candidate",
+      "category": "trainer-sprites",
+      "confidence": "heuristic",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/7/2",
+      "label": "Trainer back sprites candidate",
+      "category": "trainer-sprites",
+      "confidence": "heuristic",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/8/2",
+      "label": "UI tiles / PC box / type sprites candidate",
+      "category": "ui",
+      "confidence": "heuristic",
+      "assetTypes": [
+        "NARC",
+        "NCGR",
+        "NCLR",
+        "NSCR"
+      ],
+      "sources": [
+        "platinum_master_bw2"
+      ],
+      "tags": []
+    },
+    {
+      "path": "/a/0/6/6",
+      "label": "Move animation scripts / battle move animations",
+      "category": "move-animations",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "binary-script"
+      ],
+      "sources": [
+        "gbatemp_bw"
+      ],
+      "tags": [
+        "battle",
+        "move",
+        "animation",
+        "script"
+      ],
+      "notes": [
+        "Community BW research identifies a/0/6/6 as move animation scripts; B2W2 uses a related Gen 5 battle animation system, so DSM treats this as a priority candidate until verified per-ROM."
+      ]
+    },
+    {
+      "path": "/a/0/2/1",
+      "label": "Move data table candidate",
+      "category": "move-data",
+      "confidence": "community-known",
+      "assetTypes": [
+        "NARC",
+        "binary-table"
+      ],
+      "sources": [
+        "gbatemp_bw"
+      ],
+      "tags": [
+        "battle",
+        "move",
+        "data"
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "id": "bw_verify_signatures_first",
+      "from": "*",
+      "to": "*",
+      "relationship": "must-verify-by-signature",
+      "confidence": "verified-design-rule",
+      "sources": [
+        "gbatemp_bw",
+        "platinum_master_bw2"
+      ],
+      "notes": "BW1 mapping is partial; DSM should classify by signatures and only use these archive roles as UI hints."
+    },
+    {
+      "id": "bw_model_texture_candidates",
+      "from": "/a/0/0/8",
+      "to": [
+        "/a/0/1/4",
+        "/a/0/1/1",
+        "/a/0/6/9"
+      ],
+      "relationship": "candidate-external-texture-pack",
+      "method": "Gen 5 role hints + NSBMD material name ↔ NSBTX texture/palette name",
+      "confidence": "heuristic",
+      "sources": [
+        "nsbmd_docs",
+        "platinum_master_bw2"
+      ]
+    }
+  ],
+  "uiGroups": [
+    {
+      "label": "Maps & World",
+      "categories": [
+        "maps",
+        "models",
+        "textures",
+        "map-relations",
+        "battle-textures"
+      ]
+    },
+    {
+      "label": "Cutscenes & Props",
+      "categories": [
+        "cutscene",
+        "cutscene-textures"
+      ]
+    },
+    {
+      "label": "Sprites & 2D",
+      "categories": [
+        "pokemon-sprites",
+        "trainer-sprites",
+        "overworld-sprites",
+        "icons"
+      ]
+    },
+    {
+      "label": "Animations",
+      "categories": [
+        "animations"
+      ]
+    },
+    {
+      "label": "UI",
+      "categories": [
+        "ui"
+      ]
+    }
+  ],
+  "decoderHints": [
+    {
+      "format": "NARC",
+      "role": "container",
+      "notes": "Parse and index child files lazily."
+    },
+    {
+      "format": "BMD0/NSBMD",
+      "role": "3d-model",
+      "notes": "May embed textures or reference external BTX0/NSBTX texture/palette data."
+    },
+    {
+      "format": "BTX0/NSBTX",
+      "role": "3d-texture-pack",
+      "notes": "Decode texture entries and palettes to PNG; use names to match model materials."
+    },
+    {
+      "format": "RGCN/NCGR",
+      "role": "2d-tile-graphics",
+      "notes": "Needs NCLR palette and often NSCR/NCER layout for meaningful preview."
+    },
+    {
+      "format": "RLCN/NCLR",
+      "role": "palette",
+      "notes": "Pair with NCGR/NSCR/NCER/NANR where possible."
+    },
+    {
+      "format": "RCSN/NSCR",
+      "role": "tilemap",
+      "notes": "Pair with NCGR and NCLR."
+    },
+    {
+      "format": "RECN/NCER",
+      "role": "sprite-cells",
+      "notes": "Pair with NCGR, NCLR, and optionally NANR."
+    },
+    {
+      "format": "RNAN/NANR",
+      "role": "sprite-animation",
+      "notes": "Pair with NCER/NCGR/NCLR."
+    }
+  ],
+  "searchPresets": [
+    {
+      "id": "battle_move_effects",
+      "label": "Battle move effects / grass sprite hunt",
+      "query": "cat:move-effects|cat:move-animations|path:wazaeffect|path:a/0/2/2|path:a/0/2/3|path:a/0/2/4|path:a/0/2/5|path:a/0/2/9|path:a/0/6/6",
+      "description": "Start here for move VFX such as grass/leaves/vines: tiles/graphics, palettes, cell layouts, cell animations, particles, and move animation scripts.",
+      "workflow": [
+        "Filter shows the known move-effect archives first.",
+        "Open tile/texture rows (NCGR/RGCN/BTX0) and use Export Readable to create PNG/contact sheets.",
+        "Open palette rows (NCLR/RLCN) beside them and export swatches.",
+        "Open cell/cell-animation rows (NCER/RECN and NANR/RNAN) as raw exports until DSM can fully compose those animations.",
+        "For Gen 5, move animation scripts are often separate from the sprite graphics, so search scripts and visual archives together."
+      ]
+    },
+    {
+      "id": "battle_assets",
+      "label": "Battle assets",
+      "query": "cat:battle|cat:battle-textures|cat:move-effects|cat:move-animations|label:battle|path:battle|path:waza|path:a/0/1/1|path:a/0/6/6",
+      "description": "Battle backgrounds, battle UI/objects, move-effect graphics, and animation/script candidates.",
+      "workflow": [
+        "Use this when you know the asset appears in battle but do not know if it is a sprite, background, texture, or script."
+      ]
+    },
+    {
+      "id": "models_with_textures",
+      "label": "Models + likely textures",
+      "query": "magic:BMD0|magic:BTX0|cat:models|cat:textures|cat:model-metadata|cat:map-relations",
+      "description": "Show models, texture packs, and mapping/area relation archives used to bind models to textures.",
+      "workflow": [
+        "Click BMD0 for model preview. If gray, select a BTX0 from the same mapped group and Use Selected BTX0."
+      ]
+    },
+    {
+      "id": "music_sfx",
+      "label": "Music / SFX",
+      "query": "cat:audio|magic:SDAT|magic:SSEQ|magic:SSAR|magic:SBNK|magic:SWAR|magic:SWAV|magic:STRM",
+      "description": "Sound archives, sequence music, SFX archives, banks, wave archives, samples, and streams.",
+      "workflow": [
+        "Use Export Readable for a lossless audio bundle and WAV previews when DSM can decode sample/stream data."
+      ]
+    }
+  ]
+}
