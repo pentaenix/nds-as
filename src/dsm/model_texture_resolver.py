@@ -330,7 +330,7 @@ def resolve_model_textures(
     lines.append("- texture unresolved: no exact decoded texture/palette match was found")
     if missing:
         lines.append("- unresolved requested names: " + ", ".join(missing[:80]) + (" ..." if len(missing) > 80 else ""))
-    lines.append("- Advanced candidate search is available only as a diagnostic/manual path; DSM will not pin fuzzy matches as real textures.")
+    lines.append("- Advanced candidate search is available only as a diagnostic/manual path; NDS-AS will not pin fuzzy matches as real textures.")
     return ModelTextureResolution("unresolved", manifest, [], [], unresolved, [], "\n".join(lines))
 
 

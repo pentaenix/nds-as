@@ -259,7 +259,7 @@ class SessionLoadWorker(QThread):
 
 
 def _write_btx_preview_images(texture_assets: list[Asset], out_dir: Path, *, max_textures: int = 2) -> list[Path]:
-    """Decode candidate BTX0 files to PNGs for DSM's own preview fallback.
+    """Decode candidate BTX0 files to PNGs for NDS-AS's own preview fallback.
 
     This does not replace apicula output. It gives the preview widget actual
     bitmap data when the converted GLB has UV/material slots but no embedded
@@ -390,7 +390,7 @@ class TextureResolveWorker(QThread):
                 selected_texture_id = siblings[0].asset_id
                 self.progress.emit("Set Textures: using manual texture override. Pairing is user-selected, not auto-proven.")
             else:
-                self.progress.emit("Set Textures: no exact verified texture binding found. DSM will not pin a fuzzy candidate.")
+                self.progress.emit("Set Textures: no exact verified texture binding found. NDS-AS will not pin a fuzzy candidate.")
 
             for item in folder_sibling_assets(
                 self.asset,
@@ -422,11 +422,11 @@ class TextureResolveWorker(QThread):
                 aux = write_resolution_images(resolution, trial_dir / "dsm_resolved_textures")
                 if aux:
                     result.auxiliary_files = aux
-                    report_lines.append(f"DSM decoded texture PNGs for preview/export: {len(aux)}")
+                    report_lines.append(f"NDS-AS decoded texture PNGs for preview/export: {len(aux)}")
                 quality = _converted_texture_quality(result.output_files[0]) if result.output_files else TextureQuality(0,0,0,0,0,0,0,0)
                 report_lines.append(f"Converted preview: {result.output_files[0].name} — {quality.summary()}")
                 if not quality.confident and aux:
-                    report_lines.append("Note: the converted file did not embed visible texture images, so DSM uses the decoded NSBTX PNGs as preview fallback. Export the diagnostic bundle if Blender still shows gray.")
+                    report_lines.append("Note: the converted file did not embed visible texture images, so NDS-AS uses the decoded NSBTX PNGs as preview fallback. Export the diagnostic bundle if Blender still shows gray.")
                 self.finished_ok.emit(self.asset.asset_id, result, selected_texture_id, "\n".join(report_lines))
                 return
 
@@ -444,7 +444,7 @@ def _converted_texture_quality(path: Path) -> TextureQuality:
     This is stricter than the old material-slot score. A GLB can have a texture
     visual/material object but still render gray if the image is flat, UVs are not
     usable, or the candidate texture archive is just the wrong one. The quality
-    object lets DSM say “not sure” instead of pretending a candidate is correct.
+    object lets NDS-AS say “not sure” instead of pretending a candidate is correct.
     """
     try:
         import numpy as np
@@ -548,9 +548,9 @@ def _converted_mesh_score(path: Path) -> int:
 
 
 def _best_preview_path(paths: list[Path]) -> Path | None:
-    """Pick the converted file that is most likely to be visible in DSM.
+    """Pick the converted file that is most likely to be visible in NDS-AS.
 
-    apicula can emit helper/camera GLBs alongside real geometry. Older DSM builds
+    apicula can emit helper/camera GLBs alongside real geometry. Older NDS-AS builds
     previewed the first file, which could show errors like camera3.glb having no
     mesh. Prefer files with faces, then files with texture data, then the first
     output as a last resort.
@@ -1221,7 +1221,7 @@ class PreviewWidget(QWidget):
                 faces = np.asarray(mesh.faces, dtype=int)
 
                 # pyqtgraph's GLMeshItem cannot render UV-mapped textures. Older
-                # DSM builds tried to fall back to the material color when the
+                # NDS-AS builds tried to fall back to the material color when the
                 # imported UV array did not line up one-to-one with vertices.
                 # Many GLB/DAE imports store UVs per face corner, so that fallback
                 # made genuinely textured models appear gray. Bake the texture
@@ -1286,7 +1286,7 @@ class PreviewWidget(QWidget):
 
     def _apply_preview_orientation(self, vertices, np):
         # Pokémon B2W2/apicula preview fix: the converted model's +Y axis is the
-        # vertical axis we want to show as +Z in DSM's preview. This is preview-only;
+        # vertical axis we want to show as +Z in NDS-AS's preview. This is preview-only;
         # exported GLB/DAE files are left exactly as apicula writes them.
         x = vertices[:, 0].copy()
         y = vertices[:, 1].copy()
@@ -1297,7 +1297,7 @@ class PreviewWidget(QWidget):
         """Return preview-only geometry with texture sampled into vertex colors.
 
         GLMeshItem has no UV texture stage. To make converted GLB/DAE textures
-        visible inside DSM, duplicate each triangle corner and color it by the
+        visible inside NDS-AS, duplicate each triangle corner and color it by the
         texel at that corner's UV. This preserves DS/glTF wrap behavior well
         enough for browsing while keeping the exported files exactly as apicula
         wrote them.
@@ -1409,7 +1409,7 @@ class PreviewWidget(QWidget):
         if image is not None:
             return image
         # Some apicula outputs keep UV/material slots but no embedded GLB image
-        # even when DSM has decoded the Nitro TEX0/BTX0 PNGs correctly. Do not
+        # even when NDS-AS has decoded the Nitro TEX0/BTX0 PNGs correctly. Do not
         # reuse one global fallback image for every mesh part: many Pokémon map
         # props have multiple materials/textures. Prefer a fallback whose file
         # name matches the material/mesh name, then fall back to a stable
@@ -1634,7 +1634,7 @@ VIEWPORT_BANNER_STYLE = (
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("DSM — DS Asset Studio")
+        self.setWindowTitle("NDS-AS — Nintendo DS Asset Studio")
         self.resize(1280, 760)
 
         self.rom_path: str | None = None
@@ -1677,7 +1677,7 @@ class MainWindow(QMainWindow):
         self._selected_btx0_texture_name: str | None = None
 
         self._build_ui()
-        self._update_status("Open a local .nds ROM to start. Use ./dsm run next time to launch this app.")
+        self._update_status("Open a local .nds ROM to start. Use ./dsas run next time to launch this app.")
 
     def _build_ui(self) -> None:
         menubar = self.menuBar()
@@ -2263,7 +2263,7 @@ class MainWindow(QMainWindow):
         self._focus_terminal(
             banner=(
                 f"Building texture dictionary index for {count:,} BTX0/BMD0 archive(s) in the background. "
-                "DSM is not frozen — model preview will be faster once this finishes."
+                "NDS-AS is not frozen — model preview will be faster once this finishes."
             ),
         )
         self.texture_warmup_worker = TextureLibraryWarmupWorker(self.assets, self._texture_library_store)
@@ -2361,7 +2361,7 @@ class MainWindow(QMainWindow):
             self.raw_tree.clear()
         self.details.clear()
         self.preview.clear()
-        self.preview.show_message("Opening ROM...\n\nDSM is building a fast asset index. Model conversion and audio expansion run only when you ask for them.")
+        self.preview.show_message("Opening ROM...\n\nNDS-AS is building a fast asset index. Model conversion and audio expansion run only when you ask for them.")
         self._focus_terminal(
             banner="Opening ROM… watch this panel for scan and texture-index progress. The UI stays responsive while background workers run.",
         )
@@ -2400,7 +2400,7 @@ class MainWindow(QMainWindow):
         self._focus_browser_on_rom_folders()
         if not self.table.selectionModel().selectedRows() and not self.tree.selectedItems():
             self.details.setPlainText(summary)
-            self.preview.show_message("Choose an asset to preview or export. Models load with textures automatically when DSM can resolve them.")
+            self.preview.show_message("Choose an asset to preview or export. Models load with textures automatically when NDS-AS can resolve them.")
 
     def _session_overview_text(self, *, source_label: str, mode: str, counts: tuple[int, int, int, int, int, int]) -> str:
         total, models, textures, two_d, pngs, audio = counts
@@ -2683,7 +2683,7 @@ class MainWindow(QMainWindow):
         """Return compact tree folders for an asset.
 
         Pokémon DS paths like a/0/3/9 used to become four separate folders. For
-        browsing, that is just friction, so DSM keeps mapped category/label nodes
+        browsing, that is just friction, so NDS-AS keeps mapped category/label nodes
         and collapses the real ROM folder into one readable path segment.
         """
         folder = (asset.folder_key or "/").replace("\\", "/").strip("/")
@@ -3026,7 +3026,7 @@ class MainWindow(QMainWindow):
             details.append("Progress for model conversion and conversion and texture decoding progress appears in Terminal.")
             if not apicula_available():
                 details.append("")
-                details.append("Tip: build apicula in tools/apicula/target/release/apicula or set DSM_APICULA to its path.")
+                details.append("Tip: build apicula in tools/apicula/target/release/apicula or set DSAS_APICULA to its path.")
         elif asset.magic == "BTX0":
             entries = self._btx0_texture_entries(asset)
             names = [name for name, *_rest in entries] or sorted(self._asset_names(asset))
@@ -3051,26 +3051,26 @@ class MainWindow(QMainWindow):
             if asset.magic in {"RGCN", "RLCN", "RCSN", "RECN", "RNAN"}:
                 if asset.size > 8 * 1024 * 1024:
                     previews = []
-                    details.append("DSM direct preview images: skipped in Details for large asset; use Preview to decode in a worker.")
+                    details.append("NDS-AS direct preview images: skipped in Details for large asset; use Preview to decode in a worker.")
                 else:
                     try:
                         previews = decode_nitro2d_preview(asset.data, asset.magic)
                     except Exception:
                         previews = []
-                    details.append(f"DSM direct preview images: {len(previews)}")
+                    details.append(f"NDS-AS direct preview images: {len(previews)}")
                     for img in previews:
                         details.append(f"  - {img.name}: {img.width}x{img.height} ({img.source})")
-                details.append("Tip: Export Selected… offers raw export plus readable PNG/contact sheet output. Use Export Selected… to create a combined readable bundle when DSM can pair the files.")
+                details.append("Tip: Export Selected… offers raw export plus readable PNG/contact sheet output. Use Export Selected… to create a combined readable bundle when NDS-AS can pair the files.")
             else:
-                details.append("DSM can identify this asset type. Export Selected saves the raw file.")
+                details.append("NDS-AS can identify this asset type. Export Selected saves the raw file.")
         elif asset.magic in {"SDAT", "SSEQ", "SSAR", "SBNK", "SWAR", "SWAV", "STRM"}:
             details.append("")
             if asset.magic == "SDAT":
-                details.append("SDAT archive: Export Readable writes a lossless audio bundle with child SSEQ/SSAR/SBNK/SWAR/STRM files and WAV previews where DSM can decode samples/streams.")
+                details.append("SDAT archive: Export Readable writes a lossless audio bundle with child SSEQ/SSAR/SBNK/SWAR/STRM files and WAV previews where NDS-AS can decode samples/streams.")
             elif asset.magic == "SWAR":
                 details.append("SWAR sample archive: Export Readable extracts child SWAV samples and WAV previews when possible.")
             elif asset.magic in {"SWAV", "STRM"}:
-                details.append("Sample/stream audio: Export Readable writes raw original plus WAV when DSM can decode the payload.")
+                details.append("Sample/stream audio: Export Readable writes raw original plus WAV when NDS-AS can decode the payload.")
             else:
                 details.append("Sequenced/instrument audio: Export Readable writes the original raw file losslessly. Use VGMTrans/Nitro Studio for MIDI/SF2-style rendering.")
         elif asset.magic == "PNG" or asset.data.startswith(b"\x89PNG"):
@@ -3087,7 +3087,7 @@ class MainWindow(QMainWindow):
         if quality.confident:
             return f"Preview file: {path.name} — {quality.summary()}."
         if fallback_count:
-            return f"Preview file: {path.name} — {quality.summary()}. DSM decoded {fallback_count} texture PNG(s) for preview/export fallback; the GLB itself may still not embed images."
+            return f"Preview file: {path.name} — {quality.summary()}. NDS-AS decoded {fallback_count} texture PNG(s) for preview/export fallback; the GLB itself may still not embed images."
         if quality.weak_material_only:
             return f"Preview file: {path.name} — {quality.summary()}. The converted file does not prove visible texture sampling yet."
         return f"Preview file: {path.name} — mesh faces: {quality.mesh_faces}; no verified texture image detected."
@@ -3118,10 +3118,10 @@ class MainWindow(QMainWindow):
             lines.append(f"  Pinned external texture: {pinned.virtual_path if pinned else 'none'}")
             fallback_count = self._preview_fallback_count_by_asset_id.get(asset.asset_id, 0)
             if fallback_count:
-                lines.append(f"  DSM decoded preview/export texture PNGs: {fallback_count}")
+                lines.append(f"  NDS-AS decoded preview/export texture PNGs: {fallback_count}")
             report = self._last_texture_resolve_report.get(asset.asset_id, "")
             if "embedded TEX0 decoded" in report:
-                lines.append("  Embedded NSBMD texture: decoded and available as DSM fallback PNGs")
+                lines.append("  Embedded NSBMD texture: decoded and available as NDS-AS fallback PNGs")
             elif "embedded TEX0 texture block found" in report:
                 lines.append("  Embedded NSBMD texture: detected; Set Textures can decode/trace it")
             status = self._preview_status_by_asset_id.get(asset.asset_id)
@@ -3137,7 +3137,7 @@ class MainWindow(QMainWindow):
         elif asset.magic in {"SDAT", "SWAR", "SWAV", "STRM", "SSEQ", "SSAR", "SBNK"}:
             lines.append("")
             lines.append("Audio status")
-            lines.append("  Export Selected writes the original data and WAV previews where DSM can decode samples/streams.")
+            lines.append("  Export Selected writes the original data and WAV previews where NDS-AS can decode samples/streams.")
         else:
             lines.append("")
             lines.append("Use Preview or Export Selected for the available decoder/export options.")
@@ -3214,7 +3214,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "apicula not found", apicula_help_text())
             else:
                 self.preview.show_message(apicula_help_text())
-                self._update_status("apicula was not found, so DSM can list/export but not preview models yet.")
+                self._update_status("apicula was not found, so NDS-AS can list/export but not preview models yet.")
             return
 
         if self.texture_resolve_worker is not None and self.texture_resolve_worker.isRunning():
@@ -3241,7 +3241,7 @@ class MainWindow(QMainWindow):
         )
         self.preview.show_message(
             f"Previewing model with textures...\n\n{asset.virtual_path}{pin_note}\n\n"
-            "DSM is matching NSBMD materials to NSBTX dictionaries and converting the preview."
+            "NDS-AS is matching NSBMD materials to NSBTX dictionaries and converting the preview."
             f"{warmup_note}"
         )
         self._update_status(f"Previewing textured model: {asset.virtual_path}")
@@ -3348,7 +3348,7 @@ class MainWindow(QMainWindow):
         base = Path(out_dir) / f"dsm_textures_{asset.asset_id}"
         self._update_status(f"Extracting texture images from {asset.virtual_path}...")
 
-        # v8 first tries DSM's own NSBTX decoder. It is faster and does not need
+        # v8 first tries NDS-AS's own NSBTX decoder. It is faster and does not need
         # apicula for common indexed/direct DS texture formats.
         try:
             decoded = decode_btx_images(asset.data, max_images=256, mode="all-palettes")
@@ -3357,13 +3357,13 @@ class MainWindow(QMainWindow):
             decoded = []
             written = []
         if written:
-            QMessageBox.information(self, "Textures extracted", f"DSM decoded and wrote {len(written)} PNG file(s) to:\n{Path(out_dir)}")
-            self._update_status(f"DSM decoded {len(written)} texture PNG(s) to {out_dir}")
+            QMessageBox.information(self, "Textures extracted", f"NDS-AS decoded and wrote {len(written)} PNG file(s) to:\n{Path(out_dir)}")
+            self._update_status(f"NDS-AS decoded {len(written)} texture PNG(s) to {out_dir}")
             return
 
         # Fallback: apicula may still be useful for weird model/texture cases.
         if not apicula_available():
-            QMessageBox.warning(self, "Texture extraction incomplete", "DSM could not decode this BTX0 directly, and apicula was not found for fallback extraction.\n\n" + apicula_help_text())
+            QMessageBox.warning(self, "Texture extraction incomplete", "NDS-AS could not decode this BTX0 directly, and apicula was not found for fallback extraction.\n\n" + apicula_help_text())
             self._update_status("Texture extraction failed: no direct decode and no apicula fallback.")
             return
         result = convert_texture_with_apicula(asset, base)
@@ -3439,7 +3439,7 @@ class MainWindow(QMainWindow):
             self._update_status(f"Previewing PNG image {asset.virtual_path}")
             return
         if manual:
-            QMessageBox.information(self, "No visual decoder yet", f"DSM can export this asset raw, but does not have a visual preview for {asset.magic or asset.kind} yet.")
+            QMessageBox.information(self, "No visual decoder yet", f"NDS-AS can export this asset raw, but does not have a visual preview for {asset.magic or asset.kind} yet.")
         else:
             self.preview.show_message(f"No visual preview decoder yet for this asset.\n\n{asset.kind} / {asset.magic}\n{asset.virtual_path}")
 
@@ -3524,7 +3524,7 @@ class MainWindow(QMainWindow):
         current = self.selected_asset()
         if current and current.asset_id == asset_id:
             self.preview.show_message(
-                f"DSM found this asset, but could not decode a preview image yet.\n\n"
+                f"NDS-AS found this asset, but could not decode a preview image yet.\n\n"
                 f"{current.virtual_path}\n\n"
                 f"{message}\n\n"
                 "Use Export Selected for raw data, readable PNG/WAV outputs, or a model/audio bundle when available."
@@ -3536,7 +3536,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Nothing to save", "Open a ROM or session before saving your work.")
             return
         if self.session_save_worker is not None and self.session_save_worker.isRunning():
-            QMessageBox.information(self, "Session save running", "DSM is already saving a session. Progress is shown in Terminal.")
+            QMessageBox.information(self, "Session save running", "NDS-AS is already saving a session. Progress is shown in Terminal.")
             self.info_tabs.setCurrentWidget(self.log_box)
             return
         saves_dir = Path.cwd() / "saves"
@@ -3544,7 +3544,7 @@ class MainWindow(QMainWindow):
         base_name = Path(self.rom_path).stem if self.rom_path else "dsm_session"
         safe_base = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in base_name)[:64] or "dsm_session"
         suggested = saves_dir / f"{safe_base}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.dsmsession"
-        target, _ = QFileDialog.getSaveFileName(self, "Save DSM session", str(suggested), "DSM session (*.dsmsession);;Zip archive (*.zip)")
+        target, _ = QFileDialog.getSaveFileName(self, "Save NDS-AS session", str(suggested), "NDS-AS session (*.dsmsession);;Zip archive (*.zip)")
         if not target:
             return
         mapping_id = self.current_mapping.mapping_id if self.current_mapping else ""
@@ -3565,7 +3565,7 @@ class MainWindow(QMainWindow):
 
     def _session_save_finished(self, path: str) -> None:
         self.session_path = path
-        QMessageBox.information(self, "Session saved", f"Saved DSM session:\n{path}")
+        QMessageBox.information(self, "Session saved", f"Saved NDS-AS session:\n{path}")
         self._update_status(f"Session saved: {path}")
 
     def _session_save_failed(self, message: str) -> None:
@@ -3573,15 +3573,15 @@ class MainWindow(QMainWindow):
         self._update_status(f"Session save failed: {message}")
 
     def open_session(self) -> None:
-        source, _ = QFileDialog.getOpenFileName(self, "Open DSM session", str(Path.cwd() / "saves"), "DSM session (*.dsmsession *.zip);;All files (*.*)")
+        source, _ = QFileDialog.getOpenFileName(self, "Open NDS-AS session", str(Path.cwd() / "saves"), "NDS-AS session (*.dsmsession *.zip);;All files (*.*)")
         if not source:
             return
         if self.session_load_worker is not None and self.session_load_worker.isRunning():
-            QMessageBox.information(self, "Session load running", "DSM is already opening a session. Progress is shown in Terminal.")
+            QMessageBox.information(self, "Session load running", "NDS-AS is already opening a session. Progress is shown in Terminal.")
             self.info_tabs.setCurrentWidget(self.log_box)
             return
         self._focus_terminal(banner=f"Opening saved session {source}…")
-        self.preview.show_message("Opening saved session...\n\nDSM will restore the asset index without reading the original ROM.")
+        self.preview.show_message("Opening saved session...\n\nNDS-AS will restore the asset index without reading the original ROM.")
         self._update_status(f"Opening session {source}")
         self.session_load_worker = SessionLoadWorker(Path(source))
         self.session_load_worker.progress.connect(self._update_status)
@@ -3681,7 +3681,7 @@ class MainWindow(QMainWindow):
             ("folder_readable", "ZIP: Readable PNGs / previews", "Decode textures, tiles, palettes, and PNGs into a portable archive."),
             ("folder_raw", "ZIP: Raw original files", "Write the extracted Nitro payloads using their virtual ROM paths."),
             ("folder_glb", "ZIP: GLB models (BMD0 only)", "Convert every visible model in the folder to GLB via apicula."),
-            ("folder_mixed", "ZIP: Mixed smart bundle", "Raw files plus readable previews and GLB models where DSM can produce them."),
+            ("folder_mixed", "ZIP: Mixed smart bundle", "Raw files plus readable previews and GLB models where NDS-AS can produce them."),
         ]
 
     def _export_selected_folder(self, folder: tuple[tuple[str, ...], bool]) -> None:
@@ -3782,7 +3782,7 @@ class MainWindow(QMainWindow):
         return count
 
     def _export_options_for(self, asset: Asset) -> list[tuple[str, str, str]]:
-        options: list[tuple[str, str, str]] = [("raw", "Original / raw asset", "Save exactly this selected asset as DSM extracted it.")]
+        options: list[tuple[str, str, str]] = [("raw", "Original / raw asset", "Save exactly this selected asset as NDS-AS extracted it.")]
         if asset.magic == "BMD0":
             options.extend([
                 ("model_glb", "Model: GLB via apicula", "Convert selected model with resolved textures and same-folder animation siblings supplied to apicula."),
@@ -3792,22 +3792,22 @@ class MainWindow(QMainWindow):
             ])
         elif asset.magic == "BTX0":
             options.extend([
-                ("readable", "Texture PNGs/contact sheet", "Decode NSBTX/BTX0 textures to PNG when DSM supports the format."),
+                ("readable", "Texture PNGs/contact sheet", "Decode NSBTX/BTX0 textures to PNG when NDS-AS supports the format."),
                 ("texture_apicula", "Texture extraction via apicula fallback", "Try apicula's texture extraction for unusual BTX0 cases."),
             ])
         elif asset.magic in {"RGCN", "RLCN", "RCSN", "RECN", "RNAN", "PNG"}:
             options.extend([
-                ("readable", "Readable PNG preview", "Export DSM's direct preview/contact sheet for this asset."),
-                ("related_png", "Combined PNG using related tiles/palettes/cells", "Pair same-folder NCGR/NCLR/NSCR/NCER/NANR assets and compose the best preview DSM can."),
+                ("readable", "Readable PNG preview", "Export NDS-AS's direct preview/contact sheet for this asset."),
+                ("related_png", "Combined PNG using related tiles/palettes/cells", "Pair same-folder NCGR/NCLR/NSCR/NCER/NANR assets and compose the best preview NDS-AS can."),
             ])
         elif asset.magic in {"SDAT", "SSEQ", "SSAR", "SBNK", "SWAR", "SWAV", "STRM"}:
             options.extend([
-                ("audio_bundle", "Audio bundle: raw + WAV previews", "Best-quality practical output: raw original pieces plus lossless WAV previews where DSM can decode samples/streams."),
+                ("audio_bundle", "Audio bundle: raw + WAV previews", "Best-quality practical output: raw original pieces plus lossless WAV previews where NDS-AS can decode samples/streams."),
                 ("audio_bundle_mp3", "Audio bundle + optional MP3", "Also writes high-quality MP3 copies when ffmpeg is installed. WAV remains the quality-first output."),
                 ("audio_open", "Create WAV preview and open it", "Exports to a preview folder and opens the first WAV with your OS default player."),
             ])
         else:
-            options.append(("readable", "Try readable decode", "Try DSM's readable exporter if this format has a decoder."))
+            options.append(("readable", "Try readable decode", "Try NDS-AS's readable exporter if this format has a decoder."))
         return options
 
     def _choose_export_option(self, asset: Asset, options: list[tuple[str, str, str]]) -> str | None:
@@ -3852,7 +3852,7 @@ class MainWindow(QMainWindow):
             self._update_status("Writing raw selected asset...")
             return [export_asset(asset, out, decoded=True)]
         if choice == "readable":
-            self._update_status("Running DSM readable decoder...")
+            self._update_status("Running NDS-AS readable decoder...")
             return export_readable_asset(asset, out)
         if choice == "related_png":
             self._update_status("Composing PNG preview from paired 2D assets...")
@@ -3982,7 +3982,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Readable export complete", f"Wrote {len(written)} file(s) to:\n{Path(out_dir)}")
             self._update_status(f"Wrote {len(written)} readable file(s) from {asset.virtual_path}")
         else:
-            QMessageBox.information(self, "No readable decoder", "DSM does not have a readable PNG export for this asset yet. Use Export Selected to save the raw decoded file.")
+            QMessageBox.information(self, "No readable decoder", "NDS-AS does not have a readable PNG export for this asset yet. Use Export Selected to save the raw decoded file.")
             self._update_status("No readable decoder for selected asset.")
 
     def export_selected(self) -> None:
@@ -4068,7 +4068,7 @@ class MainWindow(QMainWindow):
             msg = (
                 f"Exported Blender bundle to {base}\n\n"
                 f"Raw model + {len(exported_siblings)} related texture/animation file(s) are in raw_nitro/.\n"
-                f"Converted GLB/DAE outputs, {dsm_decoded_count} DSM-decoded texture PNG(s), apicula texture fallbacks, and logs are inside the bundle."
+                f"Converted GLB/DAE outputs, {dsm_decoded_count} NDS-AS-decoded texture PNG(s), apicula texture fallbacks, and logs are inside the bundle."
             )
             QMessageBox.information(self, "Bundle exported", msg)
             self._update_status(msg)
@@ -4102,7 +4102,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "apicula not found", apicula_help_text())
             else:
                 self.preview.show_message(apicula_help_text())
-                self._update_status("apicula was not found, so DSM can list/export but not preview models yet.")
+                self._update_status("apicula was not found, so NDS-AS can list/export but not preview models yet.")
             return
 
         out_dir = self.preview_temp / asset.asset_id / "geometry_preview"

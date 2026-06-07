@@ -707,7 +707,7 @@
         "Filter shows the known move-effect archives first.",
         "Open tile/texture rows (NCGR/RGCN/BTX0) and use Export Readable to create PNG/contact sheets.",
         "Open palette rows (NCLR/RLCN) beside them and export swatches.",
-        "Open cell/cell-animation rows (NCER/RECN and NANR/RNAN) as raw exports until DSM can fully compose those animations.",
+        "Open cell/cell-animation rows (NCER/RECN and NANR/RNAN) as raw exports until NDS-AS can fully compose those animations.",
         "For Gen 5, move animation scripts are often separate from the sprite graphics, so search scripts and visual archives together."
       ]
     },
@@ -735,7 +735,7 @@
       "query": "cat:audio|magic:SDAT|magic:SSEQ|magic:SSAR|magic:SBNK|magic:SWAR|magic:SWAV|magic:STRM",
       "description": "Sound archives, sequence music, SFX archives, banks, wave archives, samples, and streams.",
       "workflow": [
-        "Use Export Readable for a lossless audio bundle and WAV previews when DSM can decode sample/stream data."
+        "Use Export Readable for a lossless audio bundle and WAV previews when NDS-AS can decode sample/stream data."
       ]
     }
   ]

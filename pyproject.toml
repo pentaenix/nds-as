@@ -1,7 +1,7 @@
 [project]
 name = "dsm"
 version = "0.25.0"
-description = "Local Nintendo DS/Pokémon asset studio with mappings, models, textures, tiles, sprites, and audio extraction"
+description = "NDS-AS (nds-as): local Nintendo DS/Pokémon asset studio with mappings, models, textures, tiles, sprites, and audio extraction"
 requires-python = ">=3.10"
 dependencies = [
     "PySide6>=6.6",
@@ -13,8 +13,8 @@ dependencies = [
 ]
 
 [project.scripts]
-dsm = "dsm.cli:main"
-dsm-ui = "dsm.app:main"
+dsas = "dsm.cli:main"
+dsas-ui = "dsm.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -1,6 +1,6 @@
-# DSM mappings
+# NDS-AS mappings
 
-Community mapping seed files for DSM.
+Community mapping seed files for [nds-as](https://github.com/pentaenix/nds-as).
 
 These files contain metadata only: paths, labels, source URLs, confidence levels, and relationship hints. They must not contain ROM bytes, extracted images, models, textures, or other copyrighted assets.
 
@@ -15,10 +15,10 @@ These files contain metadata only: paths, labels, source URLs, confidence levels
 
 ## Confidence values
 
-- `verified-design-rule` — true by DSM/format design, not a ROM-specific claim.
+- `verified-design-rule` — true by NDS-AS/format design, not a ROM-specific claim.
 - `community-known` — from a cited public filelist/tool reference.
-- `heuristic` — useful hint, but DSM must verify via file signatures and counts.
-- `conflict` — public notes disagree or are too ambiguous; DSM should show this in UI.
+- `heuristic` — useful hint, but NDS-AS must verify via file signatures and counts.
+- `conflict` — public notes disagree or are too ambiguous; NDS-AS should show this in UI.
 
 ## Required legal guardrails
 

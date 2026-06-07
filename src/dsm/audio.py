@@ -206,7 +206,7 @@ def export_audio_bundle(asset, out_dir: str | Path, *, make_mp3: bool = False) -
                     written.append(wav)
                     child_record["wav"] = str(wav.relative_to(bundle))
             manifest["children"].append(child_record)
-        manifest["notes"].append("SSEQ/SSAR are sequenced audio, not PCM. DSM exports them losslessly as raw files; use VGMTrans/Nitro Studio for MIDI/SF2-style conversion.")
+        manifest["notes"].append("SSEQ/SSAR are sequenced audio, not PCM. NDS-AS exports them losslessly as raw files; use VGMTrans/Nitro Studio for MIDI/SF2-style conversion.")
     elif asset.magic == "SWAR":
         swavs = iter_swar_swavs(asset.data)
         for swav in swavs:
@@ -222,7 +222,7 @@ def export_audio_bundle(asset, out_dir: str | Path, *, make_mp3: bool = False) -
         if wav:
             written.append(wav)
         else:
-            manifest["notes"].append("DSM could not safely decode this audio payload yet; raw original was exported losslessly.")
+            manifest["notes"].append("NDS-AS could not safely decode this audio payload yet; raw original was exported losslessly.")
     else:
         manifest["notes"].append("Sequenced/instrument audio was exported raw losslessly. Decode/render externally with VGMTrans or Nitro Studio when needed.")
 

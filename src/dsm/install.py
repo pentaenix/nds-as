@@ -30,8 +30,8 @@ def run(cmd: list[str], *, cwd: Path) -> int:
 def ensure_dirs(root: Path) -> None:
     for name, readme in {
         "roms": "Put your own legally dumped Nintendo DS ROMs here. Do not commit ROM files.\n",
-        "exports": "DSM writes extracted/converted assets here. Do not commit exported assets.\n",
-        "saves": "DSM session files live here. Sessions can contain extracted asset data and must stay local.\n",
+        "exports": "NDS-AS writes extracted/converted assets here. Do not commit exported assets.\n",
+        "saves": "NDS-AS session files live here. Sessions can contain extracted asset data and must stay local.\n",
         "mapping_overrides": "Local mapping discoveries/notes. Ignored by git by default.\n",
         "tools": "Optional external tools such as apicula can live here.\n",
     }.items():
@@ -67,7 +67,7 @@ def ensure_gitignore(root: Path) -> None:
 
 def install(*, with_apicula: bool = True) -> int:
     root = project_root()
-    print(f"DSM install/refresh in {root}")
+    print(f"NDS-AS install/refresh in {root}")
     ensure_dirs(root)
     ensure_gitignore(root)
 
@@ -94,10 +94,10 @@ def install(*, with_apicula: bool = True) -> int:
     if with_apicula:
         ensure_apicula(root)
 
-    print("\nDSM health check")
+    print("\nNDS-AS health check")
     print(f"Python:   OK {platform.python_version()} -> {py}")
     print("venv:     OK .venv")
-    print("DSM:      OK editable install")
+    print("NDS-AS:   OK editable install")
     for folder in ("roms", "exports", "saves", "mappings", "mapping_overrides"):
         print(f"{folder + ':':<10} OK {(root / folder).exists()}")
     apicula = find_apicula(root)
@@ -106,15 +106,15 @@ def install(*, with_apicula: bool = True) -> int:
     else:
         print("apicula:  optional, not found/built. Model conversion still needs it.")
     print("\nReady:")
-    print("  ./dsm run")
-    print("  ./dsm list roms/your_game.nds")
-    print("  ./dsm decode roms/your_game.nds --out exports/readable")
+    print("  ./dsas run")
+    print("  ./dsas list roms/your_game.nds")
+    print("  ./dsas decode roms/your_game.nds --out exports/readable")
     return 0
 
 
 def find_apicula(root: Path) -> Path | None:
     names = ["apicula.exe", "apicula"] if os.name == "nt" else ["apicula"]
-    env = os.environ.get("DSM_APICULA")
+    env = os.environ.get("DSAS_APICULA") or os.environ.get("DSM_APICULA")
     candidates = []
     if env:
         candidates.append(Path(env).expanduser())
@@ -141,7 +141,7 @@ def ensure_apicula(root: Path) -> None:
             print("Missing git.")
         if not cargo:
             print("Missing Rust/Cargo.")
-            print("Install Rust from https://rustup.rs or your package manager, then rerun ./dsm install")
+            print("Install Rust from https://rustup.rs or your package manager, then rerun ./dsas install")
         return
     tools = root / "tools"
     tools.mkdir(exist_ok=True)
@@ -150,12 +150,12 @@ def ensure_apicula(root: Path) -> None:
         print("Cloning apicula ...")
         rc = run([git, "clone", "https://github.com/scurest/apicula.git", str(apicula_dir)], cwd=root)
         if rc:
-            print("Could not clone apicula; DSM can still run without model conversion.")
+            print("Could not clone apicula; NDS-AS can still run without model conversion.")
             return
     print("Building apicula ...")
     rc = run([cargo, "build", "--release"], cwd=apicula_dir)
     if rc:
-        print("Could not build apicula; DSM can still run without model conversion.")
+        print("Could not build apicula; NDS-AS can still run without model conversion.")
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -28,7 +28,7 @@ def save_session_zip(
     pinned_texture_asset_id: str | None = None,
     progress: Progress | None = None,
 ) -> Path:
-    """Write a self-contained DSM session.
+    """Write a self-contained NDS-AS session.
 
     The session contains the detected asset payloads. It intentionally does not
     store or require the original ROM after it is created. Sessions may contain
@@ -43,7 +43,7 @@ def save_session_zip(
     manifest_assets = []
     total = len(assets)
     if progress:
-        progress(f"Saving DSM session with {total} asset(s): {target}")
+        progress(f"Saving NDS-AS session with {total} asset(s): {target}")
     with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
         for idx, asset in enumerate(assets, start=1):
             if progress and (idx == 1 or idx % 250 == 0 or idx == total):
@@ -92,11 +92,11 @@ def save_session_zip(
 def load_session_zip(path: str | Path, *, progress: Progress | None = None) -> dict:
     source = Path(path)
     if progress:
-        progress(f"Opening DSM session: {source}")
+        progress(f"Opening NDS-AS session: {source}")
     with zipfile.ZipFile(source, "r") as zf:
         manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
         if manifest.get("format") != SESSION_FORMAT:
-            raise ValueError("This file is not a supported DSM session.")
+            raise ValueError("This file is not a supported NDS-AS session.")
         assets: list[Asset] = []
         raw_assets = list(manifest.get("assets", []))
         total = len(raw_assets)

@@ -65,7 +65,7 @@ def find_apicula() -> str | None:
     if os.name == "nt":
         names.insert(0, "apicula.exe")
 
-    env_path = os.environ.get("DSM_APICULA", "").strip()
+    env_path = (os.environ.get("DSAS_APICULA") or os.environ.get("DSM_APICULA") or "").strip()
     candidates: list[Path] = []
     if env_path:
         candidates.append(Path(env_path).expanduser())
@@ -102,13 +102,12 @@ def apicula_available() -> bool:
 
 def apicula_help_text() -> str:
     return (
-        "apicula was not found. DSM looks on PATH, DSM_APICULA, and "
+        "apicula was not found. NDS-AS looks on PATH, DSAS_APICULA, and "
         "tools/apicula/target/release/apicula.\n\n"
-        "From the DSM folder, build it with:\n\n"
+        "From the nds-as repo root, build it with:\n\n"
         "brew install rust\n"
-        "git clone https://github.com/scurest/apicula.git tools/apicula\n"
         "cd tools/apicula && cargo build --release\n\n"
-        "Then restart DSM."
+        "Then restart NDS-AS."
     )
 
 

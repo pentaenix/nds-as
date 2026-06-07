@@ -14,11 +14,11 @@ from .util import human_size
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="dsm", description="DS asset studio/exporter for local .nds files")
+    parser = argparse.ArgumentParser(prog="dsas", description="NDS-AS: Nintendo DS asset studio/exporter for local .nds files")
     sub = parser.add_subparsers(dest="cmd")
 
     sub.add_parser("run", help="Open the desktop UI")
-    p_install = sub.add_parser("install", help="Create/refresh .venv, requirements, DSM editable install, safe folders, and optional apicula")
+    p_install = sub.add_parser("install", help="Create/refresh .venv, requirements, NDS-AS editable install, safe folders, and optional apicula")
     p_install.add_argument("--no-apicula", action="store_true", help="Skip optional apicula clone/build")
 
     p_maps = sub.add_parser("mappings", help="List available community mapping files")
@@ -53,14 +53,14 @@ def main(argv: list[str] | None = None) -> int:
     p_tex.add_argument("--limit", type=int, default=0, help="Optional extraction limit")
     p_tex.add_argument("--deep-scan", action="store_true", help="Slower fallback: carve Nitro files inside unknown containers")
 
-    p_decode = sub.add_parser("decode", help="Decode matching readable assets to PNG when DSM supports the format")
+    p_decode = sub.add_parser("decode", help="Decode matching readable assets to PNG when NDS-AS supports the format")
     p_decode.add_argument("rom")
     p_decode.add_argument("--out", "-o", required=True)
     p_decode.add_argument("--query", "-q", default="BTX0", help="Filter assets before PNG decode; try BTX0, RGCN, RLCN, RCSN, PNG")
     p_decode.add_argument("--limit", type=int, default=0, help="Optional decode limit")
     p_decode.add_argument("--deep-scan", action="store_true", help="Slower fallback: carve known files inside unknown containers")
 
-    p_audio = sub.add_parser("audio", help="Export lossless SDAT/SSEQ/SSAR/SBNK/SWAR/SWAV/STRM audio bundles; WAV where DSM can decode samples/streams")
+    p_audio = sub.add_parser("audio", help="Export lossless SDAT/SSEQ/SSAR/SBNK/SWAR/SWAV/STRM audio bundles; WAV where NDS-AS can decode samples/streams")
     p_audio.add_argument("rom")
     p_audio.add_argument("--out", "-o", default="exports/audio", help="Output folder")
     p_audio.add_argument("--query", "-q", default="", help="Optional filter before audio export; try SDAT, SWAR, SWAV, STRM, SSEQ, SSAR, or SBNK")
