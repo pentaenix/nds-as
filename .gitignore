@@ -8,11 +8,14 @@ __pycache__/
 preview_output/
 extracted_assets/
 converted_glb/
-roms/*
+
+# ROM dumps — never commit game files (keeps folder placeholders only)
+roms/**
 !roms/README.md
 !roms/.gitkeep
 
-exports/*
+# Exported / converted assets — local output only
+exports/**
 !exports/README.md
 !exports/.gitkeep
 

@@ -45,8 +45,8 @@ def ensure_dirs(root: Path) -> None:
 
 def ensure_gitignore(root: Path) -> None:
     required = [
-        "roms/*", "!roms/README.md", "!roms/.gitkeep", "",
-        "exports/*", "!exports/README.md", "!exports/.gitkeep", "",
+        "roms/**", "!roms/README.md", "!roms/.gitkeep", "",
+        "exports/**", "!exports/README.md", "!exports/.gitkeep", "",
         "saves/*", "!saves/README.md", "!saves/.gitkeep", "",
         "mapping_overrides/*", "!mapping_overrides/README.md", "!mapping_overrides/.gitkeep", "",
         ".venv/", "__pycache__/", "*.pyc", ".DS_Store",
