@@ -567,20 +567,48 @@ def _best_preview_path(paths: list[Path]) -> Path | None:
 
 class ImagePreviewWorker(QThread):
     progress = Signal(str)
-    finished_ok = Signal(str, str, str)
-    failed = Signal(str, str)
+    finished_ok = Signal(int, str, str, str)
+    failed = Signal(int, str, str)
 
-    def __init__(self, asset: Asset, out_path: Path, label: str, related_assets: list[Asset] | None = None):
+    def __init__(
+        self,
+        asset: Asset,
+        out_path: Path,
+        label: str,
+        *,
+        request_id: int,
+        related_assets: list[Asset] | None = None,
+        texture_name: str | None = None,
+    ):
         super().__init__()
         self.asset = asset
         self.out_path = out_path
         self.label = label
+        self.request_id = request_id
         self.related_assets = related_assets or []
+        self.texture_name = texture_name
+
+    def _decode_btx0_texture_entry(self, texture_name: str) -> list:
+        images = decode_guided_tex0_images(
+            self.asset.data,
+            texture_requests=[(texture_name, None)],
+            max_images=8,
+        )
+        if images:
+            return images
+        return [
+            image
+            for image in decode_btx_images(self.asset.data, max_images=32, mode="all-palettes")
+            if image.name == texture_name or image.name.startswith(f"{texture_name}__")
+        ]
 
     def run(self) -> None:
         try:
             self.progress.emit(f"Decoding preview images from {self.asset.virtual_path}...")
-            if self.asset.magic == "BTX0":
+            if self.asset.magic == "BTX0" and self.texture_name:
+                self.progress.emit(f"Decoding BTX0 texture entry '{self.texture_name}'...")
+                images = self._decode_btx0_texture_entry(self.texture_name)
+            elif self.asset.magic == "BTX0":
                 images = decode_btx_images(self.asset.data, max_images=96, mode="all-palettes")
             elif self.related_assets:
                 self.progress.emit(f"Composing preview with {len(self.related_assets)} related asset(s)...")
@@ -588,21 +616,30 @@ class ImagePreviewWorker(QThread):
             else:
                 images = decode_nitro2d_preview(self.asset.data, self.asset.magic)
             if not images:
-                self.failed.emit(self.asset.asset_id, "No readable preview images were decoded from this asset yet.")
+                self.failed.emit(self.request_id, self.asset.asset_id, "No readable preview images were decoded from this asset yet.")
                 return
-            sheet = make_contact_sheet(images, columns=4) if len(images) > 1 else images[0].to_pil()
+            if self.texture_name:
+                preview_image = images[0]
+                sheet = preview_image.to_pil()
+                caption = (
+                    f"{self.texture_name} — {preview_image.width}x{preview_image.height}"
+                    f"{f' (palette {preview_image.palette_name})' if preview_image.palette_name else ''}"
+                    f" from {Path(self.asset.virtual_path).name}"
+                )
+            else:
+                sheet = make_contact_sheet(images, columns=4) if len(images) > 1 else images[0].to_pil()
+                names = ", ".join(img.name for img in images[:8])
+                if len(images) > 8:
+                    names += ", ..."
+                caption = f"{self.label}: {len(images)} decoded image(s). {names}\n{self.asset.virtual_path}"
             if sheet is None:
-                self.failed.emit(self.asset.asset_id, "No preview sheet could be created.")
+                self.failed.emit(self.request_id, self.asset.asset_id, "No preview sheet could be created.")
                 return
             self.out_path.parent.mkdir(parents=True, exist_ok=True)
             sheet.save(self.out_path)
-            names = ", ".join(img.name for img in images[:8])
-            if len(images) > 8:
-                names += ", ..."
-            caption = f"{self.label}: {len(images)} decoded image(s). {names}\n{self.asset.virtual_path}"
-            self.finished_ok.emit(self.asset.asset_id, str(self.out_path), caption)
+            self.finished_ok.emit(self.request_id, self.asset.asset_id, str(self.out_path), caption)
         except Exception as exc:
-            self.failed.emit(self.asset.asset_id, str(exc))
+            self.failed.emit(self.request_id, self.asset.asset_id, str(exc))
 
 
 class TextureWorker(QThread):
@@ -1643,6 +1680,7 @@ class MainWindow(QMainWindow):
         self.worker: ScanWorker | None = None
         self.preview_worker: PreviewWorker | None = None
         self.image_preview_worker: ImagePreviewWorker | None = None
+        self._image_preview_request_id = 0
         self.texture_worker: TextureWorker | None = None
         self.texture_resolve_worker: TextureResolveWorker | None = None
         self.texture_warmup_worker: TextureLibraryWarmupWorker | None = None
@@ -2820,9 +2858,9 @@ class MainWindow(QMainWindow):
     def _make_btx0_archive_tree_item(self, asset: Asset) -> QTreeWidgetItem:
         entries = self._btx0_texture_entries(asset)
         node = QTreeWidgetItem([
-            self._asset_display_name(asset),
             self._asset_file_label(asset),
-            f"BTX0 ({len(entries)} texture{'s' if len(entries) != 1 else ''})",
+            "",
+            f"BTX0 archive ({len(entries)} texture{'s' if len(entries) != 1 else ''})",
             asset.virtual_path,
         ])
         node.setData(0, Qt.UserRole, {"btx0_archive": asset.asset_id})
@@ -2900,6 +2938,9 @@ class MainWindow(QMainWindow):
 
     def _asset_from_tree_item_data(self, data: object) -> Asset | None:
         if isinstance(data, dict):
+            if data.get("placeholder"):
+                self._selected_btx0_texture_name = None
+                return None
             if "btx0_texture" in data:
                 self._selected_btx0_texture_name = str(data.get("texture_name") or "")
                 asset = self.assets_by_id.get(str(data.get("btx0_texture") or ""))
@@ -3377,36 +3418,7 @@ class MainWindow(QMainWindow):
 
 
     def _preview_btx0_texture(self, asset: Asset, texture_name: str) -> None:
-        self.preview.show_message(f"Decoding texture '{texture_name}' from {asset.virtual_path}...")
-        images = decode_guided_tex0_images(
-            asset.data,
-            texture_requests=[(texture_name, None)],
-            max_images=8,
-        )
-        if not images:
-            images = [
-                image
-                for image in decode_btx_images(asset.data, max_images=32, mode="all-palettes")
-                if image.name == texture_name or image.name.startswith(f"{texture_name}__")
-            ]
-        if not images:
-            self.preview.show_message(
-                f"Could not decode texture '{texture_name}' from:\n{asset.virtual_path}\n\n"
-                "Try selecting the parent BTX0 archive for a contact-sheet preview, or Export Readable for diagnostics."
-            )
-            self._update_status(f"Texture decode failed: {texture_name} in {asset.virtual_path}")
-            return
-        image = images[0]
-        out = self.preview_temp / f"btx_{asset.asset_id}" / f"{texture_name}.png"
-        out.parent.mkdir(parents=True, exist_ok=True)
-        image.save_png(out)
-        caption = (
-            f"{texture_name} — {image.width}x{image.height}"
-            f"{f' (palette {image.palette_name})' if image.palette_name else ''}"
-            f" from {Path(asset.virtual_path).name}"
-        )
-        self.preview.show_image_path(out, caption)
-        self._update_status(f"Previewing texture {texture_name} from {asset.virtual_path}")
+        self._preview_decodable_images(asset, f"BTX0 texture {texture_name}", texture_name=texture_name)
 
     def preview_selected_asset(self, *, manual: bool = True, force: bool = False) -> None:
         asset = self.selected_asset()
@@ -3418,8 +3430,9 @@ class MainWindow(QMainWindow):
             self.convert_preview_selected(manual=manual, force=force)
             return
         if asset.magic == "BTX0":
-            if self._selected_btx0_texture_name:
-                self._preview_btx0_texture(asset, self._selected_btx0_texture_name)
+            texture_name = self._selected_btx0_texture_name
+            if texture_name:
+                self._preview_btx0_texture(asset, texture_name)
             else:
                 self._preview_decodable_images(asset, "BTX0 texture archive")
             return
@@ -3497,35 +3510,72 @@ class MainWindow(QMainWindow):
         nums = re.findall(r"\d+", asset.virtual_path)
         return int(nums[-1]) if nums else None
 
-    def _preview_decodable_images(self, asset: Asset, label: str) -> None:
-        if self.image_preview_worker is not None and self.image_preview_worker.isRunning():
-            self._update_status(f"Image preview already running; queued selection will preview after it finishes if selected again.")
-            return
-        out = self.preview_temp / f"preview_{asset.asset_id}.png"
-        related = self._quick_related_2d_assets(asset, limit=16) if asset.magic in {"RGCN", "RLCN", "RCSN", "RECN", "RNAN"} else []
-        related_note = f"\nUsing {len(related)} related asset(s)." if related else ""
-        self.preview.show_message(f"Decoding preview off the UI thread...\n{asset.virtual_path}{related_note}")
-        self._update_status(f"Starting preview decode for {asset.virtual_path}; related assets: {len(related)}")
-        self.image_preview_worker = ImagePreviewWorker(asset, out, label, related_assets=related)
+    def _preview_decodable_images(self, asset: Asset, label: str, *, texture_name: str | None = None) -> None:
+        self._image_preview_request_id += 1
+        request_id = self._image_preview_request_id
+        related: list[Asset] = []
+        if texture_name:
+            out = self.preview_temp / f"btx_{asset.asset_id}" / f"{texture_name}.png"
+            self.preview.show_message(f"Decoding texture '{texture_name}' from {asset.virtual_path}...")
+            self._update_status(f"Decoding BTX0 texture entry '{texture_name}' from {asset.virtual_path}")
+        else:
+            out = self.preview_temp / f"preview_{asset.asset_id}.png"
+            if asset.magic in {"RGCN", "RLCN", "RCSN", "RECN", "RNAN"}:
+                related = self._quick_related_2d_assets(asset, limit=16)
+            related_note = f"\nUsing {len(related)} related asset(s)." if related else ""
+            self.preview.show_message(f"Decoding preview off the UI thread...\n{asset.virtual_path}{related_note}")
+            self._update_status(f"Starting preview decode for {asset.virtual_path}; related assets: {len(related)}")
+        self.image_preview_worker = ImagePreviewWorker(
+            asset,
+            out,
+            label,
+            request_id=request_id,
+            related_assets=related,
+            texture_name=texture_name,
+        )
         self.image_preview_worker.progress.connect(self._update_status)
         self.image_preview_worker.finished_ok.connect(self._image_preview_finished)
         self.image_preview_worker.failed.connect(self._image_preview_failed)
         self.image_preview_worker.start()
 
-    def _image_preview_finished(self, asset_id: str, path: str, caption: str) -> None:
+    def _image_preview_still_current(self, request_id: int, asset_id: str) -> bool:
+        if request_id != self._image_preview_request_id:
+            return False
         current = self.selected_asset()
-        if current and current.asset_id == asset_id:
-            self.preview.show_image_path(Path(path), caption)
-            self._update_status(f"Preview decoded: {Path(path).name}")
-        else:
-            self._update_status("Preview decode finished for a previously selected row.")
+        if not current or current.asset_id != asset_id:
+            return False
+        if current.magic == "BTX0" and self._selected_btx0_texture_name:
+            worker = self.image_preview_worker
+            if worker is None or worker.texture_name != self._selected_btx0_texture_name:
+                return False
+        if current.magic == "BTX0" and not self._selected_btx0_texture_name:
+            worker = self.image_preview_worker
+            if worker is not None and worker.texture_name:
+                return False
+        return True
 
-    def _image_preview_failed(self, asset_id: str, message: str) -> None:
+    def _image_preview_finished(self, request_id: int, asset_id: str, path: str, caption: str) -> None:
+        if not self._image_preview_still_current(request_id, asset_id):
+            self._update_status("Preview decode finished for a previously selected row.")
+            return
+        self.preview.show_image_path(Path(path), caption)
+        self._update_status(f"Preview decoded: {Path(path).name}")
+
+    def _image_preview_failed(self, request_id: int, asset_id: str, message: str) -> None:
+        if not self._image_preview_still_current(request_id, asset_id):
+            self._update_status(f"Preview decode failed for a previously selected row: {message}")
+            return
         current = self.selected_asset()
-        if current and current.asset_id == asset_id:
+        if current and current.magic == "BTX0" and self._selected_btx0_texture_name:
+            self.preview.show_message(
+                f"Could not decode texture '{self._selected_btx0_texture_name}' from:\n{current.virtual_path}\n\n"
+                f"{message}\n\n"
+                "Try selecting the parent BTX0 archive row for a contact-sheet preview, or Export Readable for diagnostics."
+            )
+        else:
             self.preview.show_message(
                 f"NDS-AS found this asset, but could not decode a preview image yet.\n\n"
-                f"{current.virtual_path}\n\n"
+                f"{current.virtual_path if current else asset_id}\n\n"
                 f"{message}\n\n"
                 "Use Export Selected for raw data, readable PNG/WAV outputs, or a model/audio bundle when available."
             )
