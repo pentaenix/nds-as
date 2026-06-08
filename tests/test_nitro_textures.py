@@ -1,10 +1,12 @@
-from dsm.nitro_textures import (
+from rae.nitro_textures import (
     PaletteEntry,
     Tex0Info,
     TextureEntry,
     attempt_decode_texture,
     decode_btx_images,
     decode_guided_tex0_images,
+    parse_tex0,
+    parse_tex0_manifest,
     score_tex0_candidate,
     texture_data_requirements,
     validate_texture_ranges,
@@ -74,6 +76,14 @@ def test_decode_btx_images_still_decodes_synthetic_archive():
     images = decode_btx_images(make_btx0_4bpp(), mode="resolved")
     assert images
     assert images[0].name == "boat_tex"
+
+
+def test_fast_manifest_matches_full_parse_on_synthetic_btx0():
+    blob = make_btx0_4bpp()
+    fast = parse_tex0_manifest(blob)
+    full = parse_tex0(blob)
+    assert fast is not None and full is not None
+    assert [tex.name for tex in fast.textures] == [tex.name for tex in full.textures]
 
 
 def test_guided_decode_finds_requested_texture_name():

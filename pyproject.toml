@@ -1,7 +1,7 @@
 [project]
-name = "dsm"
-version = "0.25.0"
-description = "NDS-AS (nds-as): local Nintendo DS/Pokémon asset studio with mappings, models, textures, tiles, sprites, and audio extraction"
+name = "rae"
+version = "0.26.0"
+description = "RAE (Retro Asset Extractor): local ROM asset studio for Nintendo DS and future platforms"
 requires-python = ">=3.10"
 dependencies = [
     "PySide6>=6.6",
@@ -13,8 +13,10 @@ dependencies = [
 ]
 
 [project.scripts]
-dsas = "dsm.cli:main"
-dsas-ui = "dsm.app:main"
+rae = "rae.cli:main"
+rae-ui = "rae.app:main"
+dsas = "rae.cli:main"
+dsas-ui = "rae.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -1,25 +1,39 @@
-# NDS-AS mappings
+# RAE community mappings
 
-Community mapping seed files for [nds-as](https://github.com/pentaenix/nds-as).
+Shared mapping files for [Retro Asset Extractor](https://github.com/pentaenix/rae) (RAE).
 
-These files contain metadata only: paths, labels, source URLs, confidence levels, and relationship hints. They must not contain ROM bytes, extracted images, models, textures, or other copyrighted assets.
+These files contain **metadata only**: paths, labels, source URLs, confidence levels, and relationship hints. They must not contain ROM bytes, extracted images, models, textures, or other copyrighted assets.
 
-## Included seeds
+## Layout
+
+```text
+mappings/
+  schema.json       JSON Schema for all mapping files
+  nds/              Nintendo DS games (active)
+  gba/              Game Boy Advance (planned)
+  gbc/              Game Boy Color (planned)
+  gb/               Game Boy (planned)
+  3ds/              Nintendo 3DS (planned)
+```
+
+Each JSON file should include `"platform": "nds"` (or `gba`, `gbc`, `gb`, `3ds`). If omitted, the parent folder name is used.
+
+## Contributing
+
+1. Add or edit a file under the correct `mappings/<platform>/` folder.
+2. Cite public sources in `sources[]`.
+3. Use confidence values honestly (`verified-design-rule`, `community-known`, `heuristic`, `conflict`).
+4. Open a pull request — no personal override folders; everyone shares the same mapping set.
+
+### TODO: in-app mapping editor
+
+We plan a UI workflow to draft mappings interactively (browse a ROM, label archives, export JSON) so contributors do not have to hand-edit large JSON files. Until then, copy an existing seed file as a template.
+
+## Included DS seeds (`mappings/nds/`)
 
 - `generic_nds.json` — signature-based fallback for any Nintendo DS game.
-- `pokemon_dp.json` — Pokémon Diamond / Pearl, based on public internal filelists.
-- `pokemon_pt.json` — Pokémon Platinum, based on public internal filelists.
-- `pokemon_hgss.json` — Pokémon HeartGold / SoulSilver, based on public NARC tables.
-- `pokemon_bw.json` — Pokémon Black / White, deliberately partial; public BW1 archive maps are incomplete and conflicting.
-- `pokemon_bw2.json` — Pokémon Black 2 / White 2, based on public B2W2 NARC lists.
+- `pokemon_dp.json`, `pokemon_pt.json`, `pokemon_hgss.json`, `pokemon_bw.json`, `pokemon_bw2.json` — Pokémon DS archive hints from public filelists.
 
-## Confidence values
+## Legal guardrails
 
-- `verified-design-rule` — true by NDS-AS/format design, not a ROM-specific claim.
-- `community-known` — from a cited public filelist/tool reference.
-- `heuristic` — useful hint, but NDS-AS must verify via file signatures and counts.
-- `conflict` — public notes disagree or are too ambiguous; NDS-AS should show this in UI.
-
-## Required legal guardrails
-
-`roms/`, `exports/`, and `mapping_overrides/` should stay git-ignored. Mapping files can be shared; ROMs and extracted assets cannot.
+`roms/` and `exports/` stay git-ignored. Mapping files can be shared; ROMs and extracted assets cannot.

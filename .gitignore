@@ -19,10 +19,6 @@ exports/**
 !exports/README.md
 !exports/.gitkeep
 
-mapping_overrides/*
-!mapping_overrides/README.md
-!mapping_overrides/.gitkeep
-
 saves/*
 !saves/README.md
 !saves/.gitkeep

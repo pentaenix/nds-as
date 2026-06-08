@@ -1,5 +1,5 @@
-from dsm.scanner import Asset
-from dsm.session import save_session_zip, load_session_zip
+from rae.scanner import Asset
+from rae.session import save_session_zip, load_session_zip
 
 
 def test_session_round_trip(tmp_path):

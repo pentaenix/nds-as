@@ -1,6 +1,6 @@
-from dsm.model_texture_resolver import resolve_model_textures
-from dsm.scanner import Asset
-from dsm.texture_library import TextureLibrary, TextureLibraryStore
+from rae.model_texture_resolver import resolve_model_textures
+from rae.scanner import Asset
+from rae.texture_library import TextureLibrary, TextureLibraryStore
 from test_decoders import make_btx0_4bpp
 
 
@@ -75,7 +75,7 @@ def test_model_resolver_uses_material_name_when_texture_name_missing():
 
 
 def test_guided_tex0_decode_accepts_lightmap_palette_suffix():
-    from dsm.nitro_textures import decode_guided_tex0_images, make_contact_sheet  # noqa: F401
+    from rae.nitro_textures import decode_guided_tex0_images, make_contact_sheet  # noqa: F401
     from test_decoders import namelist
     import struct
 
@@ -109,7 +109,7 @@ def test_guided_tex0_decode_accepts_lightmap_palette_suffix():
 
 
 def test_index_paired_palette_decode_when_names_differ():
-    from dsm.nitro_textures import decode_btx_images
+    from rae.nitro_textures import decode_btx_images
     from test_decoders import namelist
     import struct
 

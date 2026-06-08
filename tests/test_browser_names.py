@@ -1,5 +1,5 @@
-from dsm.nitro_names import asset_browser_name, asset_filename_label
-from dsm.scanner import Asset
+from rae.nitro_names import asset_browser_name, asset_filename_label
+from rae.scanner import Asset
 
 
 def _asset(virtual_path: str, magic: str, data: bytes = b"") -> Asset:

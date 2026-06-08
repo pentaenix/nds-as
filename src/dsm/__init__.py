@@ -1,2 +1,3 @@
-__all__ = ["__version__"]
-__version__ = "0.25.0"
+"""Deprecated compatibility alias for the old `dsm` package name."""
+from rae import *  # noqa: F403
+from rae import __version__

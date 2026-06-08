@@ -1,11 +1,5 @@
 #!/usr/bin/env bash
+# Deprecated launcher — use ./rae instead.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
-if [[ "${1:-}" == "install" ]]; then
-  exec python3 -m dsm "$@"
-fi
-if [[ -x "$ROOT/.venv/bin/python" ]]; then
-  exec "$ROOT/.venv/bin/python" -m dsm "$@"
-fi
-exec python3 -m dsm "$@"
+exec "$ROOT/rae" "$@"

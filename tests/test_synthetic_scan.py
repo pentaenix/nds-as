@@ -1,7 +1,7 @@
 import struct
 from pathlib import Path
 
-from dsm.scanner import scan_nds_path
+from rae.scanner import scan_nds_path
 
 
 def make_narc(files):

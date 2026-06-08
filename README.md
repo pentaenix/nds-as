@@ -1,141 +1,88 @@
-# NDS-AS — Nintendo DS Asset Studio
+# RAE — Retro Asset Extractor
 
-[nds-as](https://github.com/pentaenix/nds-as) is a local desktop app and CLI for exploring **your own legally dumped Nintendo DS `.nds` ROMs**. It is built for Pokémon DS research first, while keeping a generic DS asset-browser path.
+**RAE** (Retro Asset Extractor) is a local desktop app and CLI for exploring **your own legally dumped ROMs** and exporting readable assets. Nintendo DS is fully supported today; Game Boy, Game Boy Color, Game Boy Advance, and Nintendo 3DS are scaffolded for future work.
 
-NDS-AS does **not** download ROMs, bypass copy protection, or include extracted copyrighted assets.
+RAE does **not** download ROMs, bypass copy protection, or ship extracted copyrighted assets.
 
-## What v0.25 focuses on
+## Platform status
 
-- Fast ROM indexing without heavy upfront analysis at load time.
-- Lazy mapped folders that stay open while you preview assets or load textures.
-- A right-side preview inspector: visual preview on top, selected-asset details and action buttons below.
-- Single-click preview for readable assets.
-- Selected-only smart export.
-- Session saves in `saves/`, ignored by git.
-- Deterministic model texture resolution. NDS-AS parses NSBTX texture dictionaries and only treats exact decoded texture/palette bindings as real; fuzzy path/name candidates stay out of the normal preview path.
-- Regular model preview writes embedded/exact decoded texture PNGs for NDS-AS fallback preview, not only Resolve Texture.
-- Embedded NSBMD textures are reported clearly as embedded data instead of pretending there is an external BTX0 pin.
-- Raw Folders browser tab for drilling directly into ROM folders like `a/2/3/3`, `a/0/0/8`, or `a/0/1/4` when mapped labels are not enough.
-- Texture archive contact sheets can decode strict resolved pairs or all palette variants for inspection.
-- Model preview supplies only resolved/manual texture assets to apicula instead of throwing a large candidate pile at conversion.
-- Resolver reports explain exactly why a texture is verified, manually overridden, or unresolved.
-- DS 4x4 compressed BTX0 texture decoding for many Pokémon texture archives.
-- Corrected Nitro 2D offset handling for NCLR/NCGR/NSCR previews.
-- Smarter same-folder sprite pairing for NCER/NANR/NCGR/NCLR groups.
-- Vendored [apicula](https://github.com/scurest/apicula) source under `tools/apicula/` (build locally with Cargo).
+| Platform | Folder | ROM extensions | Status |
+|----------|--------|----------------|--------|
+| Nintendo DS | `src/rae/platforms/nds/` | `.nds` | **Active** — scan, preview, export |
+| Game Boy Advance | `src/rae/platforms/gba/` | `.gba` | Planned |
+| Game Boy Color | `src/rae/platforms/gbc/` | `.gbc` | Planned |
+| Game Boy | `src/rae/platforms/gb/` | `.gb` | Planned |
+| Nintendo 3DS | `src/rae/platforms/threeds/` | `.3ds`, `.cci`, `.cxi` | Planned |
 
-## Safe local folders
-
-These folders are local work areas and are ignored by git:
+## Project layout
 
 ```text
-roms/                put your own legally dumped ROMs here
-exports/             extracted/converted outputs
-saves/               NDS-AS session files
-mapping_overrides/   local mapping notes/discoveries
+src/rae/
+  core/           mappings, platform registry, sessions, install
+  platforms/
+    nds/          DS ROM scan, Nitro decoders, audio, model export
+    gba/ gbc/ gb/ threeds/   stubs + README (contributions welcome)
+  ui/             desktop app (Qt)
+  cli/            command-line tools
+mappings/
+  nds/            community DS game mappings (PRs welcome)
+  gba/ gbc/ gb/ 3ds/   reserved for future mappings
+roms/             your ROM dumps (git-ignored)
+exports/          extracted output (git-ignored)
+saves/            RAE session files (git-ignored)
 ```
 
-The repo keeps only `.gitkeep`/README files inside those folders.
+## Community mappings
 
-## Install or refresh
+Mappings are **shared community data only** — path labels, categories, search presets, and relationship hints. They live under `mappings/<platform>/` and are loaded automatically. There are no personal override folders; improve mappings via pull request so everyone benefits.
 
-Run this after cloning or downloading the repo, and again after any NDS-AS update:
+See `mappings/README.md` for contribution guidelines.
+
+### TODO: mapping authoring UI
+
+A planned next step is an in-app **mapping editor** so contributors can draft archive labels and search presets visually, then export JSON for a PR. CI will validate mapping files against `mappings/schema.json`.
+
+## Install
 
 ```bash
-./dsas install
+./rae install
+./rae run
 ```
 
-Then launch the app:
+Windows: `rae.bat install` then `rae.bat run`
 
-```bash
-./dsas run
-```
+The legacy `./dsas` launcher still works but forwards to `./rae`.
 
-On Windows, use:
+## Nintendo DS workflow (today)
 
-```bat
-dsas.bat install
-dsas.bat run
-```
-
-## Common workflow
-
-1. Put your own `.nds` dump in `roms/`.
-2. Run `./dsas run`.
-3. Open the ROM.
-4. Browse the mapped tree or use filters like `BMD0`, `BTX0`, `cat:move-effects`, `mapped`, or `unmapped`.
-5. Select an asset to preview it.
-6. For models, use **Set Textures** to parse exact material/texture bindings and refresh the preview.
-7. Use **Export Selected…** for raw, readable, model, texture, or audio exports.
-8. Use **Save Session** when you want to continue later without rescanning the ROM.
-
-## Model textures
-
-Nintendo DS models commonly use:
-
-```text
-BMD0 / NSBMD  model geometry, materials, sometimes textures/palettes
-BTX0 / NSBTX  texture and palette packs
-BCA0 / NSBCA  joint animations
-BTA0/BTP0/... material and texture animation variants
-```
-
-Pokémon DS games often store map models and texture packs separately. NDS-AS therefore:
-
-- matches models to texture archives through mapping/context and Nitro material/texture names;
-- lets you pin a BTX0 manually as an override;
-- uses **Resolve Texture** to parse exact material names and NSBTX texture/palette dictionaries;
-- records the report in the preview inspector/details;
-- keeps the final apicula GLB/DAE files intact while baking textures only for NDS-AS's own preview widget.
-
-If NDS-AS cannot prove a decoded image is bound to the model, it reports **Texture unresolved** instead of pinning a weak candidate. Manual BTX0 pinning is still available as an override, but it is labeled honestly as user-selected.
-
-## Audio
-
-NDS-AS detects and exports common Nintendo DS sound formats:
-
-```text
-SDAT  sound archive
-SSEQ  sequenced music/SFX
-SSAR  sequence archive
-SBNK  instrument bank
-SWAR  wave/sample archive
-SWAV  sample
-STRM  streamed audio
-```
-
-For best quality, NDS-AS always exports original raw audio pieces first. It also writes WAV previews when the data is sample/stream PCM that NDS-AS can decode. Optional MP3 output requires `ffmpeg` and is treated as a convenience copy, not the quality master.
+1. Put your `.nds` dump in `roms/`.
+2. Run `./rae run` and open the ROM.
+3. Browse mapped folders, Raw Folders, or filter (`BMD0`, `BTX0`, `cat:models`, …).
+4. Preview assets; for models use **Set Textures** for verified material→texture binding.
+5. **Export Selected…** for raw, readable PNG, GLB (via apicula), or audio bundles.
+6. **Save Session** (`.raesession`) to continue without rescanning.
 
 ## CLI examples
 
 ```bash
-./dsas info roms/game.nds
-./dsas list roms/game.nds --query BMD0
-./dsas decode roms/game.nds --out exports/readable --query BTX0
-./dsas convert roms/game.nds --out exports/models --query BMD0 --format glb
-./dsas audio roms/game.nds --out exports/audio
-./dsas mappings
+./rae info roms/game.nds
+./rae list roms/game.nds --query BMD0
+./rae decode roms/game.nds --out exports/readable --query BTX0
+./rae convert roms/game.nds --out exports/models --query BMD0 --format glb
+./rae audio roms/game.nds --out exports/audio
+./rae mappings
 ```
 
-## Optional apicula
+## Optional apicula (DS models)
 
-`apicula` is a Rust CLI used for model conversion/preview. The vendored source lives in `tools/apicula/`; `./dsas install` builds it when Rust/Cargo is available. Listing, raw export, PNG texture/tile decoding, and audio extraction still work without it, but model preview/conversion needs it.
+Vendored Rust tool under `tools/apicula/`. `./rae install` builds it when Cargo is available.
 
-NDS-AS looks for apicula on `PATH`, in `DSAS_APICULA` (or legacy `DSM_APICULA`), and at:
+RAE looks for apicula on `PATH`, `RAE_APICULA` (legacy: `DSAS_APICULA`, `DSM_APICULA`), and `tools/apicula/target/release/apicula`.
 
-```text
-tools/apicula/target/release/apicula
-```
-
-Manual build:
+## Development
 
 ```bash
-cd tools/apicula
-cargo build --release
+PYTHONPATH=src:tests python -m unittest discover -s tests -p 'test_*.py' -q
 ```
 
-## Development sanity check
-
-```bash
-PYTHONPATH=src python -m pytest -q
-```
+Python package name: `rae`. The `dsm` import path remains as a deprecated alias for compatibility.

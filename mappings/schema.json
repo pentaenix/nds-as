@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/pentaenix/nds-as/mappings/schema.json",
-  "title": "NDS-AS community mapping schema",
+  "$id": "https://github.com/pentaenix/rae/mappings/schema.json",
+  "title": "RAE community mapping schema",
   "type": "object",
   "required": [
     "schemaVersion",
@@ -17,6 +17,11 @@
     },
     "mappingId": {
       "type": "string"
+    },
+    "platform": {
+      "type": "string",
+      "enum": ["nds", "gba", "gbc", "gb", "3ds"],
+      "description": "Console this mapping applies to. Defaults to the parent folder name."
     },
     "gameFamily": {
       "type": "string"

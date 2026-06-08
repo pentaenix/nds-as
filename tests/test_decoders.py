@@ -1,8 +1,8 @@
 import struct
 from pathlib import Path
 
-from dsm.nitro_textures import decode_btx_images
-from dsm.scanner import scan_nds_path
+from rae.nitro_textures import decode_btx_images
+from rae.scanner import scan_nds_path
 from test_synthetic_scan import make_nds
 
 
@@ -71,7 +71,7 @@ def test_scanner_identifies_2d_palette_and_png(tmp_path: Path):
 
 
 def test_nitro_name_filter_rejects_repetitive_false_positives():
-    from dsm.nitro_names import extract_nitro_names
+    from rae.nitro_names import extract_nitro_names
 
     blob = b"DDDD\x00".ljust(16, b"\x00") + b"wwww\x00".ljust(16, b"\x00") + b"kabe_pl\x00".ljust(16, b"\x00") + b"light01\x00".ljust(16, b"\x00")
     names = extract_nitro_names(blob)
