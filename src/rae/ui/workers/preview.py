@@ -7,8 +7,9 @@ from pathlib import Path
 from PySide6.QtCore import QThread, Signal
 
 from ...asset_resolver import MODEL_ANIMATION_MAGICS, folder_sibling_assets
-from ...exporter import convert_texture_with_apicula, convert_with_apicula
-from ...model_texture_resolver import resolve_model_textures, write_resolution_images
+from ...exporter import convert_texture_with_apicula, convert_with_apicula, texture_outputs
+from ...glb_preview_textures import merge_texture_by_name, merge_texture_paths, texture_map_from_paths
+from ...model_texture_resolver import build_preview_texture_maps, resolve_model_textures, write_resolution_images
 from ...nitro_2d import decode_nitro2d_preview, decode_nitro2d_related_preview
 from ...nitro_textures import decode_btx_images, decode_guided_tex0_images, make_contact_sheet
 from ...scanner import Asset
@@ -156,14 +157,27 @@ class TextureResolveWorker(QThread):
                 best_path = best_preview_path(result.output_files)
                 if best_path is not None:
                     result.output_files = [best_path, *[p for p in result.output_files if p != best_path]]
+                apicula_pngs = texture_outputs(trial_dir)
                 aux = write_resolution_images(resolution, trial_dir / "dsm_resolved_textures")
-                if aux:
-                    result.auxiliary_files = aux
-                    report_lines.append(f"RAE decoded texture PNGs for preview/export: {len(aux)}")
+                all_pngs = merge_texture_paths(apicula_pngs, aux)
+                if all_pngs:
+                    result.auxiliary_files = all_pngs
+                    resolver_map, material_to_texture, bind_order = build_preview_texture_maps(resolution, aux)
+                    apicula_map = texture_map_from_paths(apicula_pngs)
+                    result.texture_by_name = merge_texture_by_name(resolver_map, apicula_map)
+                    result.material_to_texture = material_to_texture
+                    result.texture_bind_order = bind_order
+                    report_lines.append(
+                        f"RAE preview textures: {len(apicula_pngs)} apicula PNG(s), "
+                        f"{len(aux)} resolver PNG(s)"
+                    )
                 quality = converted_texture_quality(result.output_files[0]) if result.output_files else TextureQuality(0,0,0,0,0,0,0,0)
                 report_lines.append(f"Converted preview: {result.output_files[0].name} — {quality.summary()}")
-                if not quality.confident and aux:
-                    report_lines.append("Note: the converted file did not embed visible texture images, so RAE uses the decoded NSBTX PNGs as preview fallback. Export the diagnostic bundle if Blender still shows gray.")
+                if not quality.confident and all_pngs:
+                    report_lines.append(
+                        "Note: apicula GLB references external PNG URIs; RAE loads colocated PNGs "
+                        "for preview baking."
+                    )
                 self.finished_ok.emit(self.asset.asset_id, result, selected_texture_id, "\n".join(report_lines))
                 return
 

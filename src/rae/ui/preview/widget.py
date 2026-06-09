@@ -25,6 +25,9 @@ class PreviewWidget(GlbPreviewMixin, QWidget):
         self._image_label = None
         self._last_path: Path | None = None
         self._fallback_texture_paths: list[Path] = []
+        self._texture_by_name: dict[str, Path] = {}
+        self._material_to_texture: dict[str, str] = {}
+        self._texture_bind_order: list[str] = []
         self._fallback_texture_image = None
         self._fallback_texture_images: dict[str, object] = {}
         self._fallback_texture_path_order: list[Path] = []
@@ -268,8 +271,15 @@ class PreviewWidget(GlbPreviewMixin, QWidget):
     def _clear_meshes(self) -> None:
         if self._view is not None:
             for item in self._mesh_items:
-                self._view.removeItem(item)
+                dispose = getattr(item, "dispose_gl", None)
+                if callable(dispose):
+                    try:
+                        dispose()
+                    except Exception:
+                        pass
+            self._view.clear()
             self._mesh_items.clear()
+            self._view.update()
 
     def clear(self) -> None:
         self._clear_meshes()
@@ -286,12 +296,26 @@ class PreviewWidget(GlbPreviewMixin, QWidget):
     def set_use_textures(self, enabled: bool) -> None:
         self._use_textures = enabled
         if self._last_path is not None:
-            self.load_glb(self._last_path, fallback_textures=self._fallback_texture_paths)
+            self.load_glb(
+                self._last_path,
+                fallback_textures=self._fallback_texture_paths,
+                texture_by_name=self._texture_by_name,
+                material_to_texture=self._material_to_texture,
+                texture_bind_order=self._texture_bind_order,
+                mesh_texture_overrides=getattr(self, "_mesh_texture_overrides", {}),
+            )
 
     def set_wireframe(self, enabled: bool) -> None:
         self._wireframe = enabled
         if self._last_path is not None:
-            self.load_glb(self._last_path, fallback_textures=self._fallback_texture_paths)
+            self.load_glb(
+                self._last_path,
+                fallback_textures=self._fallback_texture_paths,
+                texture_by_name=self._texture_by_name,
+                material_to_texture=self._material_to_texture,
+                texture_bind_order=self._texture_bind_order,
+                mesh_texture_overrides=getattr(self, "_mesh_texture_overrides", {}),
+            )
 
     def show_message(self, text: str) -> None:
         self.clear()

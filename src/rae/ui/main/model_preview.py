@@ -83,7 +83,7 @@ from ..constants import (
     TYPE_LABELS,
 )
 from ..preview_btx import write_btx_preview_images
-from ..preview_quality import CachedTextureResolution, TextureQuality, converted_texture_quality
+from ..preview_quality import CachedTextureResolution, TextureQuality, best_preview_path, converted_texture_quality
 from ..preview_widgets import PreviewWidget, qcolor_rgbf
 from ..workers import (
     FilterWorker,
@@ -125,7 +125,14 @@ class ModelPreviewMixin:
         cached = converted_outputs(out_dir)
         if cached:
             preview_path = best_preview_path(cached) or cached[0]
-            self.preview.load_glb(preview_path, fallback_textures=[])
+            self._load_model_preview_glb(
+                preview_path,
+                asset_id=asset.asset_id,
+                fallback_textures=[],
+                texture_by_name={},
+                material_to_texture={},
+                texture_bind_order=[],
+            )
             self._last_previewed_asset_id = asset.asset_id
             self._preview_fallback_count_by_asset_id[asset.asset_id] = 0
             self._preview_status_by_asset_id[asset.asset_id] = self._preview_result_text(preview_path, [])
@@ -153,7 +160,14 @@ class ModelPreviewMixin:
         asset = self.selected_asset()
         if asset and asset.asset_id == asset_id and getattr(result, "output_files", None):
             first = best_preview_path(result.output_files) or result.output_files[0]
-            self.preview.load_glb(first, fallback_textures=list(getattr(result, "auxiliary_files", [])))
+            self._load_model_preview_glb(
+                first,
+                asset_id=asset_id,
+                fallback_textures=list(getattr(result, "auxiliary_files", [])),
+                texture_by_name=dict(getattr(result, "texture_by_name", {}) or {}),
+                material_to_texture=dict(getattr(result, "material_to_texture", {}) or {}),
+                texture_bind_order=list(getattr(result, "texture_bind_order", []) or []),
+            )
             self._last_previewed_asset_id = asset_id
             fallback_paths = list(getattr(result, "auxiliary_files", []))
             self._preview_fallback_count_by_asset_id[asset_id] = len(fallback_paths)

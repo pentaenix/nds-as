@@ -22,6 +22,9 @@ class ConvertResult:
     output_files: list[Path]
     command: list[str]
     auxiliary_files: list[Path] = field(default_factory=list)
+    texture_by_name: dict[str, Path] = field(default_factory=dict)
+    material_to_texture: dict[str, str] = field(default_factory=dict)
+    texture_bind_order: list[str] = field(default_factory=list)
 
 
 def export_asset(asset: Asset, out_dir: str | Path, *, decoded: bool = True) -> Path:

@@ -83,7 +83,7 @@ from ..constants import (
     TYPE_LABELS,
 )
 from ..preview_btx import write_btx_preview_images
-from ..preview_quality import CachedTextureResolution, TextureQuality, converted_texture_quality
+from ..preview_quality import CachedTextureResolution, TextureQuality, best_preview_path, converted_texture_quality
 from ..preview_widgets import PreviewWidget, qcolor_rgbf
 from ..workers import (
     FilterWorker,
@@ -116,7 +116,14 @@ class TextureResolveMixin:
         if cached.selected_texture_id:
             self._pinned_texture_asset_id = cached.selected_texture_id
         self._selected_asset_id = asset.asset_id
-        self.preview.load_glb(cached.preview_path, fallback_textures=cached.auxiliary_paths)
+        self._load_model_preview_glb(
+            cached.preview_path,
+            asset_id=asset.asset_id,
+            fallback_textures=cached.auxiliary_paths,
+            texture_by_name={name: Path(path) for name, path in cached.texture_by_name.items()},
+            material_to_texture=dict(cached.material_to_texture),
+            texture_bind_order=list(cached.texture_bind_order),
+        )
         self._last_previewed_asset_id = asset.asset_id
         self._preview_fallback_count_by_asset_id[asset.asset_id] = len(cached.auxiliary_paths)
         self._preview_status_by_asset_id[asset.asset_id] = self._preview_result_text(cached.preview_path, cached.auxiliary_paths)
@@ -213,25 +220,42 @@ class TextureResolveMixin:
         if getattr(result, "output_files", None):
             first = best_preview_path(result.output_files) or result.output_files[0]
             fallback_paths = list(getattr(result, "auxiliary_files", []))
+            texture_by_name = dict(getattr(result, "texture_by_name", {}) or {})
+            material_to_texture = dict(getattr(result, "material_to_texture", {}) or {})
+            texture_bind_order = list(getattr(result, "texture_bind_order", []) or [])
             self._store_texture_resolution_cache(
                 asset_id,
                 report=report,
                 selected_texture_id=texture_asset_id,
                 preview_path=first,
                 auxiliary_paths=fallback_paths,
+                texture_by_name=texture_by_name,
+                material_to_texture=material_to_texture,
+                texture_bind_order=texture_bind_order,
             )
-            self.preview.load_glb(first, fallback_textures=fallback_paths)
-            self._last_previewed_asset_id = asset_id
-            self._preview_fallback_count_by_asset_id[asset_id] = len(fallback_paths)
-            self._preview_status_by_asset_id[asset_id] = self._preview_result_text(first, fallback_paths)
-            quality = converted_texture_quality(first)
-            if quality.confident:
-                self._update_status(f"Previewing {first}. {quality.summary()}.")
-            elif fallback_paths:
-                self._update_status(f"Previewing {first} with {len(fallback_paths)} decoded texture PNG fallback(s).")
+            selected = self.selected_asset()
+            if selected is not None and selected.asset_id == asset_id:
+                self._load_model_preview_glb(
+                    first,
+                    asset_id=asset_id,
+                    fallback_textures=fallback_paths,
+                    texture_by_name=texture_by_name,
+                    material_to_texture=material_to_texture,
+                    texture_bind_order=texture_bind_order,
+                )
+                self._last_previewed_asset_id = asset_id
+                self._preview_fallback_count_by_asset_id[asset_id] = len(fallback_paths)
+                self._preview_status_by_asset_id[asset_id] = self._preview_result_text(first, fallback_paths)
+                quality = converted_texture_quality(first)
+                if quality.confident:
+                    self._update_status(f"Previewing {first}. {quality.summary()}.")
+                elif fallback_paths:
+                    self._update_status(f"Previewing {first} with {len(fallback_paths)} decoded texture PNG fallback(s).")
+                else:
+                    self._update_status(f"Previewing {first}. No verified texture images were decoded.")
+                self._update_preview_details(current)
             else:
-                self._update_status(f"Previewing {first}. No verified texture images were decoded.")
-            self._update_preview_details(current)
+                self._update_status("Texture resolve finished for a previously selected model.")
         switch_to_details = getattr(self, "_texture_preview_switch_to_details", False)
         self._texture_preview_switch_to_details = False
         if switch_to_details:

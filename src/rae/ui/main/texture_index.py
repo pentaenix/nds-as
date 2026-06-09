@@ -254,6 +254,9 @@ class TextureIndexMixin:
         selected_texture_id: str,
         preview_path: Path,
         auxiliary_paths: list[Path],
+        texture_by_name: dict[str, Path] | None = None,
+        material_to_texture: dict[str, str] | None = None,
+        texture_bind_order: list[str] | None = None,
     ) -> None:
         key = self._texture_resolution_cache_key(asset_id, self._pinned_texture_asset_id)
         self._texture_resolution_cache[key] = CachedTextureResolution(
@@ -261,5 +264,8 @@ class TextureIndexMixin:
             selected_texture_id=selected_texture_id,
             preview_path=preview_path,
             auxiliary_paths=list(auxiliary_paths),
+            texture_by_name={name: str(path) for name, path in (texture_by_name or {}).items()},
+            material_to_texture=dict(material_to_texture or {}),
+            texture_bind_order=list(texture_bind_order or []),
         )
 

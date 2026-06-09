@@ -339,3 +339,55 @@ def write_resolution_images(resolution: ModelTextureResolution, out_dir: str | P
     if not resolution.decoded_images:
         return []
     return save_decoded_images(resolution.decoded_images, out_dir, prefix="resolved_texture")
+
+
+def build_preview_texture_maps(
+    resolution: ModelTextureResolution,
+    paths: list[Path],
+) -> tuple[dict[str, Path], dict[str, str], list[str]]:
+    """Map NSBMD material/texture names to decoded PNG paths for GL preview."""
+    texture_by_name: dict[str, Path] = {}
+    for path, image in zip(paths, resolution.decoded_images):
+        tex_key = image.name.casefold()
+        texture_by_name[tex_key] = path
+        texture_by_name[path.stem.casefold()] = path
+        base = image.name.split("__", 1)[0].casefold()
+        if base:
+            texture_by_name.setdefault(base, path)
+
+    bind_order: list[str] = []
+    seen_tex: set[str] = set()
+    manifest = resolution.model_manifest
+    if manifest is not None:
+        for material in manifest.materials:
+            tex = (material.texture_name or material.material_name or "").casefold()
+            if tex and tex not in seen_tex:
+                seen_tex.add(tex)
+                bind_order.append(tex)
+    if not bind_order:
+        for _path, image in zip(paths, resolution.decoded_images):
+            tex_key = image.name.casefold()
+            base = image.name.split("__", 1)[0].casefold() or tex_key
+            if base not in seen_tex:
+                seen_tex.add(base)
+                bind_order.append(base)
+
+    material_to_texture: dict[str, str] = {}
+    if manifest is not None:
+        for material in manifest.materials:
+            mat = material.material_name.casefold()
+            tex = (material.texture_name or material.material_name or "").casefold()
+            if mat and tex:
+                material_to_texture[mat] = tex
+                path = texture_by_name.get(tex)
+                if path is not None:
+                    texture_by_name.setdefault(mat, path)
+    for binding in resolution.bindings:
+        mat = (binding.material_name or "").casefold()
+        tex = (binding.texture_name or "").casefold()
+        if mat and tex:
+            material_to_texture[mat] = tex
+            path = texture_by_name.get(tex)
+            if path is not None:
+                texture_by_name.setdefault(mat, path)
+    return texture_by_name, material_to_texture, bind_order

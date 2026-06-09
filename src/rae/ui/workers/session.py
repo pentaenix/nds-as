@@ -13,7 +13,17 @@ class SessionSaveWorker(QThread):
     finished_ok = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, target: Path, assets: list[Asset], *, rom_path: str | None, profile_text: str, mapping_id: str, pinned_texture_asset_id: str | None):
+    def __init__(
+        self,
+        target: Path,
+        assets: list[Asset],
+        *,
+        rom_path: str | None,
+        profile_text: str,
+        mapping_id: str,
+        pinned_texture_asset_id: str | None,
+        texture_assignments: dict[str, dict[str, str]] | None = None,
+    ):
         super().__init__()
         self.target = target
         self.assets = list(assets)
@@ -21,6 +31,7 @@ class SessionSaveWorker(QThread):
         self.profile_text = profile_text
         self.mapping_id = mapping_id
         self.pinned_texture_asset_id = pinned_texture_asset_id
+        self.texture_assignments = dict(texture_assignments or {})
 
     def run(self) -> None:
         try:
@@ -31,6 +42,7 @@ class SessionSaveWorker(QThread):
                 profile_text=self.profile_text,
                 mapping_id=self.mapping_id,
                 pinned_texture_asset_id=self.pinned_texture_asset_id,
+                texture_assignments=self.texture_assignments,
                 progress=self.progress.emit,
             )
             self.finished_ok.emit(str(written))

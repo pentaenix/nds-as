@@ -1,7 +1,7 @@
 """Converted model/texture preview quality scoring."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 @dataclass(slots=True)
@@ -44,6 +44,9 @@ class CachedTextureResolution:
     selected_texture_id: str
     preview_path: Path
     auxiliary_paths: list[Path]
+    texture_by_name: dict[str, str] = field(default_factory=dict)
+    material_to_texture: dict[str, str] = field(default_factory=dict)
+    texture_bind_order: list[str] = field(default_factory=list)
 
 def converted_texture_quality(path: Path) -> TextureQuality:
     """Inspect a converted GLB/DAE and estimate whether a texture is actually visible.
@@ -56,8 +59,26 @@ def converted_texture_quality(path: Path) -> TextureQuality:
     try:
         import numpy as np
         import trimesh
+
+        from ..glb_preview_textures import attach_preview_textures, build_mesh_texture_paths, discover_colocated_textures
+
         loaded = trimesh.load(path, force="scene")
         meshes = loaded.dump() if isinstance(loaded, trimesh.Scene) else [loaded]
+        named_meshes: list[tuple[str, object]] = []
+        for idx, mesh in enumerate(meshes):
+            if hasattr(mesh, "faces") and hasattr(mesh, "vertices"):
+                meta = getattr(mesh, "metadata", {}) or {}
+                mat = getattr(getattr(getattr(mesh, "visual", None), "material", None), "name", "")
+                name = str(mat or meta.get("name", "") or f"mesh_{idx}")
+                named_meshes.append((name, mesh))
+        colocated = discover_colocated_textures(path)
+        mesh_texture_paths = build_mesh_texture_paths(
+            named_meshes,
+            glb_path=path,
+            texture_by_name=colocated,
+            fallback_paths=list(colocated.values()),
+        ) if named_meshes else []
+        attach_preview_textures(named_meshes, mesh_texture_paths)
         mesh_faces = 0
         texture_visuals = 0
         image_count = 0

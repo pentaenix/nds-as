@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QEvent, QSize
-from PySide6.QtGui import QBrush, QPainter, QPalette, QWheelEvent
+from PySide6.QtGui import QBrush, QColor, QPainter, QPalette, QWheelEvent
 from PySide6.QtWidgets import QFrame, QSizePolicy
 
 from ..constants import CHECKER_DARK, CHECKER_LIGHT
+from .colors import qcolor_rgbf
 
 class PreviewCanvas(QFrame):
     """Painted viewport background for empty/image preview modes."""
@@ -44,8 +45,11 @@ try:
             self.update()
 
         def paint(self, *, region, viewport, useItemNames=False):
+            # Reset color + depth every frame so swapped models cannot leave ghost silhouettes.
             name = self._preview_background_name
             if name == "Checkered":
+                _GL.glClearColor(0.0, 0.0, 0.0, 1.0)
+                _GL.glClear(_GL.GL_COLOR_BUFFER_BIT | _GL.GL_DEPTH_BUFFER_BIT)
                 self._paint_checker(viewport)
             else:
                 rgba = {
@@ -62,8 +66,8 @@ try:
         def _paint_checker(self, viewport) -> None:
             _x, _y, width, height = viewport
             tile = 14
-            light = _qcolor_rgbf("#4a4a4a")
-            dark = _qcolor_rgbf("#353535")
+            light = qcolor_rgbf("#4a4a4a")
+            dark = qcolor_rgbf("#353535")
             _GL.glDisable(_GL.GL_DEPTH_TEST)
             _GL.glDisable(_GL.GL_LIGHTING)
             _GL.glMatrixMode(_GL.GL_PROJECTION)

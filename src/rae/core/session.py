@@ -27,6 +27,7 @@ def save_session_zip(
     profile_text: str = "",
     mapping_id: str = "",
     pinned_texture_asset_id: str | None = None,
+    texture_assignments: dict[str, dict[str, str]] | None = None,
     progress: Progress | None = None,
 ) -> Path:
     """Write a self-contained RAE session.
@@ -82,6 +83,7 @@ def save_session_zip(
             "profile_text": profile_text,
             "mapping_id": mapping_id,
             "pinned_texture_asset_id": pinned_texture_asset_id,
+            "texture_assignments": dict(texture_assignments or {}),
             "assets": manifest_assets,
         }
         zf.writestr("manifest.json", json.dumps(manifest, indent=2))

@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction, QBrush
+from PySide6.QtGui import QAction, QBrush, QGuiApplication
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -123,6 +123,7 @@ class ShellMixin:
         self._texture_library_store = TextureLibraryStore()
         self._texture_resolution_cache: dict[str, CachedTextureResolution] = {}
         self._texture_preview_switch_to_details = False
+        self._init_texture_assigner_state()
         self._name_cache: dict[str, set[str]] = {}
         self._display_name_cache: dict[str, str] = {}
         self.current_mapping = None
@@ -337,8 +338,18 @@ class ShellMixin:
 
         self.preview_details = QTextEdit()
         self.preview_details.setReadOnly(True)
-        self.preview_details.setMinimumHeight(120)
-        self.preview_details.setPlaceholderText("Selection details and texture status will appear here.")
+        self.preview_details.setMinimumHeight(100)
+        self.preview_details.setPlaceholderText("Model preview status and texture resolve details appear here.")
+
+        from ..preview.texture_assigner import TextureAssignerWidget
+
+        self.texture_assigner = TextureAssignerWidget()
+        self.texture_assigner.assignments_changed.connect(self._on_texture_assignments_changed)
+
+        # Tool tabs under the preview status text (texture assigner now; audio etc. later).
+        self.preview_inspector_tabs = QTabWidget()
+        self.preview_inspector_tabs.addTab(self.texture_assigner, "Texture Assigner")
+        self.preview_inspector_tabs.setMinimumHeight(140)
 
         self.find_texture_button = QPushButton("Set Textures")
         self.find_texture_button.setToolTip("Force a fresh texture resolve for the selected model.")
@@ -353,30 +364,25 @@ class ShellMixin:
         self.preview.action_layout.addWidget(self.find_texture_button)
         self.preview.action_layout.addWidget(self.export_button)
 
-        inspector = QWidget()
-        inspector_layout = QVBoxLayout(inspector)
+        self.preview_inspector = QWidget()
+        inspector_layout = QVBoxLayout(self.preview_inspector)
         inspector_layout.setContentsMargins(0, 0, 0, 0)
-        inspector_layout.addWidget(self.preview_details, stretch=1)
-        self.btx0_texture_label = QLabel("Texture entry:")
-        self.btx0_texture_label.setVisible(False)
-        self.btx0_texture_combo = QComboBox()
-        self.btx0_texture_combo.setVisible(False)
-        self.btx0_texture_combo.setToolTip("Choose which NSBTX dictionary entry to preview for this archive.")
-        self.btx0_texture_combo.currentIndexChanged.connect(self._on_btx0_texture_combo_changed)
-
-        pin_row = QWidget()
-        pin_layout = QHBoxLayout(pin_row)
+        inspector_layout.setSpacing(4)
+        inspector_layout.addWidget(self.preview_details)
+        inspector_layout.addWidget(self.preview_inspector_tabs, stretch=1)
+        self.preview_pin_row = QWidget()
+        pin_layout = QHBoxLayout(self.preview_pin_row)
         pin_layout.setContentsMargins(0, 0, 0, 0)
-        pin_layout.addWidget(self.btx0_texture_label)
-        pin_layout.addWidget(self.btx0_texture_combo, stretch=1)
         for button in (self.pin_texture_button, self.clear_pin_button):
             pin_layout.addWidget(button)
         pin_layout.addStretch()
-        inspector_layout.addWidget(pin_row)
+        inspector_layout.addWidget(self.preview_pin_row)
+        self.preview_inspector_tabs.hide()
+        self.preview_pin_row.hide()
 
         right_splitter = QSplitter(Qt.Vertical)
         right_splitter.addWidget(self.preview)
-        right_splitter.addWidget(inspector)
+        right_splitter.addWidget(self.preview_inspector)
         right_splitter.setSizes([500, 230])
 
         splitter = QSplitter(Qt.Horizontal)
@@ -422,6 +428,8 @@ class ShellMixin:
         self._style_chrome_controls()
         self.pagination_row.setVisible(False)
         self._update_pagination_bar()
+        if hasattr(self, "_update_preview_details"):
+            self._update_preview_details(None)
 
     def _style_chrome_controls(self) -> None:
         for button in (

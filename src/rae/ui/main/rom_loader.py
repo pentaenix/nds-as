@@ -163,6 +163,8 @@ class RomLoaderMixin:
             self.raw_tree.clear()
         self.details.clear()
         self.preview.clear()
+        if hasattr(self, "_update_preview_inspector_visibility"):
+            self._update_preview_inspector_visibility(None)
         self.preview.show_message("Opening ROM...\n\nRAE is building a fast asset index. Model conversion and audio expansion run only when you ask for them.")
         self._focus_terminal(
             banner="Opening ROM… watch this panel for scan and texture-index progress. The UI stays responsive while background workers run.",

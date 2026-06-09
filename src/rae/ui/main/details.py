@@ -211,11 +211,17 @@ class DetailsMixin:
             return
         asset = asset or self.selected_asset()
         if not asset:
-            self.preview_details.setPlainText("No asset selected.")
+            self.preview_details.setPlainText(
+                "Preview status\n"
+                "  Select an asset to see preview-specific notes here.\n"
+                "  Model texture resolve results and GLB preview status appear for BMD0 models."
+            )
             self.find_texture_button.setEnabled(False)
             self.export_button.setEnabled(False)
             self.pin_texture_button.setVisible(False)
             self.clear_pin_button.setVisible(False)
+            if hasattr(self, "_update_preview_inspector_visibility"):
+                self._update_preview_inspector_visibility(None)
             return
 
         pinned = self._pinned_texture_asset()
@@ -243,6 +249,10 @@ class DetailsMixin:
                 lines.append(f"  {status}")
             lines.append("")
             lines.append("Use Set Textures to parse exact NSBMD material names, decode matching NSBTX textures, and preview/export the verified binding.")
+            saved = len(self._texture_assignments.get(asset.asset_id, {}))
+            if saved:
+                lines.append(f"  Manual texture assignments saved in session: {saved} part(s)")
+            lines.append("  Use the Texture Assigner tab below to match textures to model parts.")
         elif asset.magic in {"RGCN", "RLCN", "RCSN", "RECN", "RNAN"}:
             lines.append("")
             lines.append("Sprite/tile status")
@@ -266,5 +276,9 @@ class DetailsMixin:
         self.pin_texture_button.setVisible(asset.magic == "BTX0")
         self.clear_pin_button.setEnabled(pinned_active)
         self.clear_pin_button.setVisible(pinned_active)
+        if hasattr(self, "_refresh_texture_assigner"):
+            self._refresh_texture_assigner(asset)
+        if hasattr(self, "_update_preview_inspector_visibility"):
+            self._update_preview_inspector_visibility(asset)
 
 

@@ -1,7 +1,7 @@
 """Preview subcomponent."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QEvent, QPoint
+from PySide6.QtCore import Qt, QEvent, QPoint, QSize
 from PySide6.QtGui import QPixmap, QPainter, QWheelEvent
 from PySide6.QtWidgets import QLabel, QSizePolicy
 

@@ -179,8 +179,11 @@ class SelectionMixin:
                 self.find_texture_button.setEnabled(False)
             if hasattr(self, "preview_details"):
                 self.preview_details.setPlainText(
-                    f"Folder selected: {' / '.join(parts)}\n{count} asset(s). Use Export… to create a ZIP archive."
+                    f"Folder selected: {' / '.join(parts)}\n"
+                    f"{count} asset(s). Use Export… to create a ZIP archive."
                 )
+            if hasattr(self, "_update_preview_inspector_visibility"):
+                self._update_preview_inspector_visibility(None)
             return
         self.show_selected_details()
         if self.auto_preview_action.isChecked():
