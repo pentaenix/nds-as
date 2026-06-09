@@ -1,6 +1,7 @@
 """Preview widget shell: layout, image display, and control chrome."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QEvent, QPoint
@@ -12,6 +13,7 @@ from .canvas import PreviewCanvas, PreviewGLView
 from .colors import qcolor_rgbf
 from .glb_preview import GlbPreviewMixin
 from .image_label import PreviewImageLabel
+from .web_preview import WebGlbPreviewWidget, webengine_preview_available
 
 
 class PreviewWidget(GlbPreviewMixin, QWidget):
@@ -21,6 +23,8 @@ class PreviewWidget(GlbPreviewMixin, QWidget):
         super().__init__()
         self._available = False
         self._view = None
+        self._web_view: WebGlbPreviewWidget | None = None
+        self._use_legacy_gl = os.environ.get("RAE_LEGACY_GL_PREVIEW", "").strip() in {"1", "true", "yes"}
         self._mesh_items = []
         self._image_label = None
         self._last_path: Path | None = None
@@ -86,28 +90,36 @@ class PreviewWidget(GlbPreviewMixin, QWidget):
         self._banner.hide()
         self._banner.setAttribute(Qt.WA_TransparentForMouseEvents, True)
 
-        try:
-            import numpy as np  # noqa: F401
-            import trimesh  # noqa: F401
-            import pyqtgraph.opengl as gl  # noqa: F401
-
-            view_cls = PreviewGLView if PreviewGLView is not None else gl.GLViewWidget
-            self._view = view_cls()
-            self._view.setCameraPosition(distance=self._model_distance)
-            if hasattr(self._view, "set_preview_background_name"):
-                self._view.set_preview_background_name(self._background_name)
-            else:
-                self._view.opts["bgcolor"] = (0.28, 0.28, 0.28, 1.0)
-            self._axis = gl.GLAxisItem()
-            self._view.addItem(self._axis)
-            canvas_layout.addWidget(self._view, 0, 0)
+        if webengine_preview_available() and not self._use_legacy_gl:
+            self._web_view = WebGlbPreviewWidget(self._canvas)
+            canvas_layout.addWidget(self._web_view, 0, 0)
+            self._web_view.set_background_name(self._background_name)
             self._available = True
-        except Exception:
-            placeholder = QLabel("3D preview unavailable.\nInstall requirements.txt to enable model preview.")
-            placeholder.setAlignment(Qt.AlignCenter)
-            placeholder.setWordWrap(True)
-            placeholder.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-            canvas_layout.addWidget(placeholder, 0, 0)
+        else:
+            try:
+                import numpy as np  # noqa: F401
+                import trimesh  # noqa: F401
+                import pyqtgraph.opengl as gl  # noqa: F401
+
+                view_cls = PreviewGLView if PreviewGLView is not None else gl.GLViewWidget
+                self._view = view_cls()
+                self._view.setCameraPosition(distance=self._model_distance)
+                if hasattr(self._view, "set_preview_background_name"):
+                    self._view.set_preview_background_name(self._background_name)
+                else:
+                    self._view.opts["bgcolor"] = (0.28, 0.28, 0.28, 1.0)
+                self._axis = gl.GLAxisItem()
+                self._view.addItem(self._axis)
+                canvas_layout.addWidget(self._view, 0, 0)
+                self._available = True
+            except Exception:
+                placeholder = QLabel(
+                    "3D preview unavailable.\nInstall PySide6-WebEngine (or requirements.txt) to enable model preview."
+                )
+                placeholder.setAlignment(Qt.AlignCenter)
+                placeholder.setWordWrap(True)
+                placeholder.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+                canvas_layout.addWidget(placeholder, 0, 0)
 
         self._image_label = PreviewImageLabel()
         canvas_layout.addWidget(self._image_label, 0, 0)
@@ -161,7 +173,9 @@ class PreviewWidget(GlbPreviewMixin, QWidget):
 
     def _refresh_background_tiles(self) -> None:
         self._canvas.update()
-        if self._view is not None:
+        if self._web_view is not None:
+            self._web_view.set_background_name(self._background_name)
+        elif self._view is not None:
             if hasattr(self._view, "set_preview_background_name"):
                 self._view.set_preview_background_name(self._background_name)
             else:
@@ -196,6 +210,9 @@ class PreviewWidget(GlbPreviewMixin, QWidget):
             self._image_zoom = max(0.08, min(12.0, self._image_zoom * factor))
             self._refresh_image_display()
             event.accept()
+            return
+        if self._web_view is not None and self._web_view.isVisible():
+            event.ignore()
             return
         if self._view is not None and self._view.isVisible() and self._mesh_items:
             factor = 0.9 if delta > 0 else 1.1
@@ -269,6 +286,9 @@ class PreviewWidget(GlbPreviewMixin, QWidget):
         return super().eventFilter(watched, event)
 
     def _clear_meshes(self) -> None:
+        if self._web_view is not None:
+            self._web_view.clear_scene()
+            return
         if self._view is not None:
             for item in self._mesh_items:
                 dispose = getattr(item, "dispose_gl", None)
@@ -290,6 +310,8 @@ class PreviewWidget(GlbPreviewMixin, QWidget):
         self._image_label.hide()
         self._message_label.clear()
         self._message_label.hide()
+        if self._web_view is not None:
+            self._web_view.hide()
         if self._view is not None:
             self._view.hide()
 
@@ -307,6 +329,9 @@ class PreviewWidget(GlbPreviewMixin, QWidget):
 
     def set_wireframe(self, enabled: bool) -> None:
         self._wireframe = enabled
+        if self._web_view is not None:
+            self._web_view.set_wireframe(enabled)
+            return
         if self._last_path is not None:
             self.load_glb(
                 self._last_path,
@@ -337,6 +362,8 @@ class PreviewWidget(GlbPreviewMixin, QWidget):
         self._image_source = pixmap
         self._image_zoom = 1.0
         self._image_label.reset_pan()
+        if self._web_view is not None:
+            self._web_view.hide()
         if self._view is not None:
             self._view.hide()
         self._refresh_image_display()

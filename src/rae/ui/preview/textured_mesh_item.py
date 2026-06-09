@@ -77,7 +77,11 @@ class GLTexturedMeshItem(GLGraphicsItem):
         parentItem=None,
     ) -> None:
         super().__init__(parentItem=parentItem)
-        self._blend_mode = blend_mode if blend_mode in {"opaque", "cutout", "blend", "fade"} else "opaque"
+        self._blend_mode = (
+            blend_mode
+            if blend_mode in {"opaque", "cutout", "blend", "shadow"}
+            else "opaque"
+        )
         state = material_state or MaterialPreviewState()
         self.setGLOptions(preview_gl_options(self._blend_mode, state))
         self._vertexes = np.ascontiguousarray(vertexes, dtype=np.float32)
@@ -150,9 +154,6 @@ class GLTexturedMeshItem(GLGraphicsItem):
         if self._blend_mode == "blend":
             depth_mask_was = GL.glGetBooleanv(GL.GL_DEPTH_WRITEMASK)
             GL.glDepthMask(GL.GL_FALSE)
-        elif self._blend_mode == "fade":
-            depth_mask_was = GL.glGetBooleanv(GL.GL_DEPTH_WRITEMASK)
-            GL.glDepthMask(GL.GL_TRUE)
 
         mat_mvp = np.array(self.mvpMatrix().data(), dtype=np.float32)
         context = QOpenGLContext.currentContext()

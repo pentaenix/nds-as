@@ -21,7 +21,8 @@ def test_preview_gl_options_blend_disables_depth_write():
     assert opts[GL.GL_BLEND] is True
 
 
-def test_preview_gl_options_fade_keeps_depth_write():
-    opts = preview_gl_options("fade", MaterialPreviewState(alpha_mode="BLEND", alpha=0.29))
+def test_preview_gl_options_shadow_writes_depth_without_culling():
+    opts = preview_gl_options("shadow", MaterialPreviewState(alpha_mode="BLEND", alpha=0.29))
     assert opts["glDepthMask"] == (True,)
     assert opts[GL.GL_BLEND] is True
+    assert opts[GL.GL_CULL_FACE] is False

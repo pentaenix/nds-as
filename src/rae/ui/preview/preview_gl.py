@@ -17,20 +17,19 @@ def preview_gl_options(
 ) -> dict:
     """Build pyqtgraph GL state for one preview submesh."""
     state = material_state or MaterialPreviewState()
-    base_key = "translucent" if blend_mode in {"blend", "fade"} else "opaque"
+    base_key = "translucent" if blend_mode in {"blend", "shadow"} else "opaque"
     opts = dict(GLOptions[base_key])
 
     if blend_mode == "blend":
         opts["glDepthMask"] = (False,)
-    elif blend_mode == "fade":
-        # Uniform material-alpha decals (e.g. h_kage) still write depth so later
-        # models and opaque surfaces are not tinted through solid geometry.
+    elif blend_mode == "shadow":
+        # Drawn before opaque geometry: writes depth so walls/roof stay solid.
         opts["glDepthMask"] = (True,)
     elif blend_mode == "cutout":
         opts[GL.GL_ALPHA_TEST] = True
         opts["glAlphaFunc"] = (GL.GL_GREATER, float(state.alpha_cutoff))
 
-    if state.double_sided:
+    if blend_mode == "shadow" or state.double_sided:
         opts[GL.GL_CULL_FACE] = False
     else:
         opts[GL.GL_CULL_FACE] = True

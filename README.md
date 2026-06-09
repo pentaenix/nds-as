@@ -79,6 +79,10 @@ Vendored Rust tool under `tools/apicula/`. `./rae install` builds it when Cargo 
 
 RAE looks for apicula on `PATH`, `RAE_APICULA` (legacy: `DSAS_APICULA`, `DSM_APICULA`), and `tools/apicula/target/release/apicula`.
 
+After apicula converts a model to GLB, RAE runs a shared **material policy** pass (`rae.glb_policy`) that writes `extras.rae.renderClass` on each material (opaque, mask, blend, uniform_decal). Ground shadows are detected from Nitro alpha + texture + geometry — not material names. See `docs/GLB_RENDER_POLICY.md`.
+
+3D preview uses **Qt WebEngine + three.js** (bundled under `src/rae/ui/preview/static/`). Install PySide6 Add-ons if WebEngine is missing. Set `RAE_LEGACY_GL_PREVIEW=1` to fall back to the old pyqtgraph path.
+
 ## Development
 
 ```bash

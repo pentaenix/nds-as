@@ -12,6 +12,11 @@ dependencies = [
     "Pillow>=10.0",
 ]
 
+[project.optional-dependencies]
+preview = [
+    "PySide6-Addons>=6.6",
+]
+
 [project.scripts]
 rae = "rae.cli:main"
 rae-ui = "rae.app:main"
@@ -20,3 +25,6 @@ dsas-ui = "rae.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"rae.ui.preview" = ["static/**/*"]

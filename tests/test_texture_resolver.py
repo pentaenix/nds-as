@@ -382,7 +382,11 @@ def test_parse_glb_material_preview_states_reads_alpha(tmp_path):
 
     states = parse_glb_material_preview_states(glb)
     assert states["glass_mat"] == MaterialPreviewState(
-        alpha=0.4, alpha_mode="BLEND", alpha_cutoff=0.5, double_sided=False
+        alpha=0.4,
+        alpha_mode="BLEND",
+        alpha_cutoff=0.5,
+        double_sided=False,
+        render_class="opaque",
     )
     assert states["fence_mat"].alpha_mode == "MASK"
     assert states["fence_mat"].alpha_cutoff == 0.6
@@ -446,9 +450,14 @@ def test_preview_blend_mode_treats_mask_as_cutout_not_blend():
     binary_blend = MaterialPreviewState(alpha=1.0, alpha_mode="BLEND", alpha_cutoff=0.5)
     assert preview._preview_blend_mode(binary_blend, cutout, np) == "cutout"
 
-    fade_state = MaterialPreviewState(alpha=0.29, alpha_mode="BLEND", alpha_cutoff=0.5)
+    shadow_state = MaterialPreviewState(
+        alpha=0.29, alpha_mode="BLEND", alpha_cutoff=0.5, render_class="uniform_decal"
+    )
     opaque = np.full((4, 4, 4), 255, dtype=np.uint8)
-    assert preview._preview_blend_mode(fade_state, opaque, np) == "fade"
+    assert preview._preview_blend_mode(shadow_state, opaque, np) == "shadow"
+
+    glass_state = MaterialPreviewState(alpha=0.29, alpha_mode="BLEND", alpha_cutoff=0.5, render_class="blend")
+    assert preview._preview_blend_mode(glass_state, opaque, np) == "opaque"
 
 
 def test_texture_baked_geometry_emits_solid_texel_quads():

@@ -63,6 +63,16 @@ class GlbPreviewMixin:
         self._preview_load_id = int(getattr(self, "_preview_load_id", 0)) + 1
         load_id = self._preview_load_id
         self._clear_meshes()
+        web_view = getattr(self, "_web_view", None)
+        if web_view is not None and web_view.is_available():
+            self._message_label.hide()
+            self._image_label.hide()
+            web_view.show()
+            web_view.set_background_name(getattr(self, "_background_name", "Checkered"))
+            web_view.set_wireframe(getattr(self, "_wireframe", False))
+            web_view.load_glb(path)
+            self.set_banner("")
+            return
         if not self._available or self._view is None:
             self.set_banner(f"Converted file ready: {path.name}")
             return
@@ -209,6 +219,8 @@ class GlbPreviewMixin:
                     colors,
                     face_colors,
                     np,
+                    geometry_name=geom_name,
+                    mesh=mesh,
                 )
                 effective_state = self._effective_preview_material_state(material_state, blend_mode)
                 kwargs = dict(
@@ -220,8 +232,8 @@ class GlbPreviewMixin:
                     glOptions=preview_gl_options(blend_mode, effective_state),
                 )
                 if has_colors:
-                    # Unlit pass-through keeps pixel-art texels sharp; shaded lighting blurs them.
-                    kwargs["shader"] = None if texture_display is not None or blend_mode == "blend" else "shaded"
+                    # pyqtgraph GLMeshItem requires a shader when using vertex/face colors.
+                    kwargs["shader"] = "shaded"
                 else:
                     kwargs["shader"] = "shaded"
                     kwargs["color"] = qcolor_rgbf("#808080")
@@ -242,7 +254,7 @@ class GlbPreviewMixin:
             ordered = self._order_preview_mesh_items(mesh_items, np)
             blend_layer = 1
             for item, blend_mode, _center in ordered:
-                if blend_mode in {"blend", "fade"}:
+                if blend_mode == "blend":
                     item.setDepthValue(blend_layer)
                     blend_layer += 1
                 else:
@@ -382,7 +394,13 @@ class GlbPreviewMixin:
         flat_v, flat_f, flat_uv = expanded
         if len(flat_v) == 0 or len(flat_f) == 0:
             return None
-        blend_mode = self._preview_blend_mode(material_state, img, np)
+        blend_mode = self._preview_blend_mode(
+            material_state,
+            img,
+            np,
+            geometry_name=geometry_name,
+            mesh=mesh,
+        )
         effective_state = self._effective_preview_material_state(material_state, blend_mode)
         try:
             item = GLTexturedMeshItem(
@@ -427,16 +445,24 @@ class GlbPreviewMixin:
         flat_f = np.arange(len(flat_v), dtype=np.uint32).reshape(-1, 3)
         return flat_v.astype(np.float32), flat_f, flat_uv.astype(np.float32)
 
+    def _is_uniform_decal_material(self, material_state: MaterialPreviewState | None) -> bool:
+        state = material_state or MaterialPreviewState()
+        return state.render_class == "uniform_decal"
+
     def _preview_blend_mode(
         self,
         material_state: MaterialPreviewState | None,
         img,
         np,
+        *,
+        geometry_name: str = "",
+        mesh=None,
     ) -> str:
         """Classify how a textured mesh should participate in the depth/blend passes."""
         state = material_state or MaterialPreviewState()
         has_cutout = self._texture_has_cutout_alpha(img, np)
         has_partial = self._texture_has_partial_alpha(img, np)
+        shadow_decal = self._is_uniform_decal_material(material_state)
 
         # glTF MASK is authoritative — never upgrade to blend because PNG export
         # added fringe pixels around DS 0/1 cutout texels.
@@ -450,12 +476,12 @@ class GlbPreviewMixin:
                 return "cutout"
             if has_partial:
                 return "blend"
-            if float(state.alpha) < 0.995:
-                return "fade"
+            if shadow_decal:
+                return "shadow"
             return "opaque"
 
-        if float(state.alpha) < 0.995:
-            return "blend"
+        if shadow_decal:
+            return "shadow"
         if has_cutout:
             return "cutout"
         return "opaque"
@@ -498,25 +524,35 @@ class GlbPreviewMixin:
         colors,
         face_colors,
         np,
+        *,
+        geometry_name: str = "",
+        mesh=None,
     ) -> str:
         """Pick opaque/cutout/blend using glTF material state and texture data."""
         if image is not None:
             img = self._image_rgba_uint8(image, np)
             if img is not None:
-                return self._preview_blend_mode(material_state, img, np)
+                return self._preview_blend_mode(
+                    material_state,
+                    img,
+                    np,
+                    geometry_name=geometry_name,
+                    mesh=mesh,
+                )
         state = material_state or MaterialPreviewState()
+        shadow_decal = self._is_uniform_decal_material(material_state)
         if state.alpha_mode == "MASK":
             return "cutout"
         if state.alpha_mode == "BLEND":
             if self._colors_need_true_blend(colors) or self._colors_need_true_blend(face_colors):
                 return "blend"
-            if float(state.alpha) < 0.995:
-                return "fade"
+            if shadow_decal:
+                return "shadow"
             if self._colors_need_translucent_blend(colors) or self._colors_need_translucent_blend(face_colors):
                 return "cutout"
             return "opaque"
-        if float(state.alpha) < 0.995:
-            return "fade"
+        if shadow_decal:
+            return "shadow"
         if self._colors_need_true_blend(colors) or self._colors_need_true_blend(face_colors):
             return "blend"
         if self._colors_need_translucent_blend(colors) or self._colors_need_translucent_blend(face_colors):
@@ -561,8 +597,9 @@ class GlbPreviewMixin:
 
     def _order_preview_mesh_items(self, mesh_items, np):
         """Opaque/cutout near-to-far, then alpha-blended meshes far-to-near."""
-        solid = [entry for entry in mesh_items if entry[1] not in {"blend", "fade"}]
-        blended = [entry for entry in mesh_items if entry[1] in {"blend", "fade"}]
+        shadows = [entry for entry in mesh_items if entry[1] == "shadow"]
+        solid = [entry for entry in mesh_items if entry[1] not in {"blend", "shadow"}]
+        blended = [entry for entry in mesh_items if entry[1] == "blend"]
         eye = self._preview_camera_eye(np)
 
         def camera_distance(entry) -> float:
@@ -571,7 +608,8 @@ class GlbPreviewMixin:
 
         solid.sort(key=camera_distance)
         blended.sort(key=camera_distance, reverse=True)
-        return solid + blended
+        # Ground shadows first (depth-writing decal), then opaque/cutout, then true blend.
+        return shadows + solid + blended
 
     def _apply_preview_orientation(self, vertices, np):
         # Pokémon B2W2/apicula preview fix: the converted model's +Y axis is the

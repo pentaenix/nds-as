@@ -895,6 +895,7 @@ fn materials(ctx: &Ctx, gltf: &mut GlTF) {
             )
         );
 
+        let mut texture_alpha_kind = "opaque";
         let image_id =
             ctx.conn.models[ctx.model_id]
             .materials[material_idx].image_id();
@@ -903,10 +904,14 @@ fn materials(ctx: &Ctx, gltf: &mut GlTF) {
                 let params = ctx.db.textures[image_id.0].params;
                 match params.format().alpha_type(params) {
                     Alpha::Opaque => (),
-                    Alpha::Transparent =>
-                        mat["alphaMode"] = "MASK".into(),
-                    Alpha::Translucent =>
-                        mat["alphaMode"] = "BLEND".into(),
+                    Alpha::Transparent => {
+                        texture_alpha_kind = "transparent";
+                        mat["alphaMode"] = "MASK".into();
+                    }
+                    Alpha::Translucent => {
+                        texture_alpha_kind = "translucent";
+                        mat["alphaMode"] = "BLEND".into();
+                    }
                 }
 
                 let wrap = |repeat, mirror| {
@@ -968,6 +973,17 @@ fn materials(ctx: &Ctx, gltf: &mut GlTF) {
         if mat["pbrMetallicRoughness"].is_empty() {
             mat.remove("pbrMetallicRoughness");
         }
+
+        mat["extras"] = object!(
+            "rae" => object!(
+                "nitro" => object!(
+                    "alpha" => material.alpha,
+                    "cullBackface" => material.cull_backface,
+                    "cullFrontface" => material.cull_frontface,
+                    "textureAlpha" => texture_alpha_kind,
+                )
+            )
+        );
 
         mat
     }).collect::<Vec<JsonValue>>();

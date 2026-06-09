@@ -20,6 +20,7 @@ class MaterialPreviewState:
     alpha_mode: str = "OPAQUE"
     alpha_cutoff: float = 0.5
     double_sided: bool = False
+    render_class: str = "opaque"
 
 
 def discover_colocated_textures(glb_path: Path) -> dict[str, Path]:
@@ -60,11 +61,15 @@ def parse_glb_material_preview_states(glb_path: Path) -> dict[str, MaterialPrevi
         except (TypeError, ValueError):
             cutoff = 0.5
         double_sided = bool(material.get("doubleSided", False))
+        extras = material.get("extras") or {}
+        rae = extras.get("rae") or {}
+        render_class = str(rae.get("renderClass") or "opaque").lower()
         state = MaterialPreviewState(
             alpha=alpha,
             alpha_mode=alpha_mode,
             alpha_cutoff=cutoff,
             double_sided=double_sided,
+            render_class=render_class,
         )
         out[str(mat_idx)] = state
         name = str(material.get("name") or "").strip()
