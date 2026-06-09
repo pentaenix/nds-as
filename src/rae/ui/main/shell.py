@@ -346,14 +346,15 @@ class ShellMixin:
         self.texture_assigner = TextureAssignerWidget()
         self.texture_assigner.assignments_changed.connect(self._on_texture_assignments_changed)
 
-        # Tool tabs under the preview status text (texture assigner now; audio etc. later).
         self.preview_inspector_tabs = QTabWidget()
+        self.preview_inspector_tabs.addTab(self.preview_details, "Preview")
         self.preview_inspector_tabs.addTab(self.texture_assigner, "Texture Assigner")
+        self.preview_inspector_tabs.setCurrentIndex(0)
         self.preview_inspector_tabs.setMinimumHeight(140)
 
-        self.find_texture_button = QPushButton("Set Textures")
-        self.find_texture_button.setToolTip("Force a fresh texture resolve for the selected model.")
-        self.find_texture_button.clicked.connect(self.find_and_load_texture_for_selected_model)
+        self.reset_view_button = QPushButton("Reset View")
+        self.reset_view_button.setToolTip("Reset the 3D preview camera to the default orbit.")
+        self.reset_view_button.clicked.connect(self.preview.reset_view)
         self.pin_texture_button = QPushButton("Pin Texture")
         self.pin_texture_button.clicked.connect(self.pin_selected_texture)
         self.clear_pin_button = QPushButton("Clear Pin")
@@ -361,14 +362,13 @@ class ShellMixin:
         self.export_button = QPushButton("Export…")
         self.export_button.setToolTip("Export the selected asset, or export a tree folder as a ZIP when a folder row is selected.")
         self.export_button.clicked.connect(self.export_selected_smart)
-        self.preview.action_layout.addWidget(self.find_texture_button)
+        self.preview.action_layout.addWidget(self.reset_view_button)
         self.preview.action_layout.addWidget(self.export_button)
 
         self.preview_inspector = QWidget()
         inspector_layout = QVBoxLayout(self.preview_inspector)
         inspector_layout.setContentsMargins(0, 0, 0, 0)
         inspector_layout.setSpacing(4)
-        inspector_layout.addWidget(self.preview_details)
         inspector_layout.addWidget(self.preview_inspector_tabs, stretch=1)
         self.preview_pin_row = QWidget()
         pin_layout = QHBoxLayout(self.preview_pin_row)
@@ -377,7 +377,6 @@ class ShellMixin:
             pin_layout.addWidget(button)
         pin_layout.addStretch()
         inspector_layout.addWidget(self.preview_pin_row)
-        self.preview_inspector_tabs.hide()
         self.preview_pin_row.hide()
 
         right_splitter = QSplitter(Qt.Vertical)
@@ -437,7 +436,7 @@ class ShellMixin:
             self.page_next_button,
             self.info_copy_button,
             self.info_clear_button,
-            self.find_texture_button,
+            self.reset_view_button,
             self.export_button,
         ):
             button.setStyleSheet(CHROME_BUTTON_STYLE)

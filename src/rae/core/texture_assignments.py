@@ -1,8 +1,11 @@
 """Per-model manual texture assignments stored in RAE session files."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
+
+_ANIM_FRAME_SUFFIX = re.compile(r"^(.+)[._](\d+)$", re.IGNORECASE)
 
 SESSION_KEY = "texture_assignments"
 
@@ -36,6 +39,117 @@ def load_texture_assignments(manifest: dict[str, Any] | None) -> dict[str, dict[
 def texture_key_for_path(path: Path) -> str:
     stem = path.stem.casefold()
     return stem.split("__", 1)[0] or stem
+
+
+def _texture_seed_keys(path: Path) -> set[str]:
+    """Keys that identify a texture for assigner relevance (incl. palette base names)."""
+    stem = path.stem.casefold()
+    base = texture_key_for_path(path)
+    seeds = {stem, base}
+    match = _ANIM_FRAME_SUFFIX.match(base)
+    if match:
+        seeds.add(match.group(1).casefold())
+    return seeds
+
+
+def _matches_assigner_seed(stem: str, seed: str) -> bool:
+    """True when a PNG stem is the seed or an animation frame variant (name.1, name_2, …)."""
+    seed = seed.casefold().strip()
+    if not seed:
+        return False
+    stem_cf = stem.casefold()
+    base = stem_cf.split("__", 1)[0]
+    if base == seed or stem_cf == seed:
+        return True
+    match = _ANIM_FRAME_SUFFIX.match(base)
+    if match and match.group(1).casefold() == seed:
+        return True
+    suffix = base[len(seed) :]
+    if suffix and suffix[0] in "._" and suffix[1:].isdigit():
+        return base.startswith(seed)
+    return False
+
+
+def _glb_material_texture_paths(glb_path: Path) -> list[Path]:
+    """PNG paths referenced by this GLB's material table (not every file in the folder)."""
+    try:
+        from ..platforms.nds.glb_preview_textures import parse_glb_material_texture_map
+    except Exception:
+        return []
+    seen: set[str] = set()
+    paths: list[Path] = []
+    for path in parse_glb_material_texture_map(glb_path).values():
+        if not path.is_file():
+            continue
+        key = str(path.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        paths.append(path)
+    return paths
+
+
+def relevant_assigner_texture_paths(
+    *,
+    fallback_paths: list[Path],
+    texture_by_name: dict[str, Path],
+    mesh_texture_paths: list[Path | None],
+    material_to_texture: dict[str, str],
+    assignments: dict[str, str],
+    glb_path: Path | None = None,
+    mesh_part_labels: list[str] | None = None,
+) -> list[Path]:
+    """Textures to show in the assigner: active bindings + animation frames, not whole archives."""
+    seeds: set[str] = set()
+    active_materials = {label.casefold() for label in (mesh_part_labels or []) if label}
+
+    for path in mesh_texture_paths:
+        if path is not None and Path(path).is_file():
+            seeds.update(_texture_seed_keys(Path(path)))
+
+    if active_materials:
+        for mat_name, tex_name in material_to_texture.items():
+            if mat_name not in active_materials:
+                continue
+            if tex_name:
+                seeds.add(tex_name.casefold())
+
+    for tex_key in assignments.values():
+        if tex_key:
+            seeds.add(tex_key.casefold())
+
+    glb_textures: list[Path] = []
+    if glb_path is not None and glb_path.is_file():
+        glb_textures = _glb_material_texture_paths(glb_path)
+        for path in glb_textures:
+            seeds.update(_texture_seed_keys(path))
+
+    candidate_paths: list[Path] = []
+    seen_candidates: set[str] = set()
+    for path in list(fallback_paths) + list(texture_by_name.values()):
+        path = Path(path)
+        if not path.is_file():
+            continue
+        key = str(path.resolve())
+        if key in seen_candidates:
+            continue
+        seen_candidates.add(key)
+        candidate_paths.append(path)
+
+    if not seeds:
+        return glb_textures
+
+    relevant: list[Path] = []
+    seen: set[str] = set()
+    for path in candidate_paths:
+        if not any(_matches_assigner_seed(path.stem, seed) for seed in seeds):
+            continue
+        key = str(path.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        relevant.append(path)
+    return relevant
 
 
 def image_pixel_area(path: Path) -> int:

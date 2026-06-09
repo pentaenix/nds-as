@@ -175,8 +175,8 @@ class SelectionMixin:
             if hasattr(self, "export_button"):
                 self.export_button.setEnabled(count > 0)
                 self.export_button.setVisible(True)
-            if hasattr(self, "find_texture_button"):
-                self.find_texture_button.setEnabled(False)
+            if hasattr(self, "reset_view_button"):
+                self.reset_view_button.setEnabled(False)
             if hasattr(self, "preview_details"):
                 self.preview_details.setPlainText(
                     f"Folder selected: {' / '.join(parts)}\n"

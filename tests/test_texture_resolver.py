@@ -402,6 +402,47 @@ def test_parse_glb_material_preview_states_reads_alpha(tmp_path):
     assert blended[1, 3] == pytest.approx(0.16)
 
 
+def test_parse_glb_mesh_parts_uses_material_names(tmp_path):
+    import json
+    import struct
+
+    from rae.glb_preview_textures import (
+        build_mesh_texture_paths_for_glb_parts,
+        parse_glb_mesh_part_labels,
+        parse_glb_mesh_parts,
+    )
+
+    gltf = {
+        "materials": [
+            {"name": "gs_pc_b", "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}},
+            {"name": "h_kage", "pbrMetallicRoughness": {"baseColorTexture": {"index": 1}}},
+        ],
+        "textures": [{"source": 0}, {"source": 1}],
+        "images": [{"uri": "gs_pc_b.png"}, {"uri": "h_kage.png"}],
+        "meshes": [
+            {
+                "name": "pc_mesh",
+                "primitives": [
+                    {"material": 0},
+                    {"material": 1},
+                ],
+            }
+        ],
+    }
+    json_bytes = json.dumps(gltf).encode("utf-8")
+    glb = tmp_path / "model.glb"
+    header = struct.pack("<III", 0x46546C67, 2, 12 + 8 + len(json_bytes))
+    chunk = struct.pack("<II", len(json_bytes), 0x4E4F534A) + json_bytes
+    glb.write_bytes(header + chunk)
+    (tmp_path / "gs_pc_b.png").write_bytes(b"png")
+    (tmp_path / "h_kage.png").write_bytes(b"png")
+
+    assert parse_glb_mesh_part_labels(glb) == ["gs_pc_b", "h_kage"]
+    parts = parse_glb_mesh_parts(glb)
+    paths = build_mesh_texture_paths_for_glb_parts(parts, glb_path=glb)
+    assert [p.name if p else None for p in paths] == ["gs_pc_b.png", "h_kage.png"]
+
+
 def test_mesh_texture_override_matches_material_name(tmp_path):
     from types import SimpleNamespace
 

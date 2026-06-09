@@ -216,7 +216,8 @@ class DetailsMixin:
                 "  Select an asset to see preview-specific notes here.\n"
                 "  Model texture resolve results and GLB preview status appear for BMD0 models."
             )
-            self.find_texture_button.setEnabled(False)
+            if hasattr(self, "reset_view_button"):
+                self.reset_view_button.setEnabled(False)
             self.export_button.setEnabled(False)
             self.pin_texture_button.setVisible(False)
             self.clear_pin_button.setVisible(False)
@@ -248,11 +249,10 @@ class DetailsMixin:
             if status:
                 lines.append(f"  {status}")
             lines.append("")
-            lines.append("Use Set Textures to parse exact NSBMD material names, decode matching NSBTX textures, and preview/export the verified binding.")
+            lines.append("  RAE auto-resolves textures on preview. Open the Texture Assigner tab to match textures to model parts.")
             saved = len(self._texture_assignments.get(asset.asset_id, {}))
             if saved:
                 lines.append(f"  Manual texture assignments saved in session: {saved} part(s)")
-            lines.append("  Use the Texture Assigner tab below to match textures to model parts.")
         elif asset.magic in {"RGCN", "RLCN", "RCSN", "RECN", "RNAN"}:
             lines.append("")
             lines.append("Sprite/tile status")
@@ -270,8 +270,10 @@ class DetailsMixin:
         pinned_active = pinned is not None
         self.export_button.setEnabled(True)
         self.export_button.setVisible(True)
-        self.find_texture_button.setEnabled(asset.magic == "BMD0")
-        self.find_texture_button.setVisible(True)
+        preview_active = getattr(self.preview, "_last_path", None) is not None
+        if hasattr(self, "reset_view_button"):
+            self.reset_view_button.setEnabled(preview_active and asset.magic == "BMD0")
+            self.reset_view_button.setVisible(True)
         self.pin_texture_button.setEnabled(asset.magic == "BTX0")
         self.pin_texture_button.setVisible(asset.magic == "BTX0")
         self.clear_pin_button.setEnabled(pinned_active)

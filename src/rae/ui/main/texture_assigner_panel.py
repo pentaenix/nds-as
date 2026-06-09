@@ -7,6 +7,7 @@ from ...core.texture_assignments import (
     build_best_path_index,
     estimate_assignments_from_paths,
     image_pixel_area,
+    relevant_assigner_texture_paths,
     resolve_assignment_paths,
     texture_key_for_path,
 )
@@ -18,6 +19,7 @@ class TextureAssignerPanelMixin:
     def _init_texture_assigner_state(self) -> None:
         self._texture_assignments: dict[str, dict[str, str]] = {}
         self._preview_mesh_labels: list[str] = []
+        self._last_inspector_asset_id: str | None = None
 
     def _mesh_texture_overrides_for_asset(self, asset_id: str | None) -> dict[str, Path]:
         if not asset_id:
@@ -32,10 +34,19 @@ class TextureAssignerPanelMixin:
             fallback_paths=getattr(preview, "_fallback_texture_paths", []),
         )
 
-    def _texture_options_for_preview(self) -> list[TextureOption]:
+    def _texture_options_for_preview(self, asset_id: str | None = None) -> list[TextureOption]:
         preview = self.preview
-        paths = list(getattr(preview, "_fallback_texture_paths", []))
-        paths.extend(Path(p) for p in getattr(preview, "_texture_by_name", {}).values())
+        asset_id = asset_id or getattr(self, "_last_previewed_asset_id", None)
+        assignments = dict(self._texture_assignments.get(asset_id, {})) if asset_id else {}
+        paths = relevant_assigner_texture_paths(
+            fallback_paths=list(getattr(preview, "_fallback_texture_paths", [])),
+            texture_by_name=getattr(preview, "_texture_by_name", {}),
+            mesh_texture_paths=list(getattr(preview, "_mesh_texture_paths", [])),
+            material_to_texture=getattr(preview, "_material_to_texture", {}),
+            assignments=assignments,
+            glb_path=getattr(preview, "_last_path", None),
+            mesh_part_labels=list(getattr(self, "_preview_mesh_labels", [])),
+        )
         best = build_best_path_index(paths)
         options: list[TextureOption] = []
         seen: set[str] = set()
@@ -113,17 +124,19 @@ class TextureAssignerPanelMixin:
         return getattr(self.preview, "_last_path", None) is not None
 
     def _update_preview_inspector_visibility(self, asset: Asset | None = None) -> None:
-        """Show model-only tool tabs; preview status text stays visible always."""
+        """Refresh assigner when a model preview is active; keep Preview tab as default on model change."""
         asset = asset or self.selected_asset()
         show_tools = self._model_preview_is_active(asset)
-        if hasattr(self, "preview_inspector_tabs"):
-            self.preview_inspector_tabs.setVisible(show_tools)
         if hasattr(self, "preview_pin_row"):
-            self.preview_pin_row.setVisible(show_tools)
+            self.preview_pin_row.setVisible(bool(show_tools and asset and asset.magic == "BMD0"))
         if not show_tools:
             if hasattr(self, "texture_assigner"):
                 self.texture_assigner.set_context(asset_id=None, parts=[], textures=[], assignments={})
             return
+        if hasattr(self, "preview_inspector_tabs") and asset is not None:
+            if getattr(self, "_last_inspector_asset_id", None) != asset.asset_id:
+                self.preview_inspector_tabs.setCurrentIndex(0)
+                self._last_inspector_asset_id = asset.asset_id
         self._refresh_texture_assigner(asset)
 
     def _ensure_estimated_assignments(self, asset_id: str) -> bool:

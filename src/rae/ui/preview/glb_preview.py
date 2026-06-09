@@ -11,12 +11,14 @@ from ...glb_preview_textures import (
     apply_material_preview_alpha,
     attach_preview_textures,
     build_mesh_texture_paths,
+    build_mesh_texture_paths_for_glb_parts,
     discover_colocated_textures,
     merge_texture_by_name,
     merge_texture_paths,
     ordered_texture_paths_from_glb,
     parse_glb_material_preview_states,
     parse_glb_material_texture_map,
+    parse_glb_mesh_parts,
 )
 from ...nitro_textures import decode_btx_images
 from .colors import qcolor_rgbf
@@ -70,6 +72,30 @@ class GlbPreviewMixin:
             web_view.show()
             web_view.set_background_name(getattr(self, "_background_name", "Checkered"))
             web_view.set_wireframe(getattr(self, "_wireframe", False))
+            colocated = discover_colocated_textures(path)
+            glb_material_map = parse_glb_material_texture_map(path)
+            self._material_preview_states = parse_glb_material_preview_states(path)
+            if colocated or glb_material_map:
+                self._texture_by_name = merge_texture_by_name(
+                    getattr(self, "_texture_by_name", {}),
+                    colocated,
+                    glb_material_map,
+                )
+                self._fallback_texture_paths = merge_texture_paths(
+                    ordered_texture_paths_from_glb(path, colocated),
+                    self._fallback_texture_paths,
+                )
+            parts = parse_glb_mesh_parts(path)
+            self._last_mesh_labels = [part.label for part in parts]
+            self._mesh_texture_paths = build_mesh_texture_paths_for_glb_parts(
+                parts,
+                glb_path=path,
+                texture_by_name=getattr(self, "_texture_by_name", {}),
+                material_to_texture=getattr(self, "_material_to_texture", {}),
+                texture_bind_order=getattr(self, "_texture_bind_order", []),
+                fallback_paths=self._fallback_texture_paths,
+                mesh_texture_overrides=self._mesh_texture_overrides,
+            )
             web_view.load_glb(path)
             self.set_banner("")
             return

@@ -93,6 +93,11 @@ class WebGlbPreviewWidget(QWidget):
         flag = "true" if enabled else "false"
         self._run_when_api_ready(f"window.raeGlbPreview.setWireframe({flag});")
 
+    def reset_view(self) -> None:
+        if not self._available:
+            return
+        self._run_when_api_ready("window.raeGlbPreview.resetView();")
+
     def clear_scene(self) -> None:
         """Drop the current model without reloading the viewer page."""
         self._last_glb_path = None

@@ -23,6 +23,14 @@ class MaterialPreviewState:
     render_class: str = "opaque"
 
 
+@dataclass(frozen=True)
+class GlbMeshPart:
+    """One preview/assigner part — typically one glTF primitive (material split)."""
+
+    label: str
+    material_index: int | None = None
+
+
 def discover_colocated_textures(glb_path: Path) -> dict[str, Path]:
     """Index PNG/BMP/TGA files in the same folder as the GLB (apicula output)."""
     directory = glb_path.parent
@@ -163,6 +171,101 @@ def merge_texture_by_name(*maps: dict[str, Path]) -> dict[str, Path]:
 def texture_map_from_paths(paths: list[Path]) -> dict[str, Path]:
     """Build a lookup table from PNG file stems (highest resolution per key)."""
     return build_best_path_index(paths)
+
+
+def parse_glb_mesh_parts(glb_path: Path) -> list[GlbMeshPart]:
+    """Return mesh-part labels from glTF primitives (matches trimesh scene.dump splits)."""
+    try:
+        gltf = read_glb_json(glb_path)
+    except Exception:
+        return []
+
+    materials = gltf.get("materials") or []
+    meshes = gltf.get("meshes") or []
+    parts: list[GlbMeshPart] = []
+    for mesh_idx, mesh in enumerate(meshes):
+        if not isinstance(mesh, dict):
+            continue
+        mesh_name = str(mesh.get("name") or "").strip() or f"mesh_{mesh_idx}"
+        primitives = mesh.get("primitives") or []
+        if not primitives:
+            parts.append(GlbMeshPart(mesh_name, None))
+            continue
+        for prim_idx, primitive in enumerate(primitives):
+            if not isinstance(primitive, dict):
+                continue
+            raw_mat_idx = primitive.get("material")
+            material_index = raw_mat_idx if isinstance(raw_mat_idx, int) else None
+            label = mesh_name
+            if material_index is not None and 0 <= material_index < len(materials):
+                material = materials[material_index]
+                if isinstance(material, dict):
+                    mat_name = str(material.get("name") or "").strip()
+                    if mat_name:
+                        label = mat_name
+            elif len(primitives) > 1:
+                label = f"{mesh_name}_{prim_idx}"
+            parts.append(GlbMeshPart(label, material_index))
+    return parts
+
+
+def parse_glb_mesh_part_labels(glb_path: Path) -> list[str]:
+    return [part.label for part in parse_glb_mesh_parts(glb_path)]
+
+
+def build_mesh_texture_paths_for_glb_parts(
+    parts: list[GlbMeshPart],
+    *,
+    glb_path: Path | None = None,
+    texture_by_name: dict[str, Path] | None = None,
+    material_to_texture: dict[str, str] | None = None,
+    texture_bind_order: list[str] | None = None,
+    fallback_paths: list[Path] | None = None,
+    mesh_texture_overrides: dict[str, Path] | None = None,
+) -> list[Path | None]:
+    """Return one PNG path per GLB mesh part (no trimesh required)."""
+    texture_by_name = texture_by_name or {}
+    material_to_texture = material_to_texture or {}
+    texture_bind_order = texture_bind_order or []
+    fallback_paths = fallback_paths or []
+    mesh_texture_overrides = mesh_texture_overrides or {}
+
+    colocated = discover_colocated_textures(glb_path) if glb_path is not None else {}
+    glb_material_map = parse_glb_material_texture_map(glb_path) if glb_path is not None else {}
+    merged_names = merge_texture_by_name(
+        texture_map_from_paths(fallback_paths),
+        texture_by_name,
+        colocated,
+        glb_material_map,
+    )
+    if glb_path is not None:
+        unique_fallback = merge_texture_paths(
+            ordered_texture_paths_from_glb(glb_path, colocated),
+            fallback_paths,
+        )
+    else:
+        unique_fallback = merge_texture_paths(list(colocated.values()), fallback_paths)
+
+    out: list[Path | None] = []
+    for mesh_index, part in enumerate(parts):
+        override = mesh_texture_overrides.get(part.label)
+        if override is not None and override.is_file():
+            out.append(override)
+            continue
+        path = _path_for_glb_part(
+            mesh_index,
+            part.label,
+            part.material_index,
+            glb_path=glb_path,
+            glb_material_map=glb_material_map,
+            colocated=colocated,
+            texture_by_name=merged_names,
+            material_to_texture=material_to_texture,
+            texture_bind_order=texture_bind_order,
+            fallback_paths=unique_fallback,
+        )
+        out.append(path)
+    return out
 
 
 def build_mesh_texture_paths(
@@ -327,15 +430,45 @@ def _path_for_mesh(
     visual = getattr(mesh, "visual", None)
     material = getattr(visual, "material", None) if visual is not None else None
     mat_name = str(getattr(material, "name", "") or "").strip()
+    mat_idx = _material_index(material, mesh)
+    return _path_for_glb_part(
+        mesh_index,
+        mat_name or geom_name,
+        mat_idx,
+        glb_path=glb_path,
+        glb_material_map=glb_material_map,
+        colocated=colocated,
+        texture_by_name=texture_by_name,
+        material_to_texture=material_to_texture,
+        texture_bind_order=texture_bind_order,
+        fallback_paths=fallback_paths,
+        extra_lookup_keys=_mesh_lookup_keys(geom_name, mesh),
+    )
+
+
+def _path_for_glb_part(
+    mesh_index: int,
+    label: str,
+    material_index: int | None,
+    *,
+    glb_path: Path | None,
+    glb_material_map: dict[str, Path],
+    colocated: dict[str, Path],
+    texture_by_name: dict[str, Path],
+    material_to_texture: dict[str, str],
+    texture_bind_order: list[str],
+    fallback_paths: list[Path],
+    extra_lookup_keys: list[str] | None = None,
+) -> Path | None:
+    mat_name = str(label or "").strip()
     mat_key = mat_name.casefold()
 
     # 1. glTF material table from apicula — authoritative, avoids index swaps.
     if mat_key and mat_key in glb_material_map:
         return glb_material_map[mat_key]
 
-    mat_idx = _material_index(material, mesh)
-    if mat_idx is not None:
-        path = glb_material_map.get(str(mat_idx))
+    if material_index is not None:
+        path = glb_material_map.get(str(material_index))
         if path is not None:
             return path
 
@@ -348,7 +481,10 @@ def _path_for_mesh(
                 return path
 
     # 3. Material / geometry name direct lookup.
-    for key in _mesh_lookup_keys(geom_name, mesh):
+    lookup_keys = list(extra_lookup_keys or [])
+    if mat_name and mat_name not in lookup_keys:
+        lookup_keys.insert(0, mat_name)
+    for key in lookup_keys:
         path = _path_for_key(
             key,
             colocated=colocated,

@@ -327,6 +327,15 @@ class PreviewWidget(GlbPreviewMixin, QWidget):
                 mesh_texture_overrides=getattr(self, "_mesh_texture_overrides", {}),
             )
 
+    def reset_view(self) -> None:
+        if self._web_view is not None and self._web_view.is_available():
+            self._web_view.reset_view()
+            return
+        if self._view is not None and self._last_path is not None:
+            self._model_distance = 90.0
+            self._view.setCameraPosition(distance=90.0, elevation=30, azimuth=45)
+            self._view.update()
+
     def set_wireframe(self, enabled: bool) -> None:
         self._wireframe = enabled
         if self._web_view is not None:
