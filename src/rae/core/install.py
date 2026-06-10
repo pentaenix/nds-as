@@ -32,6 +32,10 @@ def ensure_dirs(root: Path) -> None:
         "roms": "Put your own legally dumped Nintendo DS ROMs here. Do not commit ROM files.\n",
         "exports": "RAE writes extracted/converted assets here. Do not commit exported assets.\n",
         "saves": "RAE session files live here. Sessions can contain extracted asset data and must stay local.\n",
+        "easyfind": (
+            "EasyFind index files keyed by Nintendo DS game code (for example IRBO.easyfind). "
+            "Built indexes are local artifacts and stay gitignored.\n"
+        ),
         "tools": "Optional external tools such as apicula can live here.\n",
     }.items():
         path = root / name
@@ -47,6 +51,7 @@ def ensure_gitignore(root: Path) -> None:
         "roms/**", "!roms/README.md", "!roms/.gitkeep", "",
         "exports/**", "!exports/README.md", "!exports/.gitkeep", "",
         "saves/*", "!saves/README.md", "!saves/.gitkeep", "",
+        "easyfind/*", "!easyfind/README.md", "!easyfind/.gitkeep", "",
         ".venv/", "__pycache__/", "*.pyc", ".DS_Store",
     ]
     path = root / ".gitignore"
@@ -96,7 +101,7 @@ def install(*, with_apicula: bool = True) -> int:
     print(f"Python:   OK {platform.python_version()} -> {py}")
     print("venv:     OK .venv")
     print("RAE:   OK editable install")
-    for folder in ("roms", "exports", "saves", "mappings"):
+    for folder in ("roms", "exports", "saves", "easyfind", "mappings"):
         print(f"{folder + ':':<10} OK {(root / folder).exists()}")
     apicula = find_apicula(root)
     if apicula:

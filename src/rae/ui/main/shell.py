@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QRadioButton,
     QScrollArea,
     QSplitter,
+    QStackedWidget,
     QStyle,
     QTabWidget,
     QTableWidget,
@@ -138,6 +139,8 @@ class ShellMixin:
         self._tree_group_rows: dict[tuple[str, ...], list[int]] = {}
         self._tree_loaded_groups: set[tuple[str, ...]] = set()
         self.session_path: str | None = None
+        self.rom_game_code: str = ""
+        self.rom_title: str = ""
         self._last_texture_resolve_report: dict[str, str] = {}
         self._preview_status_by_asset_id: dict[str, str] = {}
         self._preview_fallback_count_by_asset_id: dict[str, int] = {}
@@ -145,6 +148,7 @@ class ShellMixin:
         self._raw_tree_loaded_groups: set[tuple[str, ...]] = set()
         self._btx0_texture_entries_cache: dict[str, list[tuple[str, int, int, int]]] = {}
         self._selected_btx0_texture_name: str | None = None
+        self._init_easyfind_state()
 
         self._build_ui()
         self._update_status("Open a local .nds ROM to start. Use ./rae run next time to launch this app.")
@@ -202,15 +206,16 @@ class ShellMixin:
         self.export_action = export_action
         self.open_rom_action = open_rom_action
 
-        toolbar = QToolBar("Main")
-        toolbar.setMovable(False)
-        self.addToolBar(toolbar)
-        open_rom_toolbar = QAction("Open ROM", self)
-        open_rom_toolbar.triggered.connect(self.open_rom)
-        toolbar.addAction(open_rom_toolbar)
-        save_session_toolbar = QAction("Save Session", self)
-        save_session_toolbar.triggered.connect(self.save_session)
-        toolbar.addAction(save_session_toolbar)
+        self.main_toolbar = QToolBar("Main")
+        self.main_toolbar.setMovable(False)
+        self.addToolBar(self.main_toolbar)
+        self.open_rom_toolbar_action = QAction("Open ROM", self)
+        self.open_rom_toolbar_action.triggered.connect(self.open_rom)
+        self.main_toolbar.addAction(self.open_rom_toolbar_action)
+        self.save_session_toolbar_action = QAction("Save Session", self)
+        self.save_session_toolbar_action.triggered.connect(self.save_session)
+        self.save_session_toolbar_action.setVisible(False)
+        self.main_toolbar.addAction(self.save_session_toolbar_action)
 
         filter_row = QWidget()
         filter_layout = QHBoxLayout(filter_row)
@@ -328,6 +333,7 @@ class ShellMixin:
         info_corner_layout.addWidget(self.info_clear_button)
         self.info_tabs.setCornerWidget(info_corner, Qt.TopRightCorner)
 
+        self.browser_workspace = QWidget()
         left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.addWidget(filter_row)
@@ -402,7 +408,13 @@ class ShellMixin:
         splitter.addWidget(right_splitter)
         splitter.setSizes([820, 520])
 
-        self.setCentralWidget(splitter)
+        browser_layout = QVBoxLayout(self.browser_workspace)
+        browser_layout.setContentsMargins(0, 0, 0, 0)
+        browser_layout.addWidget(splitter)
+
+        self.workspace_stack = QStackedWidget()
+        self.workspace_stack.addWidget(self.browser_workspace)
+        self.setCentralWidget(self.workspace_stack)
         self.statusBar().showMessage("Ready")
 
         self.preview_timer = QTimer(self)
@@ -442,6 +454,8 @@ class ShellMixin:
         self._update_pagination_bar()
         if hasattr(self, "_update_preview_details"):
             self._update_preview_details(None)
+        if hasattr(self, "install_easyfind_actions"):
+            self.install_easyfind_actions()
 
     def _style_chrome_controls(self) -> None:
         for button in (
@@ -497,6 +511,8 @@ class ShellMixin:
             return
         try:
             rom = NDSRom.from_path(self.rom_path)
+            self.rom_game_code = (rom.info.game_code or "").strip().upper()[:4]
+            self.rom_title = (rom.info.title or "").strip()
             files = list(rom.iter_files())
             profile = detect_profile(rom.info.title, rom.info.game_code, [f.path for f in files])
             mapping = choose_mapping(
@@ -516,6 +532,8 @@ class ShellMixin:
         except Exception:
             self.current_mapping = None
             self.profile_text = ""
+            self.rom_game_code = ""
+            self.rom_title = ""
 
     def _update_status(self, text: str) -> None:
         # Keep the status bar short so it never steals browser/terminal space.

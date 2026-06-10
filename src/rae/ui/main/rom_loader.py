@@ -147,6 +147,9 @@ class RomLoaderMixin:
         self.current_mapping = None
         self.assets_by_id = {}
         self.session_path = None
+        self.rom_game_code = ""
+        self.rom_title = ""
+        self.easyfind_path = None
         self._selected_asset_id = None
         self._selected_btx0_texture_name = None
         self._tree_group_rows = {}
@@ -154,6 +157,8 @@ class RomLoaderMixin:
         self._raw_tree_group_rows = {}
         self._raw_tree_loaded_groups = set()
         self.browser_page = 0
+        if hasattr(self, "_update_main_toolbar"):
+            self._update_main_toolbar()
         if hasattr(self, "preset_box"):
             self.preset_box.setCurrentIndex(0)
         self.table.setRowCount(0)
@@ -205,6 +210,10 @@ class RomLoaderMixin:
         if not self.table.selectionModel().selectedRows() and not self.tree.selectedItems():
             self.details.setPlainText(summary)
             self.preview.show_message("Choose an asset to preview or export. Models load with textures automatically when RAE can resolve them.")
+        if hasattr(self, "_update_main_toolbar"):
+            self._update_main_toolbar()
+        if hasattr(self, "_bind_easyfind_for_current_game"):
+            self._bind_easyfind_for_current_game(log=True)
 
     def _session_overview_text(self, *, source_label: str, mode: str, counts: tuple[int, int, int, int, int, int]) -> str:
         total, models, textures, two_d, pngs, audio = counts

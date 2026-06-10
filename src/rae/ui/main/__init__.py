@@ -7,6 +7,7 @@ from .asset_labels import AssetLabelsMixin
 from .browser_table import BrowserTableMixin
 from .browser_trees import BrowserTreesMixin
 from .details import DetailsMixin
+from .easyfind_actions import EasyFindActionsMixin
 from .export_actions import ExportActionsMixin
 from .filters import FiltersMixin
 from .model_preview import ModelPreviewMixin
@@ -36,6 +37,7 @@ class MainWindow(
     TextureAnimationPanelMixin,
     PreviewActionsMixin,
     SessionActionsMixin,
+    EasyFindActionsMixin,
     ExportActionsMixin,
     ModelPreviewMixin,
     AssetLabelsMixin,

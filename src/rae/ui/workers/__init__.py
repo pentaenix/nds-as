@@ -1,9 +1,11 @@
 """Background workers grouped by responsibility."""
 from .preview import ImagePreviewWorker, PreviewWorker, TextureResolveWorker, TextureWorker
 from .scan import FilterWorker, ScanWorker, TextureLibraryWarmupWorker
+from .easyfind import EasyFindBuildWorker
 from .session import SessionLoadWorker, SessionSaveWorker
 
 __all__ = [
+    "EasyFindBuildWorker",
     "FilterWorker",
     "ImagePreviewWorker",
     "PreviewWorker",
