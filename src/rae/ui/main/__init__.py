@@ -17,6 +17,7 @@ from .session_actions import SessionActionsMixin
 from .shell import ShellMixin
 from .texture_index import TextureIndexMixin
 from .texture_assigner_panel import TextureAssignerPanelMixin
+from .texture_animation_panel import TextureAnimationPanelMixin
 from .texture_resolve import TextureResolveMixin
 
 
@@ -32,6 +33,7 @@ class MainWindow(
     DetailsMixin,
     TextureResolveMixin,
     TextureAssignerPanelMixin,
+    TextureAnimationPanelMixin,
     PreviewActionsMixin,
     SessionActionsMixin,
     ExportActionsMixin,

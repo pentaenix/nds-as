@@ -6,7 +6,7 @@ from enum import Enum
 from typing import Any
 
 from .geometry_stats import MaterialGeometryStats, is_predominantly_horizontal
-from .texture_alpha import texture_has_meaningful_alpha
+from .texture_alpha import texture_has_meaningful_alpha, texture_has_partial_alpha_channel
 
 SCHEMA_VERSION = 1
 ALPHA_CUTOFF = 0.5
@@ -96,6 +96,13 @@ def classify_material(
         )
 
     if meaningful_alpha:
+        if texture_has_partial_alpha_channel(texture_bytes):
+            return ClassificationResult(
+                render_class=RenderClass.BLEND,
+                texture_meaningful_alpha=True,
+                horizontal_face_fraction=horizontal_fraction,
+                nitro_alpha=nitro_alpha,
+            )
         return ClassificationResult(
             render_class=RenderClass.MASK,
             texture_meaningful_alpha=True,

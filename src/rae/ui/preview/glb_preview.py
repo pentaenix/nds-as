@@ -23,6 +23,7 @@ from ...glb_preview_textures import (
 from ...nitro_textures import decode_btx_images
 from .colors import qcolor_rgbf
 from .preview_gl import preview_gl_options
+from .preview_patch import PreviewGlbPatcher
 from .textured_mesh_item import GLTexturedMeshItem
 
 # Vertex-color baking fallback (only used when GPU texturing is unavailable).
@@ -96,7 +97,8 @@ class GlbPreviewMixin:
                 fallback_paths=self._fallback_texture_paths,
                 mesh_texture_overrides=self._mesh_texture_overrides,
             )
-            web_view.load_glb(path)
+            patched = self._build_web_preview_glb(path)
+            web_view.load_glb(patched or path)
             self.set_banner("")
             return
         if not self._available or self._view is None:
@@ -312,6 +314,51 @@ class GlbPreviewMixin:
             self.set_banner(warning)
         except Exception as exc:
             self.set_banner(f"Could not preview {path.name}: {exc}")
+
+    def refresh_web_texture_paths(self) -> None:
+        """Recompute mesh→PNG paths from GLB data and current overrides."""
+        path = getattr(self, "_last_path", None)
+        if path is None:
+            return
+        parts = parse_glb_mesh_parts(path)
+        self._last_mesh_labels = [part.label for part in parts]
+        self._mesh_texture_paths = build_mesh_texture_paths_for_glb_parts(
+            parts,
+            glb_path=path,
+            texture_by_name=getattr(self, "_texture_by_name", {}),
+            material_to_texture=getattr(self, "_material_to_texture", {}),
+            texture_bind_order=getattr(self, "_texture_bind_order", []),
+            fallback_paths=self._fallback_texture_paths,
+            mesh_texture_overrides=getattr(self, "_mesh_texture_overrides", {}),
+        )
+
+    def _glb_patcher(self) -> PreviewGlbPatcher:
+        patcher = getattr(self, "_preview_glb_patcher", None)
+        if patcher is None:
+            patcher = PreviewGlbPatcher()
+            self._preview_glb_patcher = patcher
+        return patcher
+
+    def _build_web_preview_glb(self, source_glb: Path) -> Path | None:
+        labels = list(getattr(self, "_last_mesh_labels", []))
+        paths = list(getattr(self, "_mesh_texture_paths", []))
+        if not labels or not any(paths):
+            return None
+        return self._glb_patcher().build_preview_glb(
+            source_glb,
+            mesh_labels=labels,
+            mesh_texture_paths=paths,
+        )
+
+    def _reload_web_preview_glb(self) -> None:
+        path = getattr(self, "_last_path", None)
+        web_view = getattr(self, "_web_view", None)
+        if path is None or web_view is None or not web_view.is_available():
+            return
+        web_view.pause_flipbook()
+        patched = self._build_web_preview_glb(path)
+        if patched is not None:
+            web_view.load_glb(patched)
 
     def _extract_named_meshes(self, loaded, trimesh) -> list[tuple[str, object]]:
         if isinstance(loaded, trimesh.Scene):

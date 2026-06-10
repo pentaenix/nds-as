@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QRadioButton,
+    QScrollArea,
     QSplitter,
     QStyle,
     QTabWidget,
@@ -124,6 +125,7 @@ class ShellMixin:
         self._texture_resolution_cache: dict[str, CachedTextureResolution] = {}
         self._texture_preview_switch_to_details = False
         self._init_texture_assigner_state()
+        self._init_texture_animation_state()
         self._name_cache: dict[str, set[str]] = {}
         self._display_name_cache: dict[str, str] = {}
         self.current_mapping = None
@@ -341,14 +343,25 @@ class ShellMixin:
         self.preview_details.setMinimumHeight(100)
         self.preview_details.setPlaceholderText("Model preview status and texture resolve details appear here.")
 
+        from ..preview.animation_states import AnimationStatesWidget
         from ..preview.texture_assigner import TextureAssignerWidget
 
         self.texture_assigner = TextureAssignerWidget()
         self.texture_assigner.assignments_changed.connect(self._on_texture_assignments_changed)
+        self.animation_states = AnimationStatesWidget()
+        self.animation_states.preview_state_changed.connect(self._on_texture_state_changed)
+        self.animation_states.spec_changed.connect(self._on_animation_spec_changed)
+        self.texture_states = self.animation_states
+        self._animation_states_scroll = QScrollArea()
+        self._animation_states_scroll.setWidgetResizable(True)
+        self._animation_states_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self._animation_states_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._animation_states_scroll.setWidget(self.animation_states)
 
         self.preview_inspector_tabs = QTabWidget()
         self.preview_inspector_tabs.addTab(self.preview_details, "Preview")
         self.preview_inspector_tabs.addTab(self.texture_assigner, "Texture Assigner")
+        self.preview_inspector_tabs.addTab(self._animation_states_scroll, "Animation States")
         self.preview_inspector_tabs.setCurrentIndex(0)
         self.preview_inspector_tabs.setMinimumHeight(140)
 

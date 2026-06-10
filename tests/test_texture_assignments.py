@@ -2,7 +2,7 @@ import json
 import struct
 from pathlib import Path
 
-from rae.core.texture_assignments import relevant_assigner_texture_paths
+from rae.core.texture_assignments import relevant_assigner_texture_paths, relevant_texture_keys_for_mesh_part
 
 
 def _write_minimal_glb(path: Path, gltf: dict) -> None:
@@ -77,3 +77,28 @@ def test_relevant_assigner_ignores_other_pngs_in_glb_folder(tmp_path: Path) -> N
         mesh_part_labels=["wk_sp1"],
     )
     assert {p.name for p in paths} == {"wk_sp1.png"}
+
+
+def test_relevant_texture_keys_for_one_mesh_part(tmp_path: Path) -> None:
+    base = tmp_path / "lamp_a.png"
+    frame1 = tmp_path / "lamp_a_1.png"
+    frame2 = tmp_path / "lamp_a_2.png"
+    other_mesh = tmp_path / "sign_b.png"
+    for path in (base, frame1, frame2, other_mesh):
+        path.write_bytes(b"png")
+
+    keys = relevant_texture_keys_for_mesh_part(
+        "lamp_mat",
+        fallback_paths=[base, frame1, frame2, other_mesh],
+        texture_by_name={"lamp_a.2": frame2},
+        mesh_texture_paths=[base],
+        material_to_texture={},
+        assignments={},
+        glb_path=None,
+        mesh_part_labels=["lamp_mat"],
+    )
+    assert "lamp_a" in keys
+    assert "lamp_a_1" in keys
+    assert "lamp_a_2" in keys
+    assert "lamp_a.2" in keys
+    assert "sign_b" not in keys

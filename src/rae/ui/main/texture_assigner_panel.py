@@ -99,9 +99,19 @@ class TextureAssignerPanelMixin:
         path = getattr(preview, "_last_path", None)
         if path is None:
             return
-        overrides = self._mesh_texture_overrides_for_asset(
-            getattr(self, "_last_previewed_asset_id", None) or (self.selected_asset().asset_id if self.selected_asset() else None)
+        asset_id = getattr(self, "_last_previewed_asset_id", None) or (
+            self.selected_asset().asset_id if self.selected_asset() else None
         )
+        overrides = self._mesh_texture_overrides_for_asset(asset_id)
+        preview._mesh_texture_overrides = dict(overrides)
+        web_view = getattr(preview, "_web_view", None)
+        if web_view is not None and web_view.is_available():
+            preview.refresh_web_texture_paths()
+            preview._reload_web_preview_glb()
+            if hasattr(self, "_sync_texture_clip_preview"):
+                self._sync_texture_clip_preview(asset_id=asset_id)
+            self._refresh_texture_assigner()
+            return
         preview.load_glb(
             path,
             fallback_textures=preview._fallback_texture_paths,
@@ -132,6 +142,10 @@ class TextureAssignerPanelMixin:
         if not show_tools:
             if hasattr(self, "texture_assigner"):
                 self.texture_assigner.set_context(asset_id=None, parts=[], textures=[], assignments={})
+            if hasattr(self, "animation_states"):
+                self.animation_states.set_context(asset_id=None, materials={})
+            elif hasattr(self, "texture_states"):
+                self.texture_states.set_context(asset_id=None, materials={})
             return
         if hasattr(self, "preview_inspector_tabs") and asset is not None:
             if getattr(self, "_last_inspector_asset_id", None) != asset.asset_id:
@@ -172,8 +186,14 @@ class TextureAssignerPanelMixin:
         )
         self._ensure_estimated_assignments(asset_id)
         overrides = self._mesh_texture_overrides_for_asset(asset_id)
-        if overrides:
-            self.preview.load_glb(
+        preview = self.preview
+        web_view = getattr(preview, "_web_view", None)
+        if overrides and web_view is not None and web_view.is_available():
+            preview._mesh_texture_overrides = dict(overrides)
+            preview.refresh_web_texture_paths()
+            preview._reload_web_preview_glb()
+        elif overrides:
+            preview.load_glb(
                 path,
                 fallback_textures=fallback_textures,
                 texture_by_name=texture_by_name,
@@ -182,6 +202,10 @@ class TextureAssignerPanelMixin:
                 mesh_texture_overrides=overrides,
             )
         self._store_preview_mesh_labels(list(getattr(self.preview, "_last_mesh_labels", [])))
+        if hasattr(self, "_sync_texture_clip_preview"):
+            self._sync_texture_clip_preview(asset_id=asset_id)
+        if hasattr(self, "_refresh_texture_states"):
+            self._refresh_texture_states(self.assets_by_id.get(asset_id))
         asset = self.assets_by_id.get(asset_id)
         if hasattr(self, "_update_preview_details") and asset is not None:
             self._update_preview_details(asset)

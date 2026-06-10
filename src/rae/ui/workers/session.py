@@ -23,6 +23,7 @@ class SessionSaveWorker(QThread):
         mapping_id: str,
         pinned_texture_asset_id: str | None,
         texture_assignments: dict[str, dict[str, str]] | None = None,
+        texture_sequences: dict[str, dict] | None = None,
     ):
         super().__init__()
         self.target = target
@@ -32,6 +33,7 @@ class SessionSaveWorker(QThread):
         self.mapping_id = mapping_id
         self.pinned_texture_asset_id = pinned_texture_asset_id
         self.texture_assignments = dict(texture_assignments or {})
+        self.texture_sequences = dict(texture_sequences or {})
 
     def run(self) -> None:
         try:
@@ -43,6 +45,7 @@ class SessionSaveWorker(QThread):
                 mapping_id=self.mapping_id,
                 pinned_texture_asset_id=self.pinned_texture_asset_id,
                 texture_assignments=self.texture_assignments,
+                texture_sequences=self.texture_sequences,
                 progress=self.progress.emit,
             )
             self.finished_ok.emit(str(written))

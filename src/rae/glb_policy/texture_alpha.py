@@ -135,3 +135,13 @@ def texture_has_meaningful_alpha(
     if format_hint and format_hint.lower() in {"jpeg", "jpg"}:
         return False
     return png_has_meaningful_transparency(texture_bytes)
+
+
+def texture_has_partial_alpha_channel(texture_bytes: bytes | None) -> bool:
+    """True when any texel alpha is strictly between cutout and opaque."""
+    if not texture_bytes or not is_png(texture_bytes):
+        return False
+    decoded = decode_png_alpha(texture_bytes)
+    if decoded is None or decoded.alpha is None:
+        return False
+    return any(8 < value < 247 for value in decoded.alpha)

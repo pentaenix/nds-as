@@ -7,6 +7,7 @@ STATIC = Path(__file__).resolve().parents[1] / "src" / "rae" / "ui" / "preview" 
 REQUIRED = [
     "glb_viewer.html",
     "rae-material-policy.js",
+    "texture-alpha.js",
     "vendor/three/three.module.js",
     "vendor/three/addons/loaders/GLTFLoader.js",
     "vendor/three/addons/utils/BufferGeometryUtils.js",

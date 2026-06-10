@@ -89,6 +89,143 @@ def _glb_material_texture_paths(glb_path: Path) -> list[Path]:
     return paths
 
 
+def _assignment_for_mesh(assignments: dict[str, str], mesh_label: str) -> str:
+    target = str(mesh_label or "").casefold()
+    for mesh, tex in assignments.items():
+        if str(mesh).casefold() == target:
+            return str(tex).strip().casefold()
+    return ""
+
+
+def _texture_key_sort_key(key: str) -> tuple[int, str, int]:
+    key = str(key or "").casefold()
+    match = _ANIM_FRAME_SUFFIX.match(key)
+    if match:
+        return (0, match.group(1).casefold(), int(match.group(2)))
+    return (1, key, 0)
+
+
+def _seeds_for_mesh_part(
+    mesh_label: str,
+    *,
+    mesh_texture_paths: list[Path | None],
+    mesh_part_labels: list[str],
+    material_to_texture: dict[str, str],
+    assignments: dict[str, str],
+    glb_path: Path | None,
+) -> set[str]:
+    seeds: set[str] = set()
+    target = str(mesh_label or "").casefold()
+    if not target:
+        return seeds
+    for index, label in enumerate(mesh_part_labels):
+        if str(label).casefold() != target:
+            continue
+        if index < len(mesh_texture_paths):
+            path = mesh_texture_paths[index]
+            if path is not None and Path(path).is_file():
+                seeds.update(_texture_seed_keys(Path(path)))
+        break
+    assigned = _assignment_for_mesh(assignments, mesh_label)
+    if assigned:
+        seeds.add(assigned)
+    for mat_name, tex_name in material_to_texture.items():
+        if str(mat_name).casefold() == target and tex_name:
+            seeds.add(str(tex_name).casefold())
+    if glb_path is not None and glb_path.is_file():
+        try:
+            from ..platforms.nds.glb_preview_textures import parse_glb_material_texture_map
+
+            for mat_name, path in parse_glb_material_texture_map(glb_path).items():
+                if str(mat_name).casefold() != target:
+                    continue
+                if path.is_file():
+                    seeds.update(_texture_seed_keys(path))
+        except Exception:
+            pass
+    return seeds
+
+
+def _candidate_texture_paths(
+    *,
+    fallback_paths: list[Path],
+    texture_by_name: dict[str, Path],
+) -> list[Path]:
+    candidate_paths: list[Path] = []
+    seen_candidates: set[str] = set()
+    for path in list(fallback_paths) + list(texture_by_name.values()):
+        path = Path(path)
+        if not path.is_file():
+            continue
+        key = str(path.resolve())
+        if key in seen_candidates:
+            continue
+        seen_candidates.add(key)
+        candidate_paths.append(path)
+    return candidate_paths
+
+
+def relevant_texture_keys_for_mesh_part(
+    mesh_label: str,
+    *,
+    fallback_paths: list[Path],
+    texture_by_name: dict[str, Path],
+    mesh_texture_paths: list[Path | None],
+    material_to_texture: dict[str, str],
+    assignments: dict[str, str],
+    glb_path: Path | None = None,
+    mesh_part_labels: list[str] | None = None,
+) -> list[str]:
+    """Texture keys relevant to one mesh part (same rules as the texture assigner)."""
+    labels = list(mesh_part_labels or [])
+    seeds = _seeds_for_mesh_part(
+        mesh_label,
+        mesh_texture_paths=mesh_texture_paths,
+        mesh_part_labels=labels,
+        material_to_texture=material_to_texture,
+        assignments=assignments,
+        glb_path=glb_path,
+    )
+    if not seeds:
+        return []
+
+    def _add_key(key: str) -> None:
+        key = str(key or "").strip().casefold()
+        if not key or key.isdigit() or key in seen:
+            return
+        seen.add(key)
+        keys.append(key)
+
+    keys: list[str] = []
+    seen: set[str] = set()
+    for path in _candidate_texture_paths(fallback_paths=fallback_paths, texture_by_name=texture_by_name):
+        if not any(_matches_assigner_seed(path.stem, seed) for seed in seeds):
+            continue
+        _add_key(texture_key_for_path(path))
+        stem = path.stem.casefold()
+        if stem != texture_key_for_path(path):
+            _add_key(stem)
+
+    for raw_key, path in texture_by_name.items():
+        path = Path(path) if path is not None else None
+        if path is None or not path.is_file():
+            continue
+        path_key = texture_key_for_path(path)
+        stem_key = path.stem.casefold()
+        name_keys = {path_key, stem_key}
+        raw = str(raw_key).casefold()
+        if raw and not raw.isdigit() and raw not in name_keys:
+            name_keys.add(raw)
+        if not any(
+            _matches_assigner_seed(candidate, seed) for candidate in name_keys for seed in seeds
+        ):
+            continue
+        for candidate in name_keys:
+            _add_key(candidate)
+
+    return sorted(keys, key=_texture_key_sort_key)
+
+
 def relevant_assigner_texture_paths(
     *,
     fallback_paths: list[Path],
@@ -124,17 +261,10 @@ def relevant_assigner_texture_paths(
         for path in glb_textures:
             seeds.update(_texture_seed_keys(path))
 
-    candidate_paths: list[Path] = []
-    seen_candidates: set[str] = set()
-    for path in list(fallback_paths) + list(texture_by_name.values()):
-        path = Path(path)
-        if not path.is_file():
-            continue
-        key = str(path.resolve())
-        if key in seen_candidates:
-            continue
-        seen_candidates.add(key)
-        candidate_paths.append(path)
+    candidate_paths = _candidate_texture_paths(
+        fallback_paths=fallback_paths,
+        texture_by_name=texture_by_name,
+    )
 
     if not seeds:
         return glb_textures

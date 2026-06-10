@@ -125,6 +125,7 @@ class SessionActionsMixin:
             mapping_id=mapping_id,
             pinned_texture_asset_id=self._pinned_texture_asset_id,
             texture_assignments=self._texture_assignments,
+            texture_sequences=getattr(self, "_texture_sequences", {}),
         )
         self.session_save_worker.progress.connect(self._update_status)
         self.session_save_worker.finished_ok.connect(self._session_save_finished)
@@ -168,8 +169,10 @@ class SessionActionsMixin:
         self.profile_text = str(manifest.get("profile_text", ""))
         self._pinned_texture_asset_id = manifest.get("pinned_texture_asset_id") or None
         from ...core.texture_assignments import load_texture_assignments
+        from ...core.texture_sequences import load_texture_sequences
 
         self._texture_assignments = load_texture_assignments(manifest)
+        self._texture_sequences = load_texture_sequences(manifest)
         self.current_mapping = None
         self._selected_asset_id = None
         self._selected_btx0_texture_name = None

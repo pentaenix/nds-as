@@ -8,7 +8,7 @@ from PySide6.QtCore import Qt, QEvent, QPoint
 from PySide6.QtGui import QAction, QBrush, QColor, QPainter, QPixmap, QWheelEvent
 from PySide6.QtWidgets import QCheckBox, QComboBox, QGridLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout, QWidget
 
-from ..constants import CHECKER_DARK, CHECKER_LIGHT, GL_BG_COLORS, VIEWPORT_BANNER_STYLE
+from ..constants import CHROME_BUTTON_STYLE, CHECKER_DARK, CHECKER_LIGHT, GL_BG_COLORS, VIEWPORT_BANNER_STYLE
 from .canvas import PreviewCanvas, PreviewGLView
 from .colors import qcolor_rgbf
 from .glb_preview import GlbPreviewMixin
@@ -41,6 +41,9 @@ class PreviewWidget(GlbPreviewMixin, QWidget):
         self._image_source: QPixmap | None = None
         self._image_zoom = 1.0
         self._model_distance = 90.0
+        self._flipbook_clips: list[dict] = []
+        self._flipbook_playback_options: list[dict] = []
+        self._flipbook_autoplay_pending = False
 
         self.textures_toggle = QPushButton()
         self.textures_toggle.setCheckable(True)
@@ -137,6 +140,29 @@ class PreviewWidget(GlbPreviewMixin, QWidget):
         self._message_label.hide()
 
         canvas_layout.addWidget(self._banner, 0, 0, alignment=Qt.AlignTop)
+
+        self._flipbook_controls = QWidget(self._canvas)
+        flip_outer = QVBoxLayout(self._flipbook_controls)
+        flip_outer.setContentsMargins(0, 0, 0, 0)
+        flip_outer.setSpacing(4)
+        flip_row = QHBoxLayout()
+        flip_row.setContentsMargins(0, 0, 0, 0)
+        self._flipbook_play_btn = QPushButton("▶")
+        self._flipbook_play_btn.setCheckable(True)
+        self._flipbook_play_btn.setFixedSize(34, 28)
+        self._flipbook_play_btn.setToolTip("Play / pause texture animation preview")
+        self._flipbook_play_btn.setStyleSheet(CHROME_BUTTON_STYLE)
+        self._flipbook_play_btn.toggled.connect(self._on_flipbook_play_toggled)
+        flip_row.addWidget(self._flipbook_play_btn)
+        flip_outer.addLayout(flip_row)
+        self._flipbook_state_combo = QComboBox()
+        self._flipbook_state_combo.setToolTip("Choose which animation state to play")
+        self._flipbook_state_combo.setMinimumWidth(140)
+        self._flipbook_state_combo.currentIndexChanged.connect(self._on_flipbook_state_changed)
+        self._flipbook_state_combo.hide()
+        flip_outer.addWidget(self._flipbook_state_combo)
+        self._flipbook_controls.hide()
+
         root.addWidget(chrome)
         root.addWidget(self._canvas, stretch=1)
         self._apply_background("Checkered")
@@ -199,6 +225,7 @@ class PreviewWidget(GlbPreviewMixin, QWidget):
         self._refresh_background_tiles()
         if self._image_source is not None and not self._image_source.isNull():
             self._refresh_image_display()
+        self._position_flipbook_controls()
 
     def wheelEvent(self, event: QWheelEvent) -> None:
         delta = event.angleDelta().y()
@@ -335,6 +362,119 @@ class PreviewWidget(GlbPreviewMixin, QWidget):
             self._model_distance = 90.0
             self._view.setCameraPosition(distance=90.0, elevation=30, azimuth=45)
             self._view.update()
+
+    def _update_flipbook_controls(
+        self,
+        clips: list[dict],
+        playback_options: list[dict] | None = None,
+        *,
+        autoplay: bool = False,
+    ) -> None:
+        self._flipbook_clips = list(clips)
+        self._flipbook_playback_options = list(playback_options or [])
+        self._flipbook_play_btn.blockSignals(True)
+        self._flipbook_play_btn.setChecked(False)
+        self._flipbook_play_btn.setText("▶")
+        self._flipbook_play_btn.blockSignals(False)
+
+        self._flipbook_state_combo.blockSignals(True)
+        self._flipbook_state_combo.clear()
+        if len(self._flipbook_playback_options) > 1:
+            for option in self._flipbook_playback_options:
+                self._flipbook_state_combo.addItem(option.get("label") or option.get("state") or "", option)
+            self._flipbook_state_combo.show()
+        else:
+            self._flipbook_state_combo.hide()
+        self._flipbook_state_combo.blockSignals(False)
+
+        if clips:
+            self._flipbook_controls.show()
+            self._position_flipbook_controls()
+            if autoplay and clips:
+                self._flipbook_play_btn.blockSignals(True)
+                self._flipbook_play_btn.setChecked(True)
+                self._flipbook_play_btn.setText("⏸")
+                self._flipbook_play_btn.blockSignals(False)
+                self._start_selected_flipbook()
+        else:
+            self._flipbook_controls.hide()
+            if self._web_view is not None and self._web_view.is_available():
+                self._web_view.pause_flipbook()
+
+    def _selected_flipbook_playback(self) -> list[dict]:
+        if not self._flipbook_clips:
+            return []
+        if len(self._flipbook_playback_options) <= 1:
+            return self._flipbook_clips
+        option = self._flipbook_state_combo.currentData()
+        if not isinstance(option, dict):
+            return self._flipbook_clips
+        material = str(option.get("material") or "")
+        state = str(option.get("state") or "")
+        matched = [
+            clip
+            for clip in self._flipbook_clips
+            if clip.get("material") == material and clip.get("state") == state
+        ]
+        return matched or self._flipbook_clips
+
+    @staticmethod
+    def _flipbook_clip_is_static(clip: dict) -> bool:
+        if clip.get("animate") is False:
+            return True
+        return len(clip.get("frameUrls") or []) < 2
+
+    def _selected_flipbook_is_static(self) -> bool:
+        clips = self._selected_flipbook_playback()
+        return bool(clips) and all(self._flipbook_clip_is_static(clip) for clip in clips)
+
+    def _reset_flipbook_play_button(self) -> None:
+        self._flipbook_play_btn.blockSignals(True)
+        self._flipbook_play_btn.setChecked(False)
+        self._flipbook_play_btn.setText("▶")
+        self._flipbook_play_btn.blockSignals(False)
+
+    def _start_selected_flipbook(self) -> None:
+        if self._web_view is None or not self._web_view.is_available():
+            return
+        from .texture_clips import clips_to_json
+
+        clips = self._selected_flipbook_playback()
+        if not clips:
+            return
+        self._web_view.start_flipbook(clips_to_json(clips))
+        if self._selected_flipbook_is_static():
+            self._reset_flipbook_play_button()
+
+    def _on_flipbook_state_changed(self, _index: int) -> None:
+        clips = self._selected_flipbook_playback()
+        if not clips:
+            return
+        if self._selected_flipbook_is_static() or self._flipbook_play_btn.isChecked():
+            self._start_selected_flipbook()
+
+    def _on_flipbook_play_toggled(self, playing: bool) -> None:
+        if self._web_view is None or not self._web_view.is_available():
+            return
+        if playing:
+            if not self._selected_flipbook_playback():
+                self._reset_flipbook_play_button()
+                return
+            if self._selected_flipbook_is_static():
+                self._start_selected_flipbook()
+                return
+            self._flipbook_play_btn.setText("⏸")
+            self._start_selected_flipbook()
+        else:
+            self._flipbook_play_btn.setText("▶")
+            self._web_view.pause_flipbook()
+
+    def _position_flipbook_controls(self) -> None:
+        margin = 8
+        self._flipbook_controls.adjustSize()
+        width = self._flipbook_controls.width()
+        self._flipbook_controls.move(max(0, self._canvas.width() - width - margin), margin)
+        self._flipbook_controls.raise_()
 
     def set_wireframe(self, enabled: bool) -> None:
         self._wireframe = enabled

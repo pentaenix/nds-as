@@ -65,7 +65,12 @@
     import * as THREE from 'three';
     import { GLTFLoader } from './vendor/three/addons/loaders/GLTFLoader.js';
     import { RoomEnvironment } from './vendor/three/addons/environments/RoomEnvironment.js';
-    import { applyRaeMaterialPolicy } from './rae-material-policy.js';
+    import {
+      applyRaeMaterialPolicy,
+      applyMaterialPolicy,
+      captureMaterialPolicy,
+      scheduleMaterialPolicyWhenMapReady,
+    } from './rae-material-policy.js';
 
     const BG = {
       Checkered: null,
@@ -83,6 +88,11 @@
     let currentUrl = '';
     let currentBg = 'Checkered';
     let orbitExtent = 1;
+    const materialsByName = {};
+    const textureCache = new Map();
+    let flipbookTracks = [];
+    let flipbookPlaying = false;
+    let flipbookLastTick = 0;
 
     function showError(msg) {
       const el = document.getElementById('error');
@@ -107,6 +117,32 @@
         const color = BG[currentBg];
         scene.background = color === null ? null : new THREE.Color(color);
       }
+    }
+
+    function promoteToUnlitPreviewMaterial(mat) {
+      if (!mat || mat.isMeshBasicMaterial) return mat;
+      const basic = new THREE.MeshBasicMaterial({
+        map: mat.map,
+        transparent: mat.transparent,
+        opacity: mat.opacity,
+        alphaTest: mat.alphaTest || 0,
+        side: mat.side,
+        depthWrite: mat.depthWrite,
+        depthTest: mat.depthTest !== false,
+      });
+      basic.userData = { ...mat.userData };
+      return basic;
+    }
+
+    function applyUnlitPreviewMaterials(root) {
+      root.traverse((obj) => {
+        if (!obj.isMesh || !obj.material) return;
+        if (Array.isArray(obj.material)) {
+          obj.material = obj.material.map(promoteToUnlitPreviewMaterial);
+        } else {
+          obj.material = promoteToUnlitPreviewMaterial(obj.material);
+        }
+      });
     }
 
     function applyStudioLighting(targetScene, r) {
@@ -180,6 +216,8 @@
 
     function clearSceneGraph() {
       if (!pivot) return;
+      for (const key of Object.keys(materialsByName)) delete materialsByName[key];
+      textureCache.clear();
       while (pivot.children.length) {
         const child = pivot.children[0];
         pivot.remove(child);
@@ -187,6 +225,131 @@
       }
       currentUrl = '';
       orbitExtent = 1;
+    }
+
+    function rebuildMaterialIndex(model, gltf) {
+      for (const key of Object.keys(materialsByName)) delete materialsByName[key];
+      model.traverse((obj) => {
+        if (!obj.isMesh || !obj.material) return;
+        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+        for (const mat of mats) {
+          const assoc = gltf.parser.associations.get(mat);
+          const matIndex = assoc?.materials;
+          if (!Number.isInteger(matIndex)) continue;
+          const src = gltf.parser.json.materials?.[matIndex];
+          const name = src?.name || `material_${matIndex}`;
+          if (!mat.userData.raePolicy) captureMaterialPolicy(mat, src || null);
+          scheduleMaterialPolicyWhenMapReady(mat);
+          materialsByName[name] = mat;
+          materialsByName[String(name).toLowerCase()] = mat;
+        }
+      });
+    }
+
+    function findMaterial(name) {
+      if (!name) return null;
+      return materialsByName[name] || materialsByName[String(name).toLowerCase()] || null;
+    }
+
+    function prepareExternalTexture(tex, referenceMap) {
+      tex.flipY = false;
+      if ('colorSpace' in tex) tex.colorSpace = THREE.SRGBColorSpace;
+      if (referenceMap) {
+        tex.wrapS = referenceMap.wrapS;
+        tex.wrapT = referenceMap.wrapT;
+        tex.magFilter = referenceMap.magFilter;
+        tex.minFilter = referenceMap.minFilter;
+        tex.generateMipmaps = referenceMap.generateMipmaps;
+        if (referenceMap.repeat) tex.repeat.copy(referenceMap.repeat);
+        if (referenceMap.offset) tex.offset.copy(referenceMap.offset);
+      } else {
+        tex.magFilter = THREE.NearestFilter;
+        tex.minFilter = THREE.NearestFilter;
+        tex.generateMipmaps = false;
+      }
+      tex.needsUpdate = true;
+      return tex;
+    }
+
+    async function loadCachedTexture(url, referenceMap) {
+      if (!url) return null;
+      const cached = textureCache.get(url);
+      if (cached) return cached;
+      const loader = new THREE.TextureLoader();
+      const tex = await loader.loadAsync(url).catch(() => null);
+      if (!tex) return null;
+      prepareExternalTexture(tex, referenceMap);
+      textureCache.set(url, tex);
+      return tex;
+    }
+
+    function pauseFlipbook() {
+      flipbookPlaying = false;
+      flipbookTracks = [];
+      flipbookLastTick = 0;
+    }
+
+    async function startFlipbook(clips) {
+      pauseFlipbook();
+      if (!clips?.length || !pivot?.children.length) return { tracks: 0 };
+      const tracks = [];
+      for (const clip of clips) {
+        const mat = findMaterial(clip.material);
+        if (!mat || !clip.frameUrls?.length) continue;
+        const frames = [];
+        for (const url of clip.frameUrls) {
+          const tex = await loadCachedTexture(url, mat.map);
+          if (tex) frames.push(tex);
+        }
+        if (frames.length < 1) continue;
+        if (frames.length < 2 || clip.animate === false) {
+          mat.map = frames[0];
+          applyMaterialPolicy(mat);
+          continue;
+        }
+        mat.map = frames[0];
+        applyMaterialPolicy(mat);
+        tracks.push({
+          material: clip.material,
+          frames,
+          index: 0,
+          elapsed: 0,
+          durationMs: Math.max(16, clip.frameDurationMs || 150),
+          loop: clip.loop !== false,
+        });
+      }
+      if (!tracks.length) return { tracks: 0 };
+      flipbookTracks = tracks;
+      flipbookPlaying = true;
+      flipbookLastTick = performance.now();
+      return { tracks: tracks.length };
+    }
+
+    function advanceFlipbook(now) {
+      if (!flipbookPlaying || !flipbookTracks.length) return;
+      const dt = flipbookLastTick ? now - flipbookLastTick : 0;
+      flipbookLastTick = now;
+      for (const track of flipbookTracks) {
+        const mat = findMaterial(track.material);
+        if (!mat || track.frames.length < 2) continue;
+        track.elapsed += dt;
+        while (track.elapsed >= track.durationMs) {
+          track.elapsed -= track.durationMs;
+          const next = track.index + 1;
+          if (next >= track.frames.length) {
+            if (!track.loop) {
+              track.index = track.frames.length - 1;
+              track.elapsed = 0;
+              break;
+            }
+            track.index = 0;
+          } else {
+            track.index = next;
+          }
+          mat.map = track.frames[track.index];
+          applyMaterialPolicy(mat);
+        }
+      }
     }
 
     function ensureRenderer() {
@@ -247,6 +410,7 @@
         if (pivot.children.length) {
           fitCamera(window.innerWidth, window.innerHeight);
         }
+        advanceFlipbook(performance.now());
         renderer.render(scene, camera);
       };
       loop();
@@ -256,6 +420,7 @@
       clearError();
       ensureRenderer();
       if (currentUrl === url && pivot.children.length) return;
+      pauseFlipbook();
       clearSceneGraph();
       currentUrl = url;
       const loader = new GLTFLoader();
@@ -269,9 +434,12 @@
           const matIndex = assoc?.materials;
           const src = Number.isInteger(matIndex) ? gltf.parser.json.materials?.[matIndex] : null;
           if (src?.extras) mat.userData.gltfExtensions = { extras: src.extras };
+          captureMaterialPolicy(mat, src);
+          scheduleMaterialPolicyWhenMapReady(mat);
         }
       });
       applyRaeMaterialPolicy(model);
+      applyUnlitPreviewMaterials(model);
       model.traverse((obj) => {
         if (obj.isSkinnedMesh) {
           obj.frustumCulled = false;
@@ -283,6 +451,7 @@
       pivot.add(model);
       centerModelAtOrigin(model);
       fitCamera(window.innerWidth, window.innerHeight);
+      rebuildMaterialIndex(model, gltf);
     }
 
     window.raeGlbPreview = {
@@ -304,6 +473,7 @@
         });
       },
       clearScene() {
+        pauseFlipbook();
         clearSceneGraph();
         clearError();
       },
@@ -314,6 +484,15 @@
         if (pivot?.children.length) {
           fitCamera(window.innerWidth, window.innerHeight);
         }
+      },
+      startFlipbook(clips) {
+        return startFlipbook(clips);
+      },
+      pauseFlipbook() {
+        pauseFlipbook();
+      },
+      hasFlipbook() {
+        return flipbookTracks.length > 0;
       },
     };
   </script>

@@ -253,6 +253,11 @@ class DetailsMixin:
             saved = len(self._texture_assignments.get(asset.asset_id, {}))
             if saved:
                 lines.append(f"  Manual texture assignments saved in session: {saved} part(s)")
+            if hasattr(self, "_texture_sequence_summary"):
+                seq_summary = self._texture_sequence_summary(asset)
+                if seq_summary:
+                    lines.append(f"  {seq_summary}")
+                    lines.append("  Use Animation States and ▶ in the viewport for flipbook playback.")
         elif asset.magic in {"RGCN", "RLCN", "RCSN", "RECN", "RNAN"}:
             lines.append("")
             lines.append("Sprite/tile status")

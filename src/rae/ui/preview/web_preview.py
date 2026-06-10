@@ -78,7 +78,8 @@ class WebGlbPreviewWidget(QWidget):
         self._last_glb_path = path.resolve()
         url = self._server.model_url(self._last_glb_path)
         self._run_when_api_ready(
-            f"window.raeGlbPreview.clearScene(); window.raeGlbPreview.load({_js_string(url)});"
+            f"window.raeGlbPreview.load({_js_string(url)}).catch(function(err){{"
+            f"var el=document.getElementById('error');if(el){{el.textContent=String(err);el.style.display='block';}}}});"
         )
 
     def set_background_name(self, name: str) -> None:
@@ -97,6 +98,16 @@ class WebGlbPreviewWidget(QWidget):
         if not self._available:
             return
         self._run_when_api_ready("window.raeGlbPreview.resetView();")
+
+    def start_flipbook(self, clips_json: str) -> None:
+        if not self._available:
+            return
+        self._run_when_api_ready(f"window.raeGlbPreview.startFlipbook({clips_json});")
+
+    def pause_flipbook(self) -> None:
+        if not self._available:
+            return
+        self._run_when_api_ready("window.raeGlbPreview.pauseFlipbook();")
 
     def clear_scene(self) -> None:
         """Drop the current model without reloading the viewer page."""
