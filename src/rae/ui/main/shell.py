@@ -127,6 +127,7 @@ class ShellMixin:
         self._texture_preview_switch_to_details = False
         self._init_texture_assigner_state()
         self._init_texture_animation_state()
+        self._init_texture_sheet_state()
         self._name_cache: dict[str, set[str]] = {}
         self._display_name_cache: dict[str, str] = {}
         self.current_mapping = None
@@ -229,7 +230,7 @@ class ShellMixin:
         filter_layout.addWidget(self.show_types_button)
 
         self.filter_box = QLineEdit()
-        self.filter_box.setPlaceholderText("Search — path:a/2/3/3, boat | dock, magic:BMD0")
+        self.filter_box.setPlaceholderText("Search — princess, path:a/0/8/1, magic:BTX0, cat:textures")
         self.filter_box.textChanged.connect(self._schedule_apply_filter)
         filter_layout.addWidget(self.filter_box, stretch=1)
 
@@ -351,9 +352,12 @@ class ShellMixin:
 
         from ..preview.animation_states import AnimationStatesWidget
         from ..preview.texture_assigner import TextureAssignerWidget
+        from ..preview.texture_sheet import TextureSheetWidget
 
         self.texture_assigner = TextureAssignerWidget()
         self.texture_assigner.assignments_changed.connect(self._on_texture_assignments_changed)
+        self.texture_sheet = TextureSheetWidget()
+        self.texture_sheet.entry_selected.connect(self._on_texture_sheet_entry_selected)
         self.animation_states = AnimationStatesWidget()
         self.animation_states.preview_state_changed.connect(self._on_texture_state_changed)
         self.animation_states.spec_changed.connect(self._on_animation_spec_changed)
@@ -365,10 +369,14 @@ class ShellMixin:
         self._animation_states_scroll.setWidget(self.animation_states)
 
         self.preview_inspector_tabs = QTabWidget()
-        self.preview_inspector_tabs.addTab(self.preview_details, "Preview")
-        self.preview_inspector_tabs.addTab(self.texture_assigner, "Texture Assigner")
-        self.preview_inspector_tabs.addTab(self._animation_states_scroll, "Animation States")
-        self.preview_inspector_tabs.setCurrentIndex(0)
+        self._inspector_tab_preview = self.preview_inspector_tabs.addTab(self.preview_details, "Preview")
+        self._inspector_tab_assigner = self.preview_inspector_tabs.addTab(self.texture_assigner, "Texture Assigner")
+        self._inspector_tab_sheet = self.preview_inspector_tabs.addTab(self.texture_sheet, "Texture Sheet")
+        self._inspector_tab_animation = self.preview_inspector_tabs.addTab(self._animation_states_scroll, "Animation States")
+        self.preview_inspector_tabs.setTabVisible(self._inspector_tab_assigner, False)
+        self.preview_inspector_tabs.setTabVisible(self._inspector_tab_sheet, False)
+        self.preview_inspector_tabs.setTabVisible(self._inspector_tab_animation, False)
+        self.preview_inspector_tabs.setCurrentIndex(self._inspector_tab_preview)
         self.preview_inspector_tabs.setMinimumHeight(140)
 
         self.reset_view_button = QPushButton("Reset View")

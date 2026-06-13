@@ -12,6 +12,7 @@ from typing import Any
 from .format import (
     ASSET_TAGS_PATH,
     ASSETS_PATH,
+    BUCKET_LOOKUP_PATH,
     BUILD_INFO_PATH,
     BUILD_LOG_PATH,
     COLOR_INDEX_PATH,
@@ -42,7 +43,7 @@ from .models import (
     EasyFindPreviewRef,
     EasyFindQuickOpen,
 )
-from .validation import EasyFindCorruptError, EasyFindError
+from .validation import EasyFindCorruptError, EasyFindError, EasyFindValidationError
 
 Progress = Callable[[str], None]
 
@@ -151,6 +152,13 @@ def _write_document_to_zip(
         COLOR_INDEX_PATH,
         "".join(dumps_jsonl_line(s.to_dict()) for s in color_sigs),
     )
+
+    if not document.bucket_lookup:
+        raise EasyFindValidationError(
+            "Cannot save EasyFind without bucket_lookup tables. "
+            "Run a full preview build before saving."
+        )
+    zf.writestr(BUCKET_LOOKUP_PATH, dumps_json(document.bucket_lookup))
 
     if progress:
         progress("Writing preview index…")
@@ -305,6 +313,17 @@ def load_easyfind(path: str | Path) -> EasyFindDocument:
                 for r in parse_jsonl(zf.read(COLOR_INDEX_PATH).decode("utf-8"))
             ]
 
+            if BUCKET_LOOKUP_PATH not in zf.namelist():
+                raise EasyFindCorruptError(
+                    f"EasyFind file is missing required file: {BUCKET_LOOKUP_PATH}"
+                )
+            bucket_raw = loads_json(zf.read(BUCKET_LOOKUP_PATH).decode("utf-8"))
+            if not isinstance(bucket_raw, dict):
+                raise EasyFindCorruptError(
+                    f"Invalid JSON object in {BUCKET_LOOKUP_PATH}"
+                )
+            bucket_lookup = bucket_raw
+
             previews_raw = loads_json(zf.read(PREVIEWS_INDEX_PATH).decode("utf-8"))
             if isinstance(previews_raw, dict):
                 preview_refs = [
@@ -341,33 +360,80 @@ def load_easyfind(path: str | Path) -> EasyFindDocument:
         preview_refs=preview_refs,
         build_info=build_info,
         build_log=build_log,
+        bucket_lookup=bucket_lookup,
     )
+
+
+def _preview_blob_paths(zf: zipfile.ZipFile) -> dict[str, str]:
+    previews_raw = loads_json(zf.read(PREVIEWS_INDEX_PATH).decode("utf-8"))
+    if isinstance(previews_raw, dict):
+        preview_list = previews_raw.get("previews", [])
+    else:
+        preview_list = previews_raw
+    paths: dict[str, str] = {}
+    for preview in preview_list:
+        if not isinstance(preview, dict):
+            continue
+        preview_id = str(preview.get("preview_id", ""))
+        blob_path = str(preview.get("blob_path", ""))
+        if preview_id and blob_path:
+            paths[preview_id] = blob_path
+    return paths
+
+
+def read_all_preview_blobs(path: str | Path) -> dict[str, bytes]:
+    """Load every preview blob from an EasyFind archive keyed by blob path."""
+    source = Path(path)
+    blobs: dict[str, bytes] = {}
+    with zipfile.ZipFile(source, "r") as zf:
+        blob_paths = _preview_blob_paths(zf)
+        for preview_id, blob_path in blob_paths.items():
+            if blob_path not in zf.namelist():
+                continue
+            data = zf.read(blob_path)
+            blobs[blob_path] = data
+            blobs[preview_id] = data
+    return blobs
+
+
+class EasyFindPreviewReader:
+    """Read many preview blobs from one EasyFind zip without reopening per tile."""
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self._zf: zipfile.ZipFile | None = None
+        self._blob_paths: dict[str, str] = {}
+
+    def __enter__(self) -> EasyFindPreviewReader:
+        self._zf = zipfile.ZipFile(self.path, "r")
+        self._blob_paths = _preview_blob_paths(self._zf)
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if self._zf is not None:
+            self._zf.close()
+        self._zf = None
+        self._blob_paths = {}
+
+    def read(self, preview_id: str) -> bytes:
+        if self._zf is None:
+            raise EasyFindError("EasyFindPreviewReader is not open")
+        blob_path = self._blob_paths.get(preview_id)
+        if blob_path is None:
+            raise EasyFindError(f"Unknown preview ID: {preview_id}")
+        if blob_path not in self._zf.namelist():
+            raise EasyFindCorruptError(
+                f"Preview blob missing for preview_id={preview_id}"
+            )
+        return self._zf.read(blob_path)
 
 
 def read_easyfind_preview(path: str | Path, preview_id: str) -> bytes:
     """Read one preview blob by preview ID."""
     source = Path(path)
     try:
-        with zipfile.ZipFile(source, "r") as zf:
-            previews_raw = loads_json(zf.read(PREVIEWS_INDEX_PATH).decode("utf-8"))
-            if isinstance(previews_raw, dict):
-                preview_list = previews_raw.get("previews", [])
-            else:
-                preview_list = previews_raw
-
-            blob_path = None
-            for preview in preview_list:
-                if str(preview.get("preview_id")) == preview_id:
-                    blob_path = str(preview.get("blob_path", ""))
-                    break
-
-            if blob_path is None:
-                raise EasyFindError(f"Unknown preview ID: {preview_id}")
-            if blob_path not in zf.namelist():
-                raise EasyFindCorruptError(
-                    f"Preview blob missing for preview_id={preview_id}"
-                )
-            return zf.read(blob_path)
+        with EasyFindPreviewReader(source) as reader:
+            return reader.read(preview_id)
     except EasyFindError:
         raise
     except Exception as exc:

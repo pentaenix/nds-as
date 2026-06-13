@@ -486,12 +486,15 @@ class EasyFindDocument:
     preview_refs: list[EasyFindPreviewRef]
     build_info: dict[str, object]
     build_log: str
+    # Precomputed bucket membership written to signatures/bucket_lookup.json at save time.
+    bucket_lookup: dict[str, object] | None = None
 
 
 def default_capabilities() -> dict[str, bool]:
     return {
         "contains_previews": True,
         "contains_color_signatures": True,
+        "contains_bucket_lookup": True,
         "contains_layout": True,
         "contains_annotations": True,
     }

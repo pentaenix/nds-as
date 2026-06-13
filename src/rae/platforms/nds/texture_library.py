@@ -4,8 +4,14 @@ import hashlib
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Iterable
 
+from ...texture_index.store import (
+    TextureIndexContext,
+    load_texture_index_cache,
+    save_texture_index_cache,
+)
 from .scanner import Asset
 from .nitro_textures import (
     DecodedImage,
@@ -150,8 +156,28 @@ class TextureLibrary:
         manifest_cache: dict[str, Tex0Info | None] | None = None,
     ) -> "TextureLibrary":
         cache = manifest_cache if manifest_cache is not None else {}
-        texture_assets = [a for a in assets if a.magic in {"BTX0", "BMD0"}]
+        texture_assets = [
+            a for a in assets
+            if a.magic in {"BTX0", "BMD0"} and not getattr(a, "is_texture_slot", False)
+        ]
         manifests = _index_texture_manifests(texture_assets, progress=progress, manifest_cache=cache)
+        assets_by_id = {
+            asset.asset_id: asset
+            for asset in texture_assets
+            if asset.asset_id in manifests
+        }
+        return cls(assets_by_id, manifests)
+
+    @classmethod
+    def from_manifests(
+        cls,
+        assets: Iterable[Asset],
+        manifests: dict[str, Tex0Info],
+    ) -> "TextureLibrary":
+        texture_assets = [
+            a for a in assets
+            if a.magic in {"BTX0", "BMD0"} and not getattr(a, "is_texture_slot", False)
+        ]
         assets_by_id = {
             asset.asset_id: asset
             for asset in texture_assets
@@ -279,7 +305,10 @@ class TextureLibrary:
 def texture_library_fingerprint(assets: Iterable[Asset]) -> tuple[int, str]:
     """Stable session key for the ROM's BTX0/BMD0 texture dictionary set."""
     texture_assets = sorted(
-        (a for a in assets if a.magic in {"BTX0", "BMD0"}),
+        (
+            a for a in assets
+            if a.magic in {"BTX0", "BMD0"} and not getattr(a, "is_texture_slot", False)
+        ),
         key=lambda asset: asset.asset_id,
     )
     digest = hashlib.sha1()
@@ -294,19 +323,36 @@ _MANIFEST_CACHE_VERSION = 2
 
 
 class TextureLibraryStore:
-    """Session-scoped cache for parsed NSBTX manifests and exact-match lookups."""
+    """Session and disk cache for parsed NSBTX manifests and exact-match lookups."""
 
     def __init__(self) -> None:
         self.library: TextureLibrary | None = None
         self._fingerprint: tuple[int, str] | None = None
         self._manifest_cache_version = 0
         self._manifest_cache: dict[str, Tex0Info | None] = {}
+        self._context = TextureIndexContext()
 
     def clear(self) -> None:
         self.library = None
         self._fingerprint = None
         self._manifest_cache_version = 0
         self._manifest_cache.clear()
+        self._context = TextureIndexContext()
+
+    def set_context(
+        self,
+        *,
+        game_code: str = "",
+        rom_path: str | None = None,
+        scan_mode: str = "fast",
+        cache_root: Path | None = None,
+    ) -> None:
+        self._context = TextureIndexContext(
+            game_code=game_code,
+            rom_path=rom_path,
+            scan_mode=scan_mode,
+            cache_root=cache_root,
+        )
 
     def fingerprint(self, assets: Iterable[Asset]) -> tuple[int, str]:
         return texture_library_fingerprint(assets)
@@ -323,10 +369,32 @@ class TextureLibraryStore:
             self._fingerprint = None
         if self.library is not None and self._fingerprint == fp:
             return self.library
+
+        cached_manifests = load_texture_index_cache(
+            self._context,
+            assets,
+            manifest_cache_version=_MANIFEST_CACHE_VERSION,
+            progress=progress,
+            root=self._context.cache_root,
+        )
+        if cached_manifests is not None:
+            for asset_id, manifest in cached_manifests.items():
+                self._manifest_cache[asset_id] = manifest
+            self.library = TextureLibrary.from_manifests(assets, cached_manifests)
+            self._fingerprint = fp
+            return self.library
+
         self.library = TextureLibrary.from_assets(
             assets,
             progress=progress,
             manifest_cache=self._manifest_cache,
         )
         self._fingerprint = fp
+        save_texture_index_cache(
+            self._context,
+            assets,
+            self.library.manifests,
+            manifest_cache_version=_MANIFEST_CACHE_VERSION,
+            root=self._context.cache_root,
+        )
         return self.library

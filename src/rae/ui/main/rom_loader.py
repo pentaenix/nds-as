@@ -69,6 +69,7 @@ from ...nitro_names import asset_browser_name, asset_filename_label, extract_nit
 from ...nitro_textures import decode_btx_images, decode_guided_tex0_images, make_contact_sheet, parse_tex0_manifest, save_decoded_images
 from ...profiles import detect_profile
 from ...scanner import Asset, asset_search_text, filter_assets, filter_assets_by_types, filter_assets_indexed, scan_nds_path
+from ...virtual_texture_assets import expand_btx0_texture_slots
 from ...session import load_session_zip, save_session_zip
 from ...texture_library import TextureLibrary, TextureLibraryStore
 from ...util import human_size
@@ -184,8 +185,9 @@ class RomLoaderMixin:
         self.worker.start()
 
     def _scan_finished(self, assets: list[Asset]) -> None:
-        self.assets = assets
-        self.assets_by_id = {a.asset_id: a for a in assets}
+        self.assets = expand_btx0_texture_slots(assets)
+        self.assets_by_id = {a.asset_id: a for a in self.assets}
+        self._load_profile_summary()
         self._focus_terminal(banner=f"ROM scan complete: {len(assets):,} asset(s) found. Starting texture dictionary index before you preview models…")
         self._warm_texture_library_async()
         self._rebuild_asset_filter_indexes()
@@ -196,7 +198,6 @@ class RomLoaderMixin:
         tile_count = sum(1 for a in assets if a.magic in {"RGCN", "RLCN", "RCSN", "RECN", "RNAN", "NFTR"})
         png_count = sum(1 for a in assets if a.magic == "PNG")
         audio_count = sum(1 for a in assets if a.magic in {"SDAT", "SSEQ", "SSAR", "SBNK", "SWAR", "SWAV", "STRM"})
-        self._load_profile_summary()
         self._populate_search_presets()
         mode = "deep" if self.deep_scan_action.isChecked() else "fast"
         summary = self._session_overview_text(

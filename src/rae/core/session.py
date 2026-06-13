@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Callable
 
 from ..scanner import Asset
+from ..virtual_texture_assets import physical_assets
 
 Progress = Callable[[str], None]
 
@@ -45,12 +46,13 @@ def save_session_zip(
         target = target.with_suffix(".raesession")
     target.parent.mkdir(parents=True, exist_ok=True)
 
+    stored_assets = physical_assets(assets)
     manifest_assets = []
-    total = len(assets)
+    total = len(stored_assets)
     if progress:
         progress(f"Saving RAE session with {total} asset(s): {target}")
     with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
-        for idx, asset in enumerate(assets, start=1):
+        for idx, asset in enumerate(stored_assets, start=1):
             if progress and (idx == 1 or idx % 250 == 0 or idx == total):
                 progress(f"Session save {idx}/{total}: {asset.virtual_path}")
             data_name = _safe_name(asset, ".bin")

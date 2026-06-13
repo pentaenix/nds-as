@@ -11,6 +11,7 @@ from .format import (
     ASSETS_PATH,
     BUILD_INFO_PATH,
     BUILD_LOG_PATH,
+    BUCKET_LOOKUP_PATH,
     COLOR_INDEX_PATH,
     EASYFIND_FORMAT,
     EASYFIND_SCHEMA_VERSION,
@@ -48,7 +49,11 @@ class EasyFindValidationError(EasyFindError):
     """Raised when validation fails."""
 
 
-def validate_easyfind(path: str | Path) -> EasyFindValidationReport:
+def validate_easyfind(
+    path: str | Path,
+    *,
+    verify_preview_hashes: bool = True,
+) -> EasyFindValidationReport:
     """Validate structure, schema, JSON, references, counts, and preview hashes."""
     source = Path(path)
     errors: list[str] = []
@@ -107,6 +112,7 @@ def validate_easyfind(path: str | Path) -> EasyFindValidationReport:
             ASSET_TAGS_PATH,
             MANUAL_MERGES_PATH,
             NOTES_PATH,
+            BUCKET_LOOKUP_PATH,
             PREVIEWS_INDEX_PATH,
             BUILD_INFO_PATH,
         ]
@@ -213,6 +219,19 @@ def validate_easyfind(path: str | Path) -> EasyFindValidationReport:
                     f"references missing node: {sig_node}"
                 )
 
+        bucket_lookup_raw = parsed_json.get(BUCKET_LOOKUP_PATH)
+        if BUCKET_LOOKUP_PATH not in names:
+            errors.append(f"Missing required file: {BUCKET_LOOKUP_PATH}")
+        elif not isinstance(bucket_lookup_raw, dict):
+            errors.append(f"Invalid JSON object in {BUCKET_LOOKUP_PATH}")
+        else:
+            from .node_index import validate_bucket_lookup
+
+            counts["bucket_lookup_version"] = int(
+                bucket_lookup_raw.get("version", 0) or 0
+            )
+            errors.extend(validate_bucket_lookup(bucket_lookup_raw, node_ids))
+
         for tag in asset_tags:
             if not isinstance(tag, dict):
                 continue
@@ -250,6 +269,8 @@ def validate_easyfind(path: str | Path) -> EasyFindValidationReport:
                 )
             if blob_path not in names:
                 errors.append(f"Missing preview blob for preview_id={preview_id}")
+                continue
+            if not verify_preview_hashes:
                 continue
             blob_bytes = zf.read(blob_path)
             actual_hash = hashlib.sha256(blob_bytes).hexdigest()

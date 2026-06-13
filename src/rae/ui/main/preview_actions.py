@@ -111,6 +111,9 @@ class PreviewActionsMixin:
             self.convert_preview_selected(manual=manual, force=force)
             return
         if asset.magic == "BTX0":
+            if getattr(asset, "is_texture_slot", False) and asset.texture_slot:
+                self._preview_btx0_texture(asset, asset.texture_slot)
+                return
             texture_name = self._selected_btx0_texture_name or self._preview_btx0_texture_name(asset)
             if texture_name:
                 self._preview_btx0_texture(asset, texture_name)
@@ -237,18 +240,41 @@ class PreviewActionsMixin:
                 return False
         return True
 
-    def _image_preview_finished(self, request_id: int, asset_id: str, path: str, caption: str) -> None:
+    def _image_preview_finished(
+        self,
+        request_id: int,
+        asset_id: str,
+        path: str,
+        caption: str,
+        sheet_entries: list | None = None,
+    ) -> None:
         if not self._image_preview_still_current(request_id, asset_id):
             self._update_status("Preview decode finished for a previously selected row.")
             return
+        entries = list(sheet_entries or [])
+        if hasattr(self, "_set_sheet_preview") and len(entries) >= 2:
+            self._set_sheet_preview(asset_id, entries)
+        elif hasattr(self, "_clear_sheet_preview"):
+            self._clear_sheet_preview()
         self.preview.show_image_path(Path(path), caption)
         self._update_status(f"Preview decoded: {Path(path).name}")
+        asset = self.assets_by_id.get(asset_id)
+        if hasattr(self, "_sync_preview_inspector_tabs"):
+            self._sync_preview_inspector_tabs(asset)
+        elif hasattr(self, "_update_preview_inspector_visibility"):
+            self._update_preview_inspector_visibility(asset)
 
     def _image_preview_failed(self, request_id: int, asset_id: str, message: str) -> None:
         if not self._image_preview_still_current(request_id, asset_id):
             self._update_status(f"Preview decode failed for a previously selected row: {message}")
             return
+        if hasattr(self, "_clear_sheet_preview"):
+            self._clear_sheet_preview()
         current = self.selected_asset()
+        if hasattr(self, "_sync_preview_inspector_tabs"):
+            self._sync_preview_inspector_tabs(current)
+        elif hasattr(self, "_update_preview_inspector_visibility"):
+            self._update_preview_inspector_visibility(current)
         if current and current.magic == "BTX0" and self._selected_btx0_texture_name:
             self.preview.show_message(
                 f"Could not decode texture '{self._selected_btx0_texture_name}' from:\n{current.virtual_path}\n\n"

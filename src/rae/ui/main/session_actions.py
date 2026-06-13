@@ -68,6 +68,7 @@ from ...nitro_names import asset_browser_name, asset_filename_label, extract_nit
 from ...nitro_textures import decode_btx_images, decode_guided_tex0_images, make_contact_sheet, parse_tex0_manifest, save_decoded_images
 from ...profiles import detect_profile
 from ...scanner import Asset, asset_search_text, filter_assets, filter_assets_by_types, filter_assets_indexed, scan_nds_path
+from ...virtual_texture_assets import expand_btx0_texture_slots
 from ...session import load_session_zip, save_session_zip
 from ...texture_library import TextureLibrary, TextureLibraryStore
 from ...util import human_size
@@ -165,7 +166,7 @@ class SessionActionsMixin:
         self._clear_texture_caches()
         self.rom_path = None
         self.session_path = str(data.get("path", ""))
-        self.assets = list(data.get("assets", []))
+        self.assets = expand_btx0_texture_slots(list(data.get("assets", [])))
         self.assets_by_id = {a.asset_id: a for a in self.assets}
         manifest = data.get("manifest", {}) if isinstance(data.get("manifest"), dict) else {}
         self.profile_text = str(manifest.get("profile_text", ""))

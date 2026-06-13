@@ -133,8 +133,33 @@ class TextureAssignerPanelMixin:
             return False
         return getattr(self.preview, "_last_path", None) is not None
 
+    def _sync_preview_inspector_tabs(self, asset: Asset | None = None) -> None:
+        asset = asset or self.selected_asset()
+        tabs = getattr(self, "preview_inspector_tabs", None)
+        if tabs is None:
+            return
+
+        model_active = self._model_preview_is_active(asset) if asset else False
+        show_assigner = model_active
+        show_sheet = bool(hasattr(self, "_sheet_preview_is_active") and self._sheet_preview_is_active(asset))
+        show_animation = False
+        if model_active and asset is not None:
+            materials = self._material_sequence_spec(asset.asset_id)
+            show_animation = bool(materials)
+
+        tabs.setTabVisible(getattr(self, "_inspector_tab_preview", 0), True)
+        if hasattr(self, "_inspector_tab_assigner"):
+            tabs.setTabVisible(self._inspector_tab_assigner, show_assigner)
+        if hasattr(self, "_inspector_tab_sheet"):
+            tabs.setTabVisible(self._inspector_tab_sheet, show_sheet)
+        if hasattr(self, "_inspector_tab_animation"):
+            tabs.setTabVisible(self._inspector_tab_animation, show_animation)
+
+        if not tabs.isTabVisible(tabs.currentIndex()):
+            tabs.setCurrentIndex(getattr(self, "_inspector_tab_preview", 0))
+
     def _update_preview_inspector_visibility(self, asset: Asset | None = None) -> None:
-        """Refresh assigner when a model preview is active; keep Preview tab as default on model change."""
+        """Refresh inspector panels; show tabs only when relevant."""
         asset = asset or self.selected_asset()
         show_tools = self._model_preview_is_active(asset)
         if hasattr(self, "preview_pin_row"):
@@ -146,12 +171,17 @@ class TextureAssignerPanelMixin:
                 self.animation_states.set_context(asset_id=None, materials={})
             elif hasattr(self, "texture_states"):
                 self.texture_states.set_context(asset_id=None, materials={})
-            return
-        if hasattr(self, "preview_inspector_tabs") and asset is not None:
-            if getattr(self, "_last_inspector_asset_id", None) != asset.asset_id:
-                self.preview_inspector_tabs.setCurrentIndex(0)
-                self._last_inspector_asset_id = asset.asset_id
-        self._refresh_texture_assigner(asset)
+        elif asset is not None:
+            if hasattr(self, "preview_inspector_tabs"):
+                if getattr(self, "_last_inspector_asset_id", None) != asset.asset_id:
+                    self.preview_inspector_tabs.setCurrentIndex(getattr(self, "_inspector_tab_preview", 0))
+                    self._last_inspector_asset_id = asset.asset_id
+            self._refresh_texture_assigner(asset)
+            if hasattr(self, "_refresh_texture_states"):
+                self._refresh_texture_states(asset)
+        if hasattr(self, "_refresh_texture_sheet"):
+            self._refresh_texture_sheet(asset)
+        self._sync_preview_inspector_tabs(asset)
 
     def _ensure_estimated_assignments(self, asset_id: str) -> bool:
         """Seed manual assignments from automatic GLB/material matching if none saved."""
@@ -176,6 +206,8 @@ class TextureAssignerPanelMixin:
         material_to_texture: dict[str, str] | None = None,
         texture_bind_order: list[str] | None = None,
     ) -> None:
+        if hasattr(self, "_clear_sheet_preview"):
+            self._clear_sheet_preview()
         self.preview.load_glb(
             path,
             fallback_textures=fallback_textures,

@@ -128,7 +128,9 @@ class SelectionMixin:
         if isinstance(data, int) and 0 <= data < len(self.visible_assets):
             asset = self.visible_assets[data]
             self._selected_asset_id = asset.asset_id
-            if asset.magic == "BTX0":
+            if getattr(asset, "is_texture_slot", False) and asset.texture_slot:
+                self._selected_btx0_texture_name = asset.texture_slot
+            elif asset.magic == "BTX0":
                 self._selected_btx0_texture_name = self._preview_btx0_texture_name(asset)
             else:
                 self._selected_btx0_texture_name = None

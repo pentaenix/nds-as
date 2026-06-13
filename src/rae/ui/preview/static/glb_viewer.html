@@ -93,6 +93,7 @@
     let flipbookTracks = [];
     let flipbookPlaying = false;
     let flipbookLastTick = 0;
+    let snapshotMode = false;
 
     function showError(msg) {
       const el = document.getElementById('error');
@@ -407,13 +408,159 @@
       const loop = () => {
         animId = requestAnimationFrame(loop);
         if (!renderer || !scene || !camera) return;
-        if (pivot.children.length) {
+        if (!snapshotMode && pivot.children.length) {
           fitCamera(window.innerWidth, window.innerHeight);
         }
         advanceFlipbook(performance.now());
-        renderer.render(scene, camera);
+        if (!snapshotMode) {
+          renderer.render(scene, camera);
+        }
       };
       loop();
+    }
+
+    async function captureSnapshot(width, height, yaw, pitch, zoomFactor, options) {
+      ensureRenderer();
+      snapshotMode = true;
+      const opts = options || {};
+      try {
+        pauseFlipbook();
+        if (opts.opaqueGray) {
+          document.body.className = 'bg-black';
+          scene.background = new THREE.Color(0x3a3a3a);
+          renderer.setClearColor(0x3a3a3a, 1);
+        } else {
+          applyBackground(currentBg || 'Checkered');
+          scene.background = null;
+          renderer.setClearColor(0x000000, 0);
+        }
+        renderer.setPixelRatio(1);
+        renderer.setSize(width, height, false);
+        cam.yaw = yaw ?? 35;
+        cam.pitch = pitch ?? 28;
+        cam.zoomFactor = zoomFactor ?? 1;
+        if (pivot.children.length) {
+          fitCamera(width, height);
+        }
+        renderer.render(scene, camera);
+        return renderer.domElement.toDataURL('image/png');
+      } finally {
+        snapshotMode = false;
+        applyBackground(currentBg);
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        renderer.setPixelRatio(dpr);
+        renderer.setSize(w, h, false);
+        if (pivot.children.length) {
+          fitCamera(w, h);
+        }
+        renderer.render(scene, camera);
+      }
+    }
+
+    function waitForPreviewTextures(root) {
+      const waits = [];
+      root.traverse((obj) => {
+        if (!obj.isMesh || !obj.material) return;
+        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+        for (const mat of mats) {
+          const map = mat?.map;
+          if (!map) continue;
+          const img = map.image;
+          if (img && (img.complete || img.width)) continue;
+          waits.push(new Promise((resolve) => {
+            const done = () => {
+              map.needsUpdate = true;
+              resolve();
+            };
+            if (img?.addEventListener) {
+              img.addEventListener('load', done, { once: true });
+              img.addEventListener('error', done, { once: true });
+            } else {
+              resolve();
+            }
+          }));
+        }
+      });
+      return Promise.all(waits);
+    }
+
+    // Qt runJavaScript cannot return Promises — Python polls this object instead.
+    window.__raeSnapshotJob = { done: false, dataUrl: '', error: '' };
+
+    async function loadAndGrabVisible(url, yaw, pitch, zoomFactor) {
+      try {
+        await loadGlb(url);
+      } catch (err) {
+        if (!pivot?.children?.length) {
+          throw err;
+        }
+      }
+      if (!pivot?.children?.length) {
+        return '';
+      }
+      const model = pivot.children[0];
+      await waitForPreviewTextures(model);
+      applyRaeMaterialPolicy(model);
+      cam.yaw = yaw ?? 35;
+      cam.pitch = pitch ?? 28;
+      cam.zoomFactor = zoomFactor ?? 1;
+      const w = Math.max(1, window.innerWidth || 256);
+      const h = Math.max(1, window.innerHeight || 256);
+      fitCamera(w, h);
+      await new Promise((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      });
+      snapshotMode = true;
+      try {
+        renderer.render(scene, camera);
+        return renderer.domElement.toDataURL('image/png');
+      } finally {
+        snapshotMode = false;
+      }
+    }
+
+    function beginSnapshotCapture(url, yaw, pitch, zoomFactor) {
+      window.__raeSnapshotJob = { done: false, dataUrl: '', error: '' };
+      loadAndGrabVisible(url, yaw, pitch, zoomFactor)
+        .then((dataUrl) => {
+          window.__raeSnapshotJob.done = true;
+          window.__raeSnapshotJob.dataUrl = dataUrl || '';
+        })
+        .catch((err) => {
+          window.__raeSnapshotJob.done = true;
+          window.__raeSnapshotJob.error = String(err?.message || err);
+        });
+      return true;
+    }
+
+    async function loadAndCapture(url, width, height, yaw, pitch, zoomFactor, options) {
+      if (!width && !height) {
+        return loadAndGrabVisible(url, yaw, pitch, zoomFactor);
+      }
+      try {
+        await loadGlb(url);
+      } catch (err) {
+        if (!pivot?.children?.length) {
+          throw err;
+        }
+      }
+      if (pivot.children.length) {
+        const model = pivot.children[0];
+        await waitForPreviewTextures(model);
+        applyRaeMaterialPolicy(model);
+        await new Promise((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(resolve));
+        });
+        const liveW = window.innerWidth || 256;
+        const liveH = window.innerHeight || 256;
+        fitCamera(liveW, liveH);
+        renderer.render(scene, camera);
+      }
+      const captureW = width > 0 ? width : (window.innerWidth || 256);
+      const captureH = height > 0 ? height : (window.innerHeight || 256);
+      return captureSnapshot(captureW, captureH, yaw, pitch, zoomFactor, options);
     }
 
     async function loadGlb(url) {
@@ -493,6 +640,21 @@
       },
       hasFlipbook() {
         return flipbookTracks.length > 0;
+      },
+      captureSnapshot(width, height, yaw, pitch, zoomFactor) {
+        return captureSnapshot(width, height, yaw, pitch, zoomFactor);
+      },
+      loadAndCapture(url, width, height, yaw, pitch, zoomFactor) {
+        return loadAndCapture(url, width, height, yaw, pitch, zoomFactor);
+      },
+      loadAndGrabVisible(url, yaw, pitch, zoomFactor) {
+        return loadAndGrabVisible(url, yaw, pitch, zoomFactor);
+      },
+      beginSnapshotCapture(url, yaw, pitch, zoomFactor) {
+        return beginSnapshotCapture(url, yaw, pitch, zoomFactor);
+      },
+      getSnapshotJobState() {
+        return JSON.stringify(window.__raeSnapshotJob || { done: false, dataUrl: '', error: '' });
       },
     };
   </script>

@@ -126,6 +126,140 @@ def ensure_colocated_texture(
     return dest.name
 
 
+def stage_textures_beside_glb(directory: Path, texture_paths: list[Path]) -> None:
+    """Copy resolver/apicula PNGs beside the preview GLB so GLTFLoader can fetch them."""
+    directory = directory.resolve()
+    directory.mkdir(parents=True, exist_ok=True)
+    for src in texture_paths:
+        path = Path(src)
+        if not path.is_file():
+            continue
+        dest = directory / path.name
+        if dest.is_file():
+            if dest.resolve() == path.resolve():
+                continue
+            try:
+                if path.stat().st_size <= dest.stat().st_size:
+                    continue
+            except OSError:
+                continue
+        shutil.copy2(path, dest)
+
+
+def _texture_search_index(search_paths: list[Path]) -> dict[str, Path]:
+    index: dict[str, Path] = {}
+    for raw in search_paths:
+        path = Path(raw)
+        if path.is_file():
+            index.setdefault(path.name.casefold(), path)
+            continue
+        if not path.is_dir():
+            continue
+        for pattern in ("*.png", "*.PNG", "*.bmp", "*.BMP", "*.tga", "*.TGA"):
+            for candidate in path.rglob(pattern):
+                if candidate.is_file():
+                    index.setdefault(candidate.name.casefold(), candidate)
+    return index
+
+
+def ensure_patched_glb_textures_resolvable(
+    glb_path: Path,
+    *,
+    search_paths: list[Path],
+) -> None:
+    """Copy every external image URI referenced by *glb_path* beside the GLB."""
+    glb_path = glb_path.resolve()
+    directory = glb_path.parent
+    index = _texture_search_index(search_paths)
+    glb = read_glb(glb_path)
+    for image in glb.json.get("images") or []:
+        if not isinstance(image, dict):
+            continue
+        uri = str(image.get("uri") or "").strip()
+        if not uri or uri.startswith("data:"):
+            continue
+        basename = Path(uri).name
+        dest = directory / basename
+        if dest.is_file():
+            continue
+        src = index.get(basename.casefold())
+        if src is not None and src.is_file():
+            shutil.copy2(src, dest)
+
+
+def _resolve_texture_for_material(
+    material_name: str,
+    material_index: int,
+    *,
+    part_paths: dict[str, Path],
+    texture_by_name: dict[str, Path],
+    material_to_texture: dict[str, str],
+) -> Path | None:
+    key = str(material_name or "").strip().casefold()
+    if not key:
+        return None
+    path = part_paths.get(key)
+    if path is not None and path.is_file():
+        return path
+    path = texture_by_name.get(key)
+    if path is not None and path.is_file():
+        return path
+    bound = material_to_texture.get(key) or material_to_texture.get(material_name)
+    if bound:
+        path = texture_by_name.get(str(bound).strip().casefold())
+        if path is not None and path.is_file():
+            return path
+    path = texture_by_name.get(str(material_index))
+    if path is not None and path.is_file():
+        return path
+    return None
+
+
+def build_material_texture_path_map(
+    source_glb: Path,
+    *,
+    mesh_labels: list[str],
+    mesh_texture_paths: list[Path | None],
+    texture_by_name: dict[str, Path] | None = None,
+    material_to_texture: dict[str, str] | None = None,
+) -> dict[str, Path]:
+    """Map every glTF material name to a resolved PNG path for web preview."""
+    texture_by_name_cf = {
+        str(name).casefold(): Path(path)
+        for name, path in (texture_by_name or {}).items()
+    }
+    material_to_texture_cf = {
+        str(name).casefold(): str(texture)
+        for name, texture in (material_to_texture or {}).items()
+    }
+    part_paths: dict[str, Path] = {}
+    for label, tex_path in zip(mesh_labels, mesh_texture_paths):
+        if not label or tex_path is None:
+            continue
+        path = Path(tex_path)
+        if path.is_file():
+            part_paths[str(label).strip().casefold()] = path
+
+    glb = read_glb(source_glb)
+    out: dict[str, Path] = {}
+    for mat_idx, material in enumerate(glb.json.get("materials") or []):
+        if not isinstance(material, dict):
+            continue
+        name = str(material.get("name") or "").strip()
+        if not name:
+            continue
+        resolved = _resolve_texture_for_material(
+            name,
+            mat_idx,
+            part_paths=part_paths,
+            texture_by_name=texture_by_name_cf,
+            material_to_texture=material_to_texture_cf,
+        )
+        if resolved is not None:
+            out[name] = resolved
+    return out
+
+
 def patch_glb_material_textures(
     glb: GlbData,
     material_images: dict[str, str],
@@ -243,25 +377,36 @@ def write_patched_preview_glb(
     *,
     mesh_labels: list[str],
     mesh_texture_paths: list[Path | None],
+    texture_by_name: dict[str, Path] | None = None,
+    material_to_texture: dict[str, str] | None = None,
+    stage_texture_paths: list[Path] | None = None,
 ) -> Path:
     """Write a preview GLB with per-material PNG URIs taken from resolved paths."""
     source_glb = source_glb.resolve()
     output_glb = output_glb.resolve()
     output_glb.parent.mkdir(parents=True, exist_ok=True)
+    if stage_texture_paths:
+        stage_textures_beside_glb(output_glb.parent, stage_texture_paths)
 
     glb = read_glb(source_glb)
     materials_by_name = _materials_by_name(glb.json)
     source_render_classes = _source_render_classes(glb)
 
+    material_tex_paths = build_material_texture_path_map(
+        source_glb,
+        mesh_labels=mesh_labels,
+        mesh_texture_paths=mesh_texture_paths,
+        texture_by_name=texture_by_name,
+        material_to_texture=material_to_texture,
+    )
+
     material_images: dict[str, str] = {}
     patched_materials: dict[str, Path] = {}
-    for label, tex_path in zip(mesh_labels, mesh_texture_paths):
-        if not label or tex_path is None or not Path(tex_path).is_file():
-            continue
-        material = materials_by_name.get(str(label).strip().casefold())
+    for mat_name, tex_path in material_tex_paths.items():
+        material = materials_by_name.get(str(mat_name).strip().casefold())
         uri_name = ensure_colocated_texture(Path(tex_path), output_glb.parent, material=material)
-        material_images[str(label)] = uri_name
-        patched_materials[str(label)] = output_glb.parent / uri_name
+        material_images[str(mat_name)] = uri_name
+        patched_materials[str(mat_name)] = output_glb.parent / uri_name
 
     patched = patch_glb_material_textures(glb, material_images)
     _reapply_patched_material_policy(
@@ -270,6 +415,14 @@ def write_patched_preview_glb(
         source_render_classes=source_render_classes,
     )
     patched.write(output_glb)
+    ensure_patched_glb_textures_resolvable(
+        output_glb,
+        search_paths=[
+            *(stage_texture_paths or []),
+            source_glb.parent,
+            output_glb.parent,
+        ],
+    )
     return output_glb
 
 

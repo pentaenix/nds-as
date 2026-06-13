@@ -1,0 +1,44 @@
+"""Re-export canvas layout helpers for UI code."""
+from ...easyfind.canvas_filters import (
+    FOCUS_COLOR_OPTIONS,
+    GROUP_BY_OPTIONS,
+    EasyFindCanvasFilters,
+    SECTION_DISPLAY_NAMES,
+    SECTION_ORDER,
+    TYPE_FILTER_OPTIONS,
+    filter_nodes,
+    section_display_name,
+)
+from ...easyfind.canvas_layout import (
+    EasyFindCanvasLayout,
+    EasyFindClusterPlacement,
+    EasyFindGroupPlacement,
+    EasyFindLayoutOptions,
+    EasyFindNodePlacement,
+    EasyFindRect,
+    EasyFindSectionPlacement,
+    build_cluster_detail_layout,
+    build_cluster_overview_layout,
+    build_source_level_canvas_layout,
+)
+
+__all__ = [
+    "FOCUS_COLOR_OPTIONS",
+    "GROUP_BY_OPTIONS",
+    "EasyFindCanvasFilters",
+    "EasyFindCanvasLayout",
+    "EasyFindClusterPlacement",
+    "EasyFindGroupPlacement",
+    "EasyFindLayoutOptions",
+    "EasyFindNodePlacement",
+    "EasyFindRect",
+    "EasyFindSectionPlacement",
+    "SECTION_DISPLAY_NAMES",
+    "SECTION_ORDER",
+    "TYPE_FILTER_OPTIONS",
+    "build_cluster_detail_layout",
+    "build_cluster_overview_layout",
+    "build_source_level_canvas_layout",
+    "filter_nodes",
+    "section_display_name",
+]

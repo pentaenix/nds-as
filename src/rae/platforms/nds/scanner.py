@@ -57,6 +57,9 @@ class Asset:
     mapping_category: str = "unknown"
     mapping_label: str = ""
     mapping_confidence: str = ""
+    parent_asset_id: str | None = None
+    texture_slot: str | None = None
+    is_texture_slot: bool = False
 
     @property
     def size(self) -> int:
@@ -347,16 +350,35 @@ def _looks_like_nitro_header_at(data: bytes, pos: int) -> bool:
     return 16 <= file_size <= remaining and 8 <= header_size <= 0x200 and 1 <= block_count <= 64
 
 
+_NITRO_DICTIONARY_SEARCH_MAGICS = frozenset({"BTX0", "BMD0"})
+_MAX_SEARCH_NAME_SCAN_BYTES = 8 * 1024 * 1024
+
+
 def asset_search_text(asset: Asset) -> str:
     """Precomputed lowercase metadata used by browser text filters."""
-    return " ".join([
+    parts = [
         asset.virtual_path,
         asset.kind,
         asset.magic,
         getattr(asset, "mapping_category", ""),
         getattr(asset, "mapping_label", ""),
         getattr(asset, "mapping_confidence", ""),
-    ]).casefold()
+    ]
+    if asset.container_chain:
+        parts.extend(asset.container_chain)
+    stem = PurePosixPath(asset.virtual_path).stem
+    if stem:
+        parts.append(stem)
+    if getattr(asset, "is_texture_slot", False) and asset.texture_slot:
+        parts.append(asset.texture_slot)
+        from .virtual_texture_assets import texture_slot_group_name
+
+        parts.append(texture_slot_group_name(asset.texture_slot, archive_stem=stem))
+    elif asset.magic in _NITRO_DICTIONARY_SEARCH_MAGICS and len(asset.data) <= _MAX_SEARCH_NAME_SCAN_BYTES:
+        from .nitro_names import asset_dictionary_names
+
+        parts.extend(asset_dictionary_names(asset))
+    return " ".join(part for part in parts if part).casefold()
 
 
 def filter_assets(assets: Iterable[Asset], query: str | None) -> list[Asset]:

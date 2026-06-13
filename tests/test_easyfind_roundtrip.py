@@ -4,9 +4,12 @@ from datetime import datetime, timezone
 from rae.easyfind import (
     create_easyfind_document,
     load_easyfind,
+    load_node_index,
     read_easyfind_preview,
     save_easyfind,
 )
+from rae.easyfind.format import BUCKET_LOOKUP_PATH
+from tests.easyfind_testutil import finalize_easyfind_document
 from rae.easyfind.models import (
     EasyFindAssetTag,
     EasyFindColorSignature,
@@ -101,6 +104,7 @@ def test_save_load_roundtrip(tmp_path):
     doc.build_info = {"builder": "rae", "note": "test"}
     doc.build_log = "Build log line 1\nBuild log line 2\n"
 
+    finalize_easyfind_document(doc)
     path = save_easyfind(tmp_path / "game.easyfind", doc, preview_blobs={blob_path: blob})
     loaded = load_easyfind(path)
 
@@ -125,3 +129,7 @@ def test_save_load_roundtrip(tmp_path):
 
     preview_bytes = read_easyfind_preview(path, "prev1")
     assert preview_bytes == blob
+    assert loaded.bucket_lookup is not None
+    assert len(load_node_index(loaded).by_primary_bucket) >= 1
+    with __import__("zipfile").ZipFile(path, "r") as zf:
+        assert BUCKET_LOOKUP_PATH in zf.namelist()

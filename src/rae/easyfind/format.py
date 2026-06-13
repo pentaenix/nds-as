@@ -22,6 +22,8 @@ MANUAL_MERGES_PATH = "annotations/manual_merges.json"
 NOTES_PATH = "annotations/notes.json"
 
 COLOR_INDEX_PATH = "signatures/color_index.jsonl"
+BUCKET_LOOKUP_PATH = "signatures/bucket_lookup.json"
+BUCKET_LOOKUP_VERSION = 1
 
 PREVIEWS_INDEX_PATH = "previews/index.json"
 PREVIEW_BLOBS_DIR = "previews/blobs"
@@ -41,6 +43,7 @@ REQUIRED_PATHS: tuple[str, ...] = (
     MANUAL_MERGES_PATH,
     NOTES_PATH,
     COLOR_INDEX_PATH,
+    BUCKET_LOOKUP_PATH,
     PREVIEWS_INDEX_PATH,
     BUILD_INFO_PATH,
     BUILD_LOG_PATH,

@@ -1,6 +1,7 @@
 import zipfile
 
 from rae.easyfind import create_easyfind_document, load_easyfind_quick_open, save_easyfind
+from tests.easyfind_testutil import finalize_easyfind_document
 from rae.scanner import Asset
 
 
@@ -23,7 +24,7 @@ def test_quick_open_reads_only_metadata(tmp_path):
         rom_title="Title",
         rom_game_code="CODE",
     )
-    path = save_easyfind(tmp_path / "game.easyfind", doc)
+    path = save_easyfind(tmp_path / "game.easyfind", finalize_easyfind_document(doc))
 
     with zipfile.ZipFile(path, "r") as zf:
         names = set(zf.namelist())

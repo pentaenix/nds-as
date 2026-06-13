@@ -83,11 +83,11 @@ def test_create_easyfind_document_from_assets():
     )
 
     assert len(doc.assets) == len(assets)
-    assert len(doc.nodes) == len(assets)
+    assert len(doc.nodes) == len(assets) - 1  # RLCN palettes are indexed but not mapped
     assert doc.manifest.counts["assets"] == len(assets)
-    assert doc.manifest.counts["nodes"] == len(assets)
+    assert doc.manifest.counts["nodes"] == len(assets) - 1
     assert doc.quick_open.counts["assets"] == len(assets)
-    assert doc.quick_open.counts["nodes"] == len(assets)
+    assert doc.quick_open.counts["nodes"] == len(assets) - 1
 
     by_id = {a.asset_id: a for a in doc.assets}
     assert by_id["m1"].identity.asset_id == "m1"
@@ -103,7 +103,7 @@ def test_create_easyfind_document_from_assets():
     assert kinds["m1"] == "model"
     assert kinds["t1"] == "texture_archive"
     assert kinds["s1"] == "image_or_sprite_source"
-    assert kinds["p1"] == "image_or_sprite_source"
+    assert "p1" not in kinds
     assert kinds["a1"] == "audio"
     assert kinds["an1"] == "animation"
     assert kinds["u1"] == "unknown"

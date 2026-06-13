@@ -129,32 +129,9 @@ class TextureIndexMixin:
 
     def _preview_btx0_texture_name(self, asset: Asset) -> str | None:
         """Pick a representative texture entry for browser preview (not always dictionary slot 0)."""
-        entries = self._btx0_texture_entries(asset)
-        if not entries:
-            return None
-        if len(entries) == 1:
-            return entries[0][0]
+        from ...btx0_preview_selection import choose_btx0_thumbnail_texture_name
 
-        file_index = self._asset_file_index(asset)
-        path_l = asset.virtual_path.casefold()
-        stem = Path(asset.virtual_path).name.split(".")[0].casefold()
-
-        if file_index is not None:
-            for token in (f"{file_index:04d}", f"{file_index:03d}", str(file_index)):
-                for name, _fmt, width, height in entries:
-                    if token in name.casefold() and width * height > 0:
-                        return name
-            if "file_" in path_l and file_index < len(entries):
-                name, _fmt, width, height = entries[file_index]
-                if width * height >= 8 * 8:
-                    return name
-
-        for name, _fmt, _w, _h in entries:
-            if name.casefold() == stem:
-                return name
-
-        # Map-style archives often store many small slots plus one large atlas.
-        return max(entries, key=lambda row: row[2] * row[3])[0]
+        return choose_btx0_thumbnail_texture_name(asset)
 
     def _primary_btx0_texture_name(self, asset: Asset) -> str | None:
         return self._preview_btx0_texture_name(asset)
@@ -201,9 +178,23 @@ class TextureIndexMixin:
             return self._texture_library_store.library
         return None
 
+    def _sync_texture_library_store_context(self) -> None:
+        if getattr(self, "session_path", None) and not getattr(self, "rom_path", None):
+            scan_mode = "session"
+        elif hasattr(self, "deep_scan_action") and self.deep_scan_action.isChecked():
+            scan_mode = "deep"
+        else:
+            scan_mode = "fast"
+        self._texture_library_store.set_context(
+            game_code=getattr(self, "rom_game_code", ""),
+            rom_path=getattr(self, "rom_path", None),
+            scan_mode=scan_mode,
+        )
+
     def _warm_texture_library_async(self) -> None:
         if not self.assets:
             return
+        self._sync_texture_library_store_context()
         if self._texture_library_store.is_ready_for(self.assets):
             return
         if self.texture_warmup_worker is not None and self.texture_warmup_worker.isRunning():

@@ -33,15 +33,18 @@ BODY_STYLE = "font-size: 13px; color: #c8c8c8;"
 WARNING_STYLE = "font-size: 12px; color: #d9a866;"
 DETAIL_STYLE = "font-size: 12px; color: #a8a8a8; font-family: Menlo, Consolas, monospace;"
 STAGE_STYLE = "font-size: 12px; color: #b0b0b0;"
+SNAPSHOT_LABEL_STYLE = "font-size: 12px; color: #9a9a9a;"
 
 MODAL_WIDTH = 500
 MODAL_MARGIN = 48
+SNAPSHOT_SIZE = 256
 
 
 class EasyFindBuildPanel(QWidget):
     """Centered modal card over the grid canvas."""
 
     validate_requested = Signal()
+    build_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -102,6 +105,18 @@ class EasyFindBuildPanel(QWidget):
         self.progress_bar.hide()
         modal_layout.addWidget(self.progress_bar)
 
+        self.model_snapshot_host = QWidget(self.modal)
+        snapshot_layout = QVBoxLayout(self.model_snapshot_host)
+        snapshot_layout.setContentsMargins(0, 4, 0, 0)
+        snapshot_layout.setSpacing(6)
+        self.model_snapshot_label = QLabel("Rendering model thumbnails…")
+        self.model_snapshot_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.model_snapshot_label.setStyleSheet(SNAPSHOT_LABEL_STYLE)
+        snapshot_layout.addWidget(self.model_snapshot_label)
+        self.model_snapshot_host.setFixedHeight(SNAPSHOT_SIZE + 28)
+        self.model_snapshot_host.hide()
+        modal_layout.addWidget(self.model_snapshot_host)
+
         button_row = QHBoxLayout()
         button_row.setSpacing(10)
         button_row.addStretch()
@@ -111,11 +126,17 @@ class EasyFindBuildPanel(QWidget):
         self.validate_button.clicked.connect(self.validate_requested.emit)
         self.validate_button.hide()
 
+        self.build_button = QPushButton("Build EasyFind")
+        self.build_button.setStyleSheet(CHROME_BUTTON_STYLE)
+        self.build_button.clicked.connect(self.build_requested.emit)
+        self.build_button.hide()
+
         self.open_folder_button = QPushButton("Open Containing Folder")
         self.open_folder_button.setStyleSheet(CHROME_BUTTON_STYLE)
         self.open_folder_button.clicked.connect(self._open_containing_folder)
         self.open_folder_button.hide()
 
+        button_row.addWidget(self.build_button)
         button_row.addWidget(self.validate_button)
         button_row.addWidget(self.open_folder_button)
         button_row.addStretch()
@@ -142,12 +163,25 @@ class EasyFindBuildPanel(QWidget):
         self.modal.setGeometry(x, y, width, height)
 
     def _hide_action_buttons(self) -> None:
+        self.build_button.hide()
         self.validate_button.hide()
         self.open_folder_button.hide()
         self.warning_label.hide()
         self.stage_label.hide()
         self.progress_bar.hide()
         self.details_label.hide()
+        self.hide_model_snapshot_host()
+
+    def show_model_snapshot_host(self) -> None:
+        self.model_snapshot_host.show()
+        self._position_modal()
+
+    def hide_model_snapshot_host(self) -> None:
+        self.model_snapshot_host.hide()
+        self._position_modal()
+
+    def model_snapshot_container(self) -> QWidget:
+        return self.model_snapshot_host
 
     def _set_content(
         self,
@@ -185,6 +219,39 @@ class EasyFindBuildPanel(QWidget):
             ),
         )
 
+    def show_loading(self, *, stage: str = "") -> None:
+        self._hide_action_buttons()
+        self._set_content(
+            title="Loading EasyFind…",
+            body=stage or "Reading the index and preparing the canvas.",
+        )
+        if stage:
+            self.stage_label.setText(stage)
+            self.stage_label.show()
+        else:
+            self.stage_label.hide()
+        self.progress_bar.hide()
+        self._position_modal()
+
+    def show_invalid(self, path: Path, validation: EasyFindValidationReport) -> None:
+        self._hide_action_buttons()
+        self._current_path = path
+        errors = validation.errors[:4]
+        extra = ""
+        if len(validation.errors) > 4:
+            extra = f"\n\n…and {len(validation.errors) - 4} more issue(s)."
+        detail_lines = "\n".join(f"• {err}" for err in errors)
+        self._set_content(
+            title="EasyFind could not be loaded",
+            body=(
+                "The EasyFind file for this game exists, but validation failed.\n\n"
+                f"{detail_lines}{extra}\n\n"
+                "Use Validate Again to re-check, or Build EasyFind to replace the file."
+            ),
+        )
+        self.validate_button.show()
+        self.build_button.show()
+
     def show_build_required(self, target_path: Path) -> None:
         self._hide_action_buttons()
         self._current_path = None
@@ -195,8 +262,12 @@ class EasyFindBuildPanel(QWidget):
                 f"saved as easyfind/{target_path.name}.\n\n"
                 "Click Build EasyFind in the toolbar to create it."
             ),
-            warning="This can take several minutes on large ROMs. RAE stays responsive while it runs.",
+            warning=(
+                "Use Build EasyFind to choose a full build, selected types only, "
+                "or a quick catch-up for missing graphics."
+            ),
         )
+        self.build_button.show()
 
     def show_building(self, *, stage: str = "", percent: int = 0) -> None:
         self._hide_action_buttons()

@@ -6,6 +6,7 @@ from pathlib import Path
 from PySide6.QtGui import QBrush
 
 from ...exporter import apicula_available, apicula_help_text
+from ...model_preview.scene_snapshot import texture_baked_display_geometry as _shared_texture_baked_display_geometry
 from ...glb_preview_textures import (
     MaterialPreviewState,
     apply_material_preview_alpha,
@@ -13,6 +14,7 @@ from ...glb_preview_textures import (
     build_mesh_texture_paths,
     build_mesh_texture_paths_for_glb_parts,
     discover_colocated_textures,
+    extract_named_meshes,
     merge_texture_by_name,
     merge_texture_paths,
     ordered_texture_paths_from_glb,
@@ -348,6 +350,9 @@ class GlbPreviewMixin:
             source_glb,
             mesh_labels=labels,
             mesh_texture_paths=paths,
+            texture_by_name=getattr(self, "_texture_by_name", {}),
+            material_to_texture=getattr(self, "_material_to_texture", {}),
+            stage_texture_paths=list(getattr(self, "_fallback_texture_paths", [])),
         )
 
     def _reload_web_preview_glb(self) -> None:
@@ -361,42 +366,7 @@ class GlbPreviewMixin:
             web_view.load_glb(patched)
 
     def _extract_named_meshes(self, loaded, trimesh) -> list[tuple[str, object]]:
-        if isinstance(loaded, trimesh.Scene):
-            geom_nodes: dict[str, list[str]] = {}
-            try:
-                for node_name, geom_name in loaded.graph.nodes_geometry:
-                    geom_nodes.setdefault(str(geom_name), []).append(str(node_name))
-            except Exception:
-                pass
-
-            # dump() splits multi-material meshes the way older RAE builds expected.
-            raw = loaded.dump()
-            named: list[tuple[str, object]] = []
-            for idx, mesh in enumerate(raw):
-                if isinstance(mesh, trimesh.Trimesh) and len(mesh.vertices) and len(mesh.faces):
-                    meta = getattr(mesh, "metadata", {}) or {}
-                    geom_key = str(meta.get("geometry", "") or "")
-                    node_names = geom_nodes.get(geom_key, [])
-                    material = getattr(getattr(mesh, "visual", None), "material", None)
-                    mat_name = str(getattr(material, "name", "") or "")
-                    name = str(
-                        mat_name
-                        or meta.get("name", "")
-                        or (node_names[0] if node_names else "")
-                        or geom_key
-                        or f"mesh_{idx}"
-                    )
-                    named.append((name, mesh))
-            if named:
-                return named
-            for name, geom in loaded.geometry.items():
-                if isinstance(geom, trimesh.Trimesh) and len(geom.vertices) and len(geom.faces):
-                    named.append((str(name), geom))
-            return named
-        if isinstance(loaded, trimesh.Trimesh) and len(loaded.vertices) and len(loaded.faces):
-            name = str(getattr(loaded, "metadata", {}).get("name", "") or "mesh_0")
-            return [(name, loaded)]
-        return []
+        return extract_named_meshes(loaded)
 
     def _material_preview_state(self, mesh, *, geometry_name: str = "") -> MaterialPreviewState | None:
         states = getattr(self, "_material_preview_states", {})
@@ -703,123 +673,10 @@ class GlbPreviewMixin:
         mesh_index: int = 0,
         geometry_name: str = "",
     ):
-        """Return preview geometry with pixel-art textures baked as solid texel quads.
-
-        GLMeshItem cannot sample textures in the GPU. Corner vertex colors get
-        Gouraud-interpolated across each triangle, which smears NDS pixel art.
-        Instead, rasterize covered texels in UV space and emit one unlit quad per
-        texel with identical colors on every corner.
-        """
+        """Return preview geometry with pixel-art textures baked as solid texel quads."""
         visual = getattr(mesh, "visual", None)
-        if visual is None:
-            return None
-        uv = getattr(visual, "uv", None)
-        if getattr(visual, "kind", None) != "texture" and uv is None:
-            return None
         image = self._visual_image(visual, mesh=mesh, mesh_index=mesh_index, geometry_name=geometry_name)
-        if image is None or uv is None:
-            return None
-        uv_arr = np.asarray(uv, dtype=float)
-        if uv_arr.ndim != 2 or uv_arr.shape[1] < 2 or len(faces) == 0:
-            return None
-
-        try:
-            img = self._image_rgba_uint8(image, np)
-            if img is None:
-                return None
-            height, width = int(img.shape[0]), int(img.shape[1])
-            if width <= 0 or height <= 0:
-                return None
-
-            face_uvs = self._face_uv_corners(mesh, faces, uv_arr, np)
-            if face_uvs is None:
-                return None
-
-            source_faces = np.asarray(mesh.faces, dtype=int)
-            out_vertices: list[np.ndarray] = []
-            out_faces: list[list[int]] = []
-            out_colors: list[np.ndarray] = []
-            vert_offset = 0
-            texel_count = 0
-
-            use_corners_only = False
-            for face_index, face in enumerate(source_faces):
-                tri_3d = vertices[face]
-                tri_uv = face_uvs[face_index]
-                tri_px = np.column_stack(
-                    (
-                        np.mod(tri_uv[:, 0], 1.0) * width,
-                        (1.0 - np.mod(tri_uv[:, 1], 1.0)) * height,
-                    )
-                )
-
-                min_x = int(np.floor(tri_px[:, 0].min()))
-                max_x = int(np.ceil(tri_px[:, 0].max()))
-                min_y = int(np.floor(tri_px[:, 1].min()))
-                max_y = int(np.ceil(tri_px[:, 1].max()))
-                if max_x < min_x or max_y < min_y:
-                    continue
-
-                face_texels = (max_x - min_x + 1) * (max_y - min_y + 1)
-                if (
-                    use_corners_only
-                    or face_texels > _PREVIEW_MAX_TEXELS_PER_FACE
-                    or texel_count + face_texels > _PREVIEW_MAX_TEXELS_PER_MESH
-                ):
-                    corner_colors = self._sample_image_array_at_px(tri_px, img, np)
-                    if corner_colors is None:
-                        continue
-                    out_vertices.append(np.asarray(tri_3d, dtype=float))
-                    out_colors.extend(corner_colors)
-                    out_faces.append([vert_offset, vert_offset + 1, vert_offset + 2])
-                    vert_offset += 3
-                    if texel_count + face_texels > _PREVIEW_MAX_TEXELS_PER_MESH:
-                        use_corners_only = True
-                    continue
-
-                for iy in range(min_y, max_y + 1):
-                    for ix in range(min_x, max_x + 1):
-                        center = np.array((ix + 0.5, iy + 0.5), dtype=float)
-                        weights = self._barycentric_weights_2d(center, tri_px)
-                        if weights is None or weights.min() < -1e-5:
-                            continue
-
-                        tex_x = int(ix) % width
-                        tex_y = int(iy) % height
-                        color = img[tex_y, tex_x].astype(float) / 255.0
-
-                        quad_px = np.array(
-                            (
-                                (ix, iy),
-                                (ix + 1, iy),
-                                (ix + 1, iy + 1),
-                                (ix, iy + 1),
-                            ),
-                            dtype=float,
-                        )
-                        quad_3d = []
-                        for px_corner in quad_px:
-                            corner_w = self._barycentric_weights_2d(px_corner, tri_px)
-                            if corner_w is None:
-                                corner_w = weights
-                            quad_3d.append(corner_w @ tri_3d)
-                        quad_3d_arr = np.asarray(quad_3d, dtype=float)
-
-                        out_vertices.append(quad_3d_arr)
-                        out_colors.extend([color] * 4)
-                        out_faces.append([vert_offset, vert_offset + 1, vert_offset + 2])
-                        out_faces.append([vert_offset, vert_offset + 2, vert_offset + 3])
-                        vert_offset += 4
-                        texel_count += 1
-
-            if not out_vertices:
-                return None
-            display_vertices = np.vstack(out_vertices)
-            display_faces = np.asarray(out_faces, dtype=int)
-            colors = np.asarray(out_colors, dtype=float)
-            return display_vertices, display_faces, colors
-        except Exception:
-            return None
+        return _shared_texture_baked_display_geometry(mesh, vertices, faces, image=image)
 
     def _face_uv_corners(self, mesh, faces, uv_arr, np):
         source_faces = np.asarray(mesh.faces, dtype=int)

@@ -10,8 +10,14 @@ from ...asset_resolver import MODEL_ANIMATION_MAGICS, folder_sibling_assets
 from ...exporter import convert_texture_with_apicula, convert_with_apicula, texture_outputs
 from ...glb_preview_textures import merge_texture_by_name, merge_texture_paths, texture_map_from_paths
 from ...model_texture_resolver import build_preview_texture_maps, resolve_model_textures, write_resolution_images
-from ...nitro_2d import decode_nitro2d_preview, decode_nitro2d_related_preview
+from ...nitro_2d import (
+    decode_nitro2d_preview,
+    decode_nitro2d_related_preview,
+    decode_nitro2d_thumbnail_preview,
+)
+from ...core.preview_sheet import safe_sheet_entry_filename
 from ...nitro_textures import decode_btx_images, decode_guided_tex0_images, make_contact_sheet
+from ...platforms.nds.nitro.types import DecodedImage
 from ...scanner import Asset
 from ...texture_library import TextureLibrary, TextureLibraryStore
 from ..preview_quality import TextureQuality, best_preview_path, converted_texture_quality
@@ -189,9 +195,63 @@ class TextureResolveWorker(QThread):
             self.failed.emit(self.asset.asset_id, str(exc))
 
 
+def _decoded_ncgr_tiles(ncgr_data: bytes, nclr_data: bytes) -> list[DecodedImage]:
+    from ...nitro_2d import decode_nclr_colors, parse_ncgr, tile_pixels
+
+    gfx = parse_ncgr(ncgr_data)
+    palette = decode_nclr_colors(nclr_data)
+    if not gfx or not palette or gfx.tile_count < 2:
+        return []
+    tiles: list[DecodedImage] = []
+    for tile_index in range(gfx.tile_count):
+        pixels = tile_pixels(gfx, tile_index, palette, 0)
+        rgba = bytearray()
+        for red, green, blue, alpha in pixels:
+            rgba.extend((red, green, blue, alpha))
+        tiles.append(
+            DecodedImage(
+                f"tile_{tile_index}",
+                8,
+                8,
+                bytes(rgba),
+                "NCGR tile",
+                gfx.bit_depth,
+                None,
+            )
+        )
+    return tiles
+
+
+def _build_sheet_entry_payloads(images: list[DecodedImage], out_dir: Path) -> list[dict[str, str]]:
+    if len(images) < 2:
+        return []
+    out_dir.mkdir(parents=True, exist_ok=True)
+    entries: list[dict[str, str]] = []
+    used: dict[str, int] = {}
+    for image in images:
+        base = safe_sheet_entry_filename(image.name)
+        count = used.get(base, 0)
+        used[base] = count + 1
+        filename = f"{base}.png" if count == 0 else f"{base}_{count}.png"
+        path = out_dir / filename
+        image.to_pil().save(path)
+        label = image.name
+        if image.palette_name:
+            label = f"{image.name} ({image.palette_name})"
+        entries.append(
+            {
+                "key": image.name,
+                "name": image.name,
+                "label": label,
+                "path": str(path),
+            }
+        )
+    return entries
+
+
 class ImagePreviewWorker(QThread):
     progress = Signal(str)
-    finished_ok = Signal(int, str, str, str)
+    finished_ok = Signal(int, str, str, str, list)
     failed = Signal(int, str, str)
 
     def __init__(
@@ -236,12 +296,20 @@ class ImagePreviewWorker(QThread):
                 images = decode_btx_images(self.asset.data, max_images=96, mode="all-palettes")
             elif self.related_assets:
                 self.progress.emit(f"Composing preview with {len(self.related_assets)} related asset(s)...")
-                images = decode_nitro2d_related_preview(self.asset, self.related_assets)
+                thumb = decode_nitro2d_thumbnail_preview(self.asset, self.related_assets)
+                images = [thumb] if thumb else decode_nitro2d_related_preview(self.asset, self.related_assets)
             else:
                 images = decode_nitro2d_preview(self.asset.data, self.asset.magic)
             if not images:
                 self.failed.emit(self.request_id, self.asset.asset_id, "No readable preview images were decoded from this asset yet.")
                 return
+            sheet_images = [image for image in images if image is not None]
+            if len(sheet_images) == 1 and self.asset.magic == "RGCN":
+                palette = next((item for item in self.related_assets if item.magic == "RLCN"), None)
+                if palette is not None:
+                    expanded = _decoded_ncgr_tiles(self.asset.data, palette.data)
+                    if len(expanded) >= 2:
+                        sheet_images = expanded
             if self.texture_name:
                 preview_image = images[0]
                 sheet = preview_image.to_pil()
@@ -261,7 +329,14 @@ class ImagePreviewWorker(QThread):
                 return
             self.out_path.parent.mkdir(parents=True, exist_ok=True)
             sheet.save(self.out_path)
-            self.finished_ok.emit(self.request_id, self.asset.asset_id, str(self.out_path), caption)
+            sheet_entries = _build_sheet_entry_payloads(sheet_images, self.out_path.parent / "sheet_entries")
+            self.finished_ok.emit(
+                self.request_id,
+                self.asset.asset_id,
+                str(self.out_path),
+                caption,
+                sheet_entries,
+            )
         except Exception as exc:
             self.failed.emit(self.request_id, self.asset.asset_id, str(exc))
 

@@ -22,6 +22,7 @@ from rae.easyfind.format import (
 from rae.easyfind.models import EasyFindAssetTag, EasyFindManualMerge, EasyFindPreviewRef
 from rae.easyfind.store import _set_write_failure_hook
 from rae.scanner import Asset
+from tests.easyfind_testutil import finalize_easyfind_document
 
 
 def _asset(asset_id: str = "a1") -> Asset:
@@ -37,7 +38,9 @@ def _asset(asset_id: str = "a1") -> Asset:
 
 
 def _valid_file(tmp_path):
-    doc = create_easyfind_document(assets=[_asset()], rom_path="game.nds")
+    doc = finalize_easyfind_document(
+        create_easyfind_document(assets=[_asset()], rom_path="game.nds"),
+    )
     return save_easyfind(tmp_path / "valid.easyfind", doc)
 
 
@@ -101,7 +104,9 @@ def test_validation_bad_json(tmp_path):
 
 
 def test_validation_missing_preview_blob(tmp_path):
-    doc = create_easyfind_document(assets=[_asset()], rom_path="game.nds")
+    doc = finalize_easyfind_document(
+        create_easyfind_document(assets=[_asset()], rom_path="game.nds"),
+    )
     blob = b"png"
     blob_hash = hashlib.sha256(blob).hexdigest()
     doc.preview_refs = [
@@ -124,7 +129,9 @@ def test_validation_missing_preview_blob(tmp_path):
 
 
 def test_validation_preview_hash_mismatch(tmp_path):
-    doc = create_easyfind_document(assets=[_asset()], rom_path="game.nds")
+    doc = finalize_easyfind_document(
+        create_easyfind_document(assets=[_asset()], rom_path="game.nds"),
+    )
     blob = b"png"
     wrong_hash = "0" * 64
     blob_path = f"previews/blobs/{wrong_hash}.png"
@@ -211,7 +218,9 @@ def test_read_preview_unknown_id(tmp_path):
 def test_atomic_write_safety(tmp_path):
     path = _valid_file(tmp_path)
     original = path.read_bytes()
-    doc = create_easyfind_document(assets=[_asset(), _asset("a2")], rom_path="game.nds")
+    doc = finalize_easyfind_document(
+        create_easyfind_document(assets=[_asset(), _asset("a2")], rom_path="game.nds"),
+    )
 
     def fail_hook():
         raise OSError("Simulated write failure")

@@ -68,6 +68,7 @@ from ...nitro_names import asset_browser_name, asset_filename_label, extract_nit
 from ...nitro_textures import decode_btx_images, decode_guided_tex0_images, make_contact_sheet, parse_tex0_manifest, save_decoded_images
 from ...profiles import detect_profile
 from ...scanner import Asset, asset_search_text, filter_assets, filter_assets_by_types, filter_assets_indexed, scan_nds_path
+from ...virtual_texture_assets import texture_slot_group_name
 from ...session import load_session_zip, save_session_zip
 from ...texture_library import TextureLibrary, TextureLibraryStore
 from ...util import human_size
@@ -98,6 +99,42 @@ from ..workers import (
 )
 
 class BrowserTreesMixin:
+    _SEARCH_TREE_AUTO_EXPAND_LIMIT = 200
+
+    def _browser_search_query(self) -> str:
+        if hasattr(self, "filter_box"):
+            return self.filter_box.text().strip()
+        return ""
+
+    def _expand_tree_ancestors(self, item: QTreeWidgetItem) -> None:
+        parent = item.parent()
+        while parent is not None:
+            parent.setExpanded(True)
+            parent = parent.parent()
+
+    def _auto_expand_search_matches(
+        self,
+        folder_nodes: dict[tuple[str, ...], QTreeWidgetItem],
+        *,
+        is_raw: bool,
+        asset_count: int,
+    ) -> None:
+        search_query = self._browser_search_query()
+        if not search_query or asset_count > self._SEARCH_TREE_AUTO_EXPAND_LIMIT:
+            return
+        group_rows = self._raw_tree_group_rows if is_raw else self._tree_group_rows
+        loaded_groups = self._raw_tree_loaded_groups if is_raw else self._tree_loaded_groups
+        for parts, rows in group_rows.items():
+            if not rows:
+                continue
+            item = folder_nodes.get(parts)
+            if item is None:
+                continue
+            self._populate_folder_children(item, parts, is_raw)
+            loaded_groups.add(parts)
+            item.setExpanded(True)
+            self._expand_tree_ancestors(item)
+
     def _unmapped_type_bucket(self, asset: Asset) -> str:
         if asset.magic == "BMD0":
             return "models"
@@ -195,6 +232,109 @@ class BrowserTreesMixin:
                 return child
         return None
 
+    def _ensure_asset_visible_in_browser(self, asset: Asset) -> None:
+        if any(item.asset_id == asset.asset_id for item in self.visible_assets):
+            return
+        if hasattr(self, "filter_box"):
+            self.filter_box.clear()
+        magic = asset.magic or ""
+        checkboxes = getattr(self, "_type_filter_checkboxes", {})
+        if magic in checkboxes and not checkboxes[magic].isChecked():
+            checkboxes[magic].setChecked(True)
+        if hasattr(self, "apply_filter"):
+            self.apply_filter()
+
+    def focus_browser_on_asset(self, asset: Asset, *, prefer_raw_tree: bool = True) -> bool:
+        """Select an asset in the browser tree so nearby siblings stay visible."""
+        if not hasattr(self, "browser_tabs"):
+            return False
+        self._ensure_asset_visible_in_browser(asset)
+        row = next(
+            (index for index, item in enumerate(self.visible_assets) if item.asset_id == asset.asset_id),
+            None,
+        )
+        if row is None:
+            return False
+
+        tree = self.raw_tree if prefer_raw_tree and hasattr(self, "raw_tree") else self.tree
+        tab_index = self.browser_tabs.indexOf(tree)
+        if tab_index < 0:
+            return False
+        self.browser_tabs.setCurrentIndex(tab_index)
+
+        if tree is self.raw_tree:
+            self._populate_raw_tree(self.visible_assets)
+        else:
+            self._populate_mapped_tree(self.visible_assets)
+        self._browser_tab_versions[id(tree)] = self._visible_assets_version
+
+        child_map = (
+            self._build_raw_folder_child_map(self.visible_assets)
+            if tree is self.raw_tree
+            else None
+        )
+        if tree is self.raw_tree:
+            parts = self._raw_tree_parts_by_id.get(asset.asset_id) or self._raw_tree_parts_for_asset(
+                asset, child_map,
+            )
+        else:
+            parts = self._mapped_tree_parts_by_id.get(asset.asset_id) or self._tree_parts_for_asset(asset)
+
+        folder_item = (
+            self._find_raw_tree_folder_item(parts)
+            if tree is self.raw_tree
+            else self._find_mapped_tree_folder_item(parts)
+        )
+        if folder_item is None:
+            return False
+
+        is_raw = tree is self.raw_tree
+        loaded_groups = self._raw_tree_loaded_groups if is_raw else self._tree_loaded_groups
+        if parts not in loaded_groups:
+            self._populate_folder_children(folder_item, parts, is_raw)
+            loaded_groups.add(parts)
+
+        for index in range(folder_item.childCount()):
+            child = folder_item.child(index)
+            if child.data(0, Qt.UserRole) == row:
+                tree.setCurrentItem(child)
+                tree.scrollToItem(child)
+                self._selected_asset_id = asset.asset_id
+                self.on_selection_changed()
+                return True
+        return False
+
+    def _find_mapped_tree_folder_item(self, parts: tuple[str, ...]) -> QTreeWidgetItem | None:
+        if not parts or not hasattr(self, "tree"):
+            return None
+        current: QTreeWidgetItem | None = None
+        for depth in range(len(parts)):
+            segment_parts = parts[: depth + 1]
+            if depth == 0:
+                for index in range(self.tree.topLevelItemCount()):
+                    candidate = self.tree.topLevelItem(index)
+                    data = candidate.data(0, Qt.UserRole)
+                    if isinstance(data, dict) and tuple(data.get("folder", ())) == segment_parts:
+                        current = candidate
+                        break
+            elif current is not None:
+                if segment_parts not in self._tree_loaded_groups:
+                    self._populate_folder_children(current, segment_parts, False)
+                    self._tree_loaded_groups.add(segment_parts)
+                if not current.isExpanded():
+                    current.setExpanded(True)
+                found = None
+                for index in range(current.childCount()):
+                    candidate = current.child(index)
+                    data = candidate.data(0, Qt.UserRole)
+                    if isinstance(data, dict) and tuple(data.get("folder", ())) == segment_parts:
+                        found = candidate
+                        break
+                current = found
+        if current is not None and not current.isExpanded():
+            current.setExpanded(True)
+        return current
+
     def _focus_browser_on_rom_folders(self) -> None:
         if not hasattr(self, "browser_tabs") or not self.visible_assets:
             return
@@ -246,6 +386,13 @@ class BrowserTreesMixin:
         browsing, that is just friction, so RAE keeps mapped category/label nodes
         and collapses the real ROM folder into one readable path segment.
         """
+        if getattr(asset, "is_texture_slot", False) and asset.texture_slot:
+            parent = self._texture_slot_parent_asset(asset)
+            parent_path = parent.virtual_path if parent else asset.virtual_path.split("#", 1)[0]
+            archive_stem = Path(parent_path).stem
+            group = texture_slot_group_name(asset.texture_slot, archive_stem=archive_stem)
+            return ("textures", "Texture slots", group, asset.texture_slot)
+
         folder = (asset.folder_key or "/").replace("\\", "/").strip("/")
         rom_folder = "/".join(self._rom_folder_segments_for_asset(asset)) or folder or "(rom root)"
         if (asset.mapping_confidence or "") == "format-signature" or not asset.mapping_label or asset.mapping_label == "Detected by signature":
@@ -259,6 +406,19 @@ class BrowserTreesMixin:
         asset: Asset,
         child_map: dict[tuple[str, ...], set[str]] | None = None,
     ) -> tuple[str, ...]:
+        if getattr(asset, "is_texture_slot", False) and asset.texture_slot:
+            parent = self._texture_slot_parent_asset(asset)
+            base = parent or asset
+            folder_parts = self._rom_folder_segments_for_asset(base)
+            if child_map is None:
+                child_map = self._build_raw_folder_child_map(self.assets or [base])
+            if folder_parts:
+                folder_parts = self._collapse_raw_folder_parts(folder_parts, child_map)
+            parent_path = parent.virtual_path if parent else asset.virtual_path.split("#", 1)[0]
+            archive_stem = Path(parent_path).stem
+            group = texture_slot_group_name(asset.texture_slot, archive_stem=archive_stem)
+            return (*folder_parts, "texture slots", group, asset.texture_slot)
+
         folder_parts = self._rom_folder_segments_for_asset(asset)
         if folder_parts:
             if child_map is None:
@@ -304,6 +464,8 @@ class BrowserTreesMixin:
                     placeholder = QTreeWidgetItem([f"Open to load {count} asset(s)", "", "", ""])
                     placeholder.setData(0, Qt.UserRole, {"placeholder": True})
                     item.addChild(placeholder)
+
+            self._auto_expand_search_matches(folder_nodes, is_raw=False, asset_count=len(assets))
 
             root = self.tree.invisibleRootItem()
             expand_limit = min(root.childCount(), 32)
@@ -351,8 +513,10 @@ class BrowserTreesMixin:
                     placeholder.setData(0, Qt.UserRole, {"placeholder": True})
                     item.addChild(placeholder)
 
+            self._auto_expand_search_matches(folder_nodes, is_raw=True, asset_count=len(assets))
+
             initial_parts = self._initial_raw_tree_folder_parts(assets)
-            if initial_parts:
+            if initial_parts and not self._browser_search_query():
                 initial_item = folder_nodes.get(initial_parts)
                 if initial_item is not None:
                     self._expand_raw_folder_chain(initial_item)
