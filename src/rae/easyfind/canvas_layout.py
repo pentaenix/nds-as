@@ -646,10 +646,11 @@ def build_source_level_canvas_layout(
     *,
     filters: EasyFindCanvasFilters,
     options: EasyFindLayoutOptions | None = None,
+    index: object | None = None,
 ) -> EasyFindCanvasLayout:
     """Compute deterministic group and node placements."""
     opts = options or EasyFindLayoutOptions(group_by=filters.group_by)
-    visible_nodes = filter_nodes(document, filters)
+    visible_nodes = filter_nodes(document, filters, index=index)
     if not visible_nodes:
         return EasyFindCanvasLayout(
             groups=(),

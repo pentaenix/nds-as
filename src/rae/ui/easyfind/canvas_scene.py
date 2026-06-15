@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QRectF
+from PySide6.QtCore import Qt, QRectF, QTimer
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QApplication, QGraphicsScene
 
@@ -14,6 +14,34 @@ from .canvas_lod import lod_for_zoom
 from .layout import EasyFindCanvasFilters, EasyFindCanvasLayout, build_source_level_canvas_layout
 
 _ITEM_BATCH = 300
+
+# Extra scene space around laid-out content so panning is not clamped to the map edge.
+SCENE_PAN_MARGIN = 80_000.0
+
+
+def scene_rect_with_pan_margin(
+    *,
+    x: float = 0.0,
+    y: float = 0.0,
+    width: float,
+    height: float,
+    margin: float = SCENE_PAN_MARGIN,
+) -> QRectF:
+    w = max(float(width), 1.0)
+    h = max(float(height), 1.0)
+    return QRectF(x - margin, y - margin, w + 2.0 * margin, h + 2.0 * margin)
+
+
+def union_scene_rect_with_pan_margin(
+    current: QRectF,
+    *,
+    x: float = 0.0,
+    y: float = 0.0,
+    width: float,
+    height: float,
+    margin: float = SCENE_PAN_MARGIN,
+) -> QRectF:
+    return current.united(scene_rect_with_pan_margin(x=x, y=y, width=width, height=height, margin=margin))
 
 
 class EasyFindCanvasScene(QGraphicsScene):
@@ -33,6 +61,9 @@ class EasyFindCanvasScene(QGraphicsScene):
         self._cluster_origin: dict[str, tuple[float, float]] = {}
         self._cluster_expanded_bounds: dict[str, tuple[float, float]] = {}
         self._portal_home: dict[str, tuple[float, float]] = {}
+        self._portal_spin_timer = QTimer()
+        self._portal_spin_timer.setInterval(80)
+        self._portal_spin_timer.timeout.connect(self._tick_loading_portals)
 
     @property
     def node_items(self) -> dict[str, EasyFindNodeItem]:
@@ -68,6 +99,25 @@ class EasyFindCanvasScene(QGraphicsScene):
     def is_cluster_expanded(self, cluster_id: str) -> bool:
         return cluster_id in self._expanded_clusters
 
+    def is_cluster_portal_loading(self, cluster_id: str) -> bool:
+        portal = self._cluster_portals.get(cluster_id)
+        return portal is not None and portal.is_loading()
+
+    def set_cluster_portal_loading(self, cluster_id: str, loading: bool) -> None:
+        portal = self._cluster_portals.get(cluster_id)
+        if portal is None:
+            return
+        portal.set_loading(loading)
+        if any(item.is_loading() for item in self._cluster_portals.values()):
+            self._portal_spin_timer.start()
+        else:
+            self._portal_spin_timer.stop()
+
+    def _tick_loading_portals(self) -> None:
+        for portal in self._cluster_portals.values():
+            if portal.is_loading():
+                portal.advance_spinner()
+
     def apply_cluster_overview(
         self,
         document: EasyFindDocument,
@@ -95,7 +145,9 @@ class EasyFindCanvasScene(QGraphicsScene):
             self._portal_home[cluster.cluster_id] = (cluster.x, cluster.y)
 
         if not layout.empty:
-            self.setSceneRect(0, 0, layout.bounds.width, layout.bounds.height)
+            self.setSceneRect(
+                scene_rect_with_pan_margin(width=layout.bounds.width, height=layout.bounds.height)
+            )
 
     def apply_cluster_expansion(
         self,
@@ -245,13 +297,15 @@ class EasyFindCanvasScene(QGraphicsScene):
             placed.append(QRectF(x, y, CLUSTER_TILE_WIDTH, CLUSTER_TILE_HEIGHT))
 
     def _grow_scene_rect(self, origin_x: float, origin_y: float, width: float, height: float) -> None:
-        rect = self.sceneRect()
-        right = origin_x + width
-        bottom = origin_y + height
-        new_w = max(rect.width(), right)
-        new_h = max(rect.height(), bottom)
-        if new_w > rect.width() or new_h > rect.height():
-            self.setSceneRect(0, 0, new_w, new_h)
+        self.setSceneRect(
+            union_scene_rect_with_pan_margin(
+                self.sceneRect(),
+                x=origin_x,
+                y=origin_y,
+                width=width,
+                height=height,
+            )
+        )
 
     def apply_layout(
         self,
@@ -289,6 +343,11 @@ class EasyFindCanvasScene(QGraphicsScene):
             self._node_items[node.node_id] = node_item
             if app is not None and index > 0 and index % _ITEM_BATCH == 0:
                 app.processEvents()
+
+        if not layout.empty:
+            self.setSceneRect(
+                scene_rect_with_pan_margin(width=layout.bounds.width, height=layout.bounds.height)
+            )
 
     def set_node_preview(self, node_id: str, png_bytes: bytes) -> None:
         self._preview_bytes[node_id] = png_bytes

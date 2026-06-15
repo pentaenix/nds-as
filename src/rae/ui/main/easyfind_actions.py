@@ -16,7 +16,7 @@ from ...easyfind import (
     read_nds_rom_identity,
     validate_easyfind,
 )
-from ...easyfind.canvas_filters import FILTER_MODE_FOCUS, FOCUS_ANY
+from ...easyfind.canvas_filters import FILTER_MODE_FOCUS, FOCUS_ANY, focus_filters_are_active
 from ...easyfind.node_index import load_node_index
 from ..easyfind import EasyFindWorkspace
 from ..workers.easyfind import EasyFindBuildResult, EasyFindBuildWorker
@@ -403,8 +403,14 @@ class EasyFindActionsMixin:
         self._stop_easyfind_worker(self.easyfind_populate_worker)
         self._stop_easyfind_worker(self.easyfind_cluster_worker)
         self._stop_easyfind_worker(self.easyfind_preview_worker)
-        self._set_easyfind_phase("populating", "Building cluster overview…")
         ws = self.easyfind_workspace
+        filters = self._easyfind_applied_filters
+        if filters is None:
+            filters = ws.controls_panel.current_filters()
+        self._set_easyfind_phase(
+            "populating",
+            "Building focus map…" if filters.filter_mode == FILTER_MODE_FOCUS else "Building cluster overview…",
+        )
         if self._in_easyfind_workspace:
             ws.show_loading_mode()
             ws.panel.show_loading(stage=self._easyfind_stage)
@@ -416,9 +422,6 @@ class EasyFindActionsMixin:
         if path is not None:
             ws.canvas_view.easyfind_scene.set_easyfind_path(path)
 
-        filters = self._easyfind_applied_filters
-        if filters is None:
-            filters = ws.controls_panel.current_filters()
         worker = EasyFindCanvasPopulateWorker(
             document,
             filters,
@@ -470,10 +473,13 @@ class EasyFindActionsMixin:
                 ws.canvas_view.refresh_view_lod()
         self._update_main_toolbar()
         total_nodes = sum(cluster.node_count for cluster in layout.clusters)
-        self._easyfind_log(
-            f"EasyFind overview ready ({cluster_count} clusters, {total_nodes:,} assets). "
-            "Double-click a cluster to open it."
-        )
+        if cluster_count:
+            self._easyfind_log(
+                f"EasyFind overview ready ({cluster_count} clusters, {total_nodes:,} assets). "
+                "Click the arrow on a cluster to open it."
+            )
+        else:
+            self._easyfind_log("EasyFind ready.")
         self._finish_easyfind_load(job_id, previews_loaded=0, previews_total=0)
 
     def _on_easyfind_canvas_populate_failed(self, message: str, job_id: int) -> None:
@@ -610,11 +616,12 @@ class EasyFindActionsMixin:
         if self._easyfind_document is None or self._easyfind_applied_filters is None:
             return
         scene = self.easyfind_workspace.canvas_view.easyfind_scene
-        if scene.is_cluster_expanded(cluster_id):
+        if scene.is_cluster_expanded(cluster_id) or scene.is_cluster_portal_loading(cluster_id):
             return
         member_ids = scene.cluster_member_ids(cluster_id)
         if not member_ids:
             return
+        scene.set_cluster_portal_loading(cluster_id, True)
         self._easyfind_job_id += 1
         job_id = self._easyfind_job_id
         self._stop_easyfind_worker(self.easyfind_cluster_worker)
@@ -665,6 +672,8 @@ class EasyFindActionsMixin:
     def _on_easyfind_cluster_expand_failed(self, cluster_id: str, message: str, job_id: int) -> None:
         if job_id != self._easyfind_job_id:
             return
+        scene = self.easyfind_workspace.canvas_view.easyfind_scene
+        scene.set_cluster_portal_loading(cluster_id, False)
         self._set_easyfind_phase("ready", "Ready")
         self._easyfind_log(f"Could not open cluster {cluster_id}: {message}")
 
@@ -679,20 +688,9 @@ class EasyFindActionsMixin:
             return
         filters = self.easyfind_workspace.controls_panel.current_filters()
         self._easyfind_applied_filters = filters
-        if filters.filter_mode == FILTER_MODE_FOCUS:
-            focus_type = filters.focus_type if filters.focus_type not in {FOCUS_ANY, "all", ""} else filters.type_filter
-            has_type = focus_type not in {FOCUS_ANY, "all", ""}
-            has_colors = bool(filters.focus_primary_colors or filters.focus_secondary_colors)
-            if not has_colors and not has_type:
-                self._stop_easyfind_worker(self.easyfind_populate_worker)
-                self._stop_easyfind_worker(self.easyfind_cluster_worker)
-                self._stop_easyfind_worker(self.easyfind_preview_worker)
-                self._show_easyfind_empty_canvas(
-                    "Focus mode: select at least one color and/or a type, then Apply."
-                )
-                self._easyfind_log("EasyFind focus: select a color and/or type.")
-                return
-        elif filters.shown_types is not None and not filters.shown_types:
+        if filters.filter_mode == FILTER_MODE_FOCUS and not focus_filters_are_active(filters):
+            self._easyfind_log("EasyFind focus: showing all assets (no active clauses).")
+        if filters.filter_mode != FILTER_MODE_FOCUS and filters.shown_types is not None and not filters.shown_types:
             self._stop_easyfind_worker(self.easyfind_populate_worker)
             self._stop_easyfind_worker(self.easyfind_cluster_worker)
             self._stop_easyfind_worker(self.easyfind_preview_worker)

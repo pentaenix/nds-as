@@ -1,12 +1,12 @@
 """EasyFind pan/zoom canvas view."""
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, QPointF, QTimer, Qt, Signal
+from PySide6.QtCore import QPoint, QPointF, QRectF, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QWheelEvent
 from PySide6.QtWidgets import QGraphicsView, QMenu
 
 from .canvas_lod import LOD_ZOOM_LABELS_ONLY
-from .canvas_scene import EasyFindCanvasScene
+from .canvas_scene import EasyFindCanvasScene, scene_rect_with_pan_margin
 
 CANVAS_BG = QColor(42, 42, 42)
 MINOR_GRID = QColor(56, 56, 56)
@@ -67,6 +67,15 @@ class EasyFindCanvasView(QGraphicsView):
         for item in self.items(point):
             if isinstance(item, EasyFindClusterPortalItem):
                 return item
+        return None
+
+    def _portal_expand_target_at(self, point: QPoint):
+        portal = self._cluster_portal_at(point)
+        if portal is None or portal.is_loading():
+            return None
+        local = portal.mapFromScene(self.mapToScene(point))
+        if portal.hit_expand_button(local):
+            return portal
         return None
 
     def _cluster_group_at(self, point: QPoint) -> str | None:
@@ -177,6 +186,12 @@ class EasyFindCanvasView(QGraphicsView):
         from .canvas_items import EasyFindNodeItem
 
         point = event.position().toPoint()
+        if event.button() == Qt.MouseButton.LeftButton:
+            portal = self._portal_expand_target_at(point)
+            if portal is not None:
+                self.cluster_expand_requested.emit(portal.cluster_id)
+                event.accept()
+                return
         node_item = self._node_item_at(point)
         if event.button() in {
             Qt.MouseButton.MiddleButton,
@@ -185,14 +200,16 @@ class EasyFindCanvasView(QGraphicsView):
             self._panning = True
             self._last_pan_pos = event.position()
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
-            self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.NoViewportUpdate)
             event.accept()
             return
         if event.button() == Qt.MouseButton.LeftButton and not isinstance(node_item, EasyFindNodeItem):
+            portal = self._cluster_portal_at(point)
+            if portal is not None:
+                event.accept()
+                return
             self._panning = True
             self._last_pan_pos = event.position()
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
-            self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.NoViewportUpdate)
             self._selected_node_id = None
             self._scene.select_node(None)
             self.node_selected.emit("")
@@ -209,11 +226,11 @@ class EasyFindCanvasView(QGraphicsView):
         self.node_selected.emit(node_item.node.node_id)
 
     def _pan_viewport_by_pixels(self, delta: QPointF) -> None:
-        """Pan in scene space — scroll bars are hidden so centerOn is used instead."""
-        zoom = max(float(self.transform().m11()), 1e-6)
-        scene_delta = QPointF(delta.x() / zoom, delta.y() / zoom)
-        center = self.mapToScene(self.viewport().rect().center())
-        self.centerOn(center.x() - scene_delta.x(), center.y() - scene_delta.y())
+        """Pan using hidden scroll bars so the viewport repaints while dragging."""
+        hbar = self.horizontalScrollBar()
+        vbar = self.verticalScrollBar()
+        hbar.setValue(hbar.value() - round(delta.x()))
+        vbar.setValue(vbar.value() - round(delta.y()))
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
         if self._panning:
@@ -228,8 +245,6 @@ class EasyFindCanvasView(QGraphicsView):
         if self._panning:
             self._panning = False
             self.setCursor(Qt.CursorShape.OpenHandCursor if self._space_pan else Qt.CursorShape.ArrowCursor)
-            self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.MinimalViewportUpdate)
-            self.viewport().update()
             self._schedule_lod_refresh()
             event.accept()
             return
@@ -241,11 +256,6 @@ class EasyFindCanvasView(QGraphicsView):
         if node_item is not None:
             self.node_activated.emit(node_item.node.node_id)
             self.show_in_browser_requested.emit(node_item.node.node_id)
-            event.accept()
-            return
-        portal = self._cluster_portal_at(point)
-        if portal is not None:
-            self.cluster_expand_requested.emit(portal.cluster_id)
             event.accept()
             return
         cluster_id = self._cluster_group_at(point)
@@ -303,14 +313,11 @@ class EasyFindCanvasView(QGraphicsView):
         if layout is None:
             return
         bounds = layout.bounds
-        rect = self._scene.sceneRect()
-        if rect.isNull():
-            self._scene.setSceneRect(0, 0, bounds.width, bounds.height)
-        else:
-            self._scene.setSceneRect(
-                0, 0, max(bounds.width, 1.0), max(bounds.height, 1.0)
-            )
-        self.fitInView(self._scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        content_rect = QRectF(0.0, 0.0, max(bounds.width, 1.0), max(bounds.height, 1.0))
+        self._scene.setSceneRect(
+            scene_rect_with_pan_margin(width=bounds.width, height=bounds.height)
+        )
+        self.fitInView(content_rect, Qt.AspectRatioMode.KeepAspectRatio)
         zoom = float(self.transform().m11())
         if zoom < LOD_ZOOM_LABELS_ONLY:
             self.resetTransform()

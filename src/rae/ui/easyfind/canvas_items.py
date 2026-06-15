@@ -1,8 +1,8 @@
 """QGraphicsItems for EasyFind canvas groups and nodes."""
 from __future__ import annotations
 
-from PySide6.QtCore import QRectF, Qt
-from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QPixmap
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import QGraphicsItem
 
 from ...easyfind.models import EasyFindNode
@@ -72,7 +72,9 @@ class EasyFindSectionItem(EasyFindGroupRegionItem):
 
 
 class EasyFindClusterPortalItem(QGraphicsItem):
-    """Coarse map tile; double-click to materialize the cluster's detail layout."""
+    """Coarse map tile; click the arrow to open the cluster detail layout."""
+
+    _EXPAND_BTN = 30.0
 
     def __init__(
         self,
@@ -91,20 +93,60 @@ class EasyFindClusterPortalItem(QGraphicsItem):
         self._height = height
         self._node_count = node_count
         self._hovered = False
+        self._expand_hovered = False
+        self._loading = False
+        self._spin_angle = 0
         self.setZValue(1.0)
         self.setAcceptHoverEvents(True)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
+
+    def is_loading(self) -> bool:
+        return self._loading
+
+    def set_loading(self, loading: bool) -> None:
+        self._loading = bool(loading)
+        if not self._loading:
+            self._spin_angle = 0
+        self.update()
+
+    def advance_spinner(self) -> None:
+        if not self._loading:
+            return
+        self._spin_angle = (self._spin_angle + 36) % 360
+        self.update()
+
+    def expand_button_rect(self) -> QRectF:
+        margin = 10.0
+        size = self._EXPAND_BTN
+        return QRectF(
+            self._width - margin - size,
+            self._height - margin - size,
+            size,
+            size,
+        )
+
+    def hit_expand_button(self, local_pos) -> bool:
+        return self.expand_button_rect().contains(local_pos)
 
     def boundingRect(self) -> QRectF:  # noqa: N802
         return QRectF(0, 0, self._width, self._height)
 
     def hoverEnterEvent(self, event) -> None:  # noqa: N802
         self._hovered = True
+        self._expand_hovered = self.hit_expand_button(event.pos())
         self.update()
         super().hoverEnterEvent(event)
 
+    def hoverMoveEvent(self, event) -> None:  # noqa: N802
+        expand_hovered = self.hit_expand_button(event.pos())
+        if expand_hovered != self._expand_hovered:
+            self._expand_hovered = expand_hovered
+            self.update()
+        super().hoverMoveEvent(event)
+
     def hoverLeaveEvent(self, event) -> None:  # noqa: N802
         self._hovered = False
+        self._expand_hovered = False
         self.update()
         super().hoverLeaveEvent(event)
 
@@ -125,7 +167,7 @@ class EasyFindClusterPortalItem(QGraphicsItem):
         text_color = QColor(20, 20, 20) if self._accent.lightness() > 160 else QColor(250, 250, 250)
         painter.setPen(text_color)
         painter.drawText(
-            rect.adjusted(14, 14, -14, -40),
+            rect.adjusted(14, 14, -14, -48),
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextWordWrap,
             self.title,
         )
@@ -136,21 +178,45 @@ class EasyFindClusterPortalItem(QGraphicsItem):
         painter.setPen(QColor(210, 210, 210))
         count_text = f"{self._node_count:,} assets"
         painter.drawText(
-            rect.adjusted(14, 0, -14, -14),
+            rect.adjusted(14, 0, -52, -14),
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom,
             count_text,
         )
 
-        hint_font = QFont()
-        hint_font.setPointSize(9)
-        hint_font.setItalic(True)
-        painter.setFont(hint_font)
-        painter.setPen(QColor(170, 170, 170))
-        painter.drawText(
-            rect.adjusted(14, 0, -14, -30),
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom,
-            "Double-click to open",
-        )
+        self._paint_expand_button(painter)
+
+    def _paint_expand_button(self, painter: QPainter) -> None:
+        btn = self.expand_button_rect()
+        bg = QColor(32, 32, 32, 220)
+        if self._expand_hovered and not self._loading:
+            bg = QColor(52, 52, 52, 235)
+        painter.setPen(QPen(QColor(190, 190, 190), 1.5))
+        painter.setBrush(QBrush(bg))
+        painter.drawRoundedRect(btn, 6, 6)
+
+        if self._loading:
+            painter.setPen(QPen(QColor(220, 220, 220), 2.5))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            inset = btn.adjusted(7, 7, -7, -7)
+            painter.drawArc(
+                inset.toRect(),
+                int(self._spin_angle * 16),
+                int(270 * 16),
+            )
+            return
+
+        cx = btn.center().x()
+        cy = btn.center().y()
+        arrow_w = 7.0
+        arrow_h = 9.0
+        arrow = QPolygonF([
+            QPointF(cx - arrow_w * 0.35, cy - arrow_h * 0.5),
+            QPointF(cx + arrow_w * 0.65, cy),
+            QPointF(cx - arrow_w * 0.35, cy + arrow_h * 0.5),
+        ])
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(235, 235, 235)))
+        painter.drawPolygon(arrow)
 
 
 class EasyFindNodeItem(QGraphicsItem):

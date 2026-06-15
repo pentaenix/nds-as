@@ -61,6 +61,19 @@ FOCUS_ANY = "any"
 FILTER_MODE_ORGANIZE = "organize"
 FILTER_MODE_FOCUS = "focus"
 
+FOCUS_OP_OFF = "-"
+FOCUS_OP_UNSET = ""
+FOCUS_OP_AND = "and"
+FOCUS_OP_OR = "or"
+FOCUS_OP_NOT = "not"
+
+FOCUS_OP_OPTIONS: tuple[tuple[str, str], ...] = (
+    (FOCUS_OP_OFF, "—"),
+    (FOCUS_OP_AND, "AND"),
+    (FOCUS_OP_OR, "OR"),
+    (FOCUS_OP_NOT, "NOT"),
+)
+
 FOCUS_COLOR_OPTIONS: dict[str, str] = {
     FOCUS_ANY: "— Any —",
     "red": "Red",
@@ -90,6 +103,9 @@ class EasyFindCanvasFilters:
     secondary_color: str = FOCUS_ANY
     focus_primary_colors: frozenset[str] = frozenset()
     focus_secondary_colors: frozenset[str] = frozenset()
+    focus_primary_op: str = FOCUS_OP_UNSET
+    focus_secondary_op: str = FOCUS_OP_UNSET
+    focus_type_op: str = FOCUS_OP_UNSET
     focus_type: str = FOCUS_ANY
     type_filter: str = FOCUS_ANY  # backward compat alias for focus_type
     # When set, only these node kinds appear. ``None`` skips the gate (tests/legacy).
@@ -238,6 +254,103 @@ def _resolved_focus_secondary_colors(filters: EasyFindCanvasFilters) -> frozense
     return frozenset()
 
 
+def _effective_focus_op(
+    explicit: str,
+    *,
+    has_values: bool,
+    legacy: str,
+) -> str | None:
+    """Return a combiner op, or None when this focus clause is inactive."""
+    if not has_values:
+        return None
+    if explicit == FOCUS_OP_OFF:
+        # — with checked colors / a type means "apply this row" (defaults to AND).
+        return FOCUS_OP_AND
+    if explicit in {FOCUS_OP_UNSET, ""}:
+        return legacy
+    return explicit
+
+
+def _apply_focus_clause(
+    result: frozenset[str] | None,
+    op: str,
+    ids: frozenset[str],
+    *,
+    universe: frozenset[str],
+) -> frozenset[str]:
+    if op == FOCUS_OP_AND:
+        return ids if result is None else result & ids
+    if op == FOCUS_OP_OR:
+        return ids if result is None else result | ids
+    if op == FOCUS_OP_NOT:
+        return universe - ids if result is None else result - ids
+    return ids if result is None else result
+
+
+def focus_filters_are_active(filters: EasyFindCanvasFilters) -> bool:
+    """True when focus mode should narrow the map (any clause enabled)."""
+    primary_colors = _resolved_focus_primary_colors(filters)
+    secondary_colors = _resolved_focus_secondary_colors(filters)
+    focus_type = _resolved_focus_type(filters)
+    has_type = focus_type not in {FOCUS_ANY, "all", ""}
+    return any([
+        _effective_focus_op(
+            filters.focus_primary_op,
+            has_values=bool(primary_colors),
+            legacy=FOCUS_OP_AND,
+        ),
+        _effective_focus_op(
+            filters.focus_secondary_op,
+            has_values=bool(secondary_colors),
+            legacy=FOCUS_OP_OR if primary_colors else FOCUS_OP_AND,
+        ),
+        _effective_focus_op(
+            filters.focus_type_op,
+            has_values=has_type,
+            legacy=FOCUS_OP_AND,
+        ),
+    ])
+
+
+def _focus_clause_active(
+    filters: EasyFindCanvasFilters,
+    *,
+    clause: str,
+) -> bool:
+    primary_colors = _resolved_focus_primary_colors(filters)
+    secondary_colors = _resolved_focus_secondary_colors(filters)
+    focus_type = _resolved_focus_type(filters)
+    has_type = focus_type not in {FOCUS_ANY, "all", ""}
+    if clause == "primary":
+        return _effective_focus_op(
+            filters.focus_primary_op,
+            has_values=bool(primary_colors),
+            legacy=FOCUS_OP_AND,
+        ) is not None
+    if clause == "secondary":
+        return _effective_focus_op(
+            filters.focus_secondary_op,
+            has_values=bool(secondary_colors),
+            legacy=FOCUS_OP_OR if primary_colors else FOCUS_OP_AND,
+        ) is not None
+    if clause == "type":
+        return _effective_focus_op(
+            filters.focus_type_op,
+            has_values=has_type,
+            legacy=FOCUS_OP_AND,
+        ) is not None
+    return False
+
+
+def focus_overview_group_by(filters: EasyFindCanvasFilters) -> str:
+    """Small cluster portals: by color when color focus is active, else by type."""
+    if _focus_clause_active(filters, clause="primary") or _focus_clause_active(filters, clause="secondary"):
+        return "color"
+    if _focus_clause_active(filters, clause="type"):
+        return "type"
+    return "color"
+
+
 def filter_nodes(
     document: EasyFindDocument,
     filters: EasyFindCanvasFilters,
@@ -272,19 +385,58 @@ def _filter_nodes_focus(
     primary_colors = _resolved_focus_primary_colors(filters)
     secondary_colors = _resolved_focus_secondary_colors(filters)
     focus_type = _resolved_focus_type(filters)
-    candidate_ids: frozenset[str] | None = None
+    has_type = focus_type not in {FOCUS_ANY, "all", ""}
+    universe = frozenset(index.nodes_by_id.keys())
+    result: frozenset[str] | None = None
 
-    if primary_colors:
-        candidate_ids = nodes_for_primary_colors(index, primary_colors)
-    if secondary_colors:
-        secondary_ids = nodes_for_secondary_colors(index, secondary_colors)
-        candidate_ids = secondary_ids if candidate_ids is None else candidate_ids & secondary_ids
-    if focus_type not in {FOCUS_ANY, "all", ""}:
-        type_ids = nodes_for_node_kind(index, focus_type)
-        candidate_ids = type_ids if candidate_ids is None else candidate_ids & type_ids
+    primary_op = _effective_focus_op(
+        filters.focus_primary_op,
+        has_values=bool(primary_colors),
+        legacy=FOCUS_OP_AND,
+    )
+    if primary_op is not None:
+        result = _apply_focus_clause(
+            result,
+            primary_op,
+            nodes_for_primary_colors(index, primary_colors),
+            universe=universe,
+        )
 
-    if candidate_ids is None or not candidate_ids:
+    secondary_op = _effective_focus_op(
+        filters.focus_secondary_op,
+        has_values=bool(secondary_colors),
+        legacy=FOCUS_OP_OR if primary_colors else FOCUS_OP_AND,
+    )
+    if secondary_op is not None:
+        result = _apply_focus_clause(
+            result,
+            secondary_op,
+            nodes_for_secondary_colors(index, secondary_colors),
+            universe=universe,
+        )
+
+    type_op = _effective_focus_op(
+        filters.focus_type_op,
+        has_values=has_type,
+        legacy=FOCUS_OP_AND,
+    )
+    if type_op is not None:
+        result = _apply_focus_clause(
+            result,
+            type_op,
+            nodes_for_node_kind(index, focus_type),
+            universe=universe,
+        )
+
+    if result is None:
+        visible = list(index.nodes_by_id.values())
+        visible.sort(key=lambda n: node_sort_key(document, n))
+        return visible
+
+    if not result:
         return []
+
+    candidate_ids = result
 
     visible = [
         index.nodes_by_id[node_id]

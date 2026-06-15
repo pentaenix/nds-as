@@ -45,6 +45,10 @@ BUCKET_LABELS: dict[str, str] = {
 MODEL_THUMB_BACKGROUND_RGB: tuple[int, int, int] = (58, 58, 58)
 MODEL_THUMB_BACKGROUND_TOLERANCE = 3
 
+# Accent colors kept for secondary-bucket indexing (e.g. palm fronds on a brown trunk).
+SECONDARY_BUCKET_MAX = 10
+SECONDARY_BUCKET_MIN_SHARE = 0.035
+
 BUCKET_RGB: dict[str, tuple[int, int, int]] = {
     "red": (220, 70, 70),
     "orange": (230, 140, 55),
@@ -151,16 +155,35 @@ def dominant_bucket_from_rgba(
         return "neutral", hex_colors, [], "mid", "low", 1.0 if total else None
 
     dominant = max(counts, key=lambda k: (counts[k], -BUCKET_ORDER.index(k) if k in BUCKET_ORDER else 99))
-    secondary = sorted(
-        (k for k in counts if k != dominant),
-        key=lambda k: (-counts[k], BUCKET_ORDER.index(k) if k in BUCKET_ORDER else 99),
-    )[:3]
+    secondary = _secondary_buckets_from_counts(counts, dominant)
     avg_lum = lum_sum / max(1, opaque)
     avg_sat = sat_sum / max(1, opaque)
     brightness = "dark" if avg_lum < 0.35 else "bright" if avg_lum > 0.7 else "mid"
     saturation = "high" if avg_sat > 0.45 else "low" if avg_sat < 0.18 else "mid"
     transparent_ratio = 1.0 - (opaque / total) if total else None
     return dominant, hex_colors, secondary, brightness, saturation, transparent_ratio
+
+
+def _secondary_buckets_from_counts(counts: dict[str, int], dominant: str) -> list[str]:
+    """Non-dominant buckets ranked by pixel share, with a minimum accent threshold."""
+    opaque = sum(counts.values())
+    if opaque <= 0:
+        return []
+    ranked = sorted(
+        ((bucket, counts[bucket]) for bucket in counts if bucket != dominant),
+        key=lambda item: (
+            -item[1],
+            BUCKET_ORDER.index(item[0]) if item[0] in BUCKET_ORDER else 99,
+        ),
+    )
+    secondary: list[str] = []
+    for bucket, count in ranked:
+        share = count / opaque
+        if len(secondary) < SECONDARY_BUCKET_MAX or share >= SECONDARY_BUCKET_MIN_SHARE:
+            secondary.append(bucket)
+        elif len(secondary) >= SECONDARY_BUCKET_MAX:
+            break
+    return secondary
 
 
 def bucket_for_node_kind(node_kind: str, magic: str = "") -> str:

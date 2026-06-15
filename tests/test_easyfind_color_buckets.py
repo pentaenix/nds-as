@@ -53,6 +53,20 @@ def test_gray_model_not_confused_with_background():
     assert bucket == "gray"
 
 
+def test_brown_primary_with_green_accent_is_secondary():
+    pixels = bytearray()
+    for i in range(100):
+        if i < 70:
+            pixels.extend(_rgba_pixel(110, 65, 35))
+        elif i < 85:
+            pixels.extend(_rgba_pixel(140, 140, 140))
+        else:
+            pixels.extend(_rgba_pixel(40, 180, 60))
+    bucket, _, secondary, *_ = dominant_bucket_from_rgba(bytes(pixels), 10, 10, sample_stride=1)
+    assert bucket != "green"
+    assert "green" in secondary
+
+
 def test_background_matte_does_not_steal_dominant_color():
     pixels = bytearray()
     for i in range(64):

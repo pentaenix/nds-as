@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..constants import CHROME_BUTTON_STYLE
+from ...easyfind.canvas_filters import FOCUS_OP_OFF, FOCUS_OP_OPTIONS
 from .layout import FOCUS_COLOR_OPTIONS, GROUP_BY_OPTIONS, TYPE_FILTER_OPTIONS
 
 PANEL_STYLE = """
@@ -35,7 +36,12 @@ QFrame#easyfindGrouping QCheckBox {
     color: #f0f0f0;
     border: 1px solid rgba(100, 100, 100, 120);
     border-radius: 4px;
-    padding: 2px 6px;
+    padding: 3px 8px;
+    min-height: 22px;
+}
+QFrame#easyfindGrouping QComboBox::drop-down {
+    width: 18px;
+    border: none;
 }
 """
 
@@ -66,6 +72,33 @@ def _color_checkbox_scroll(
     return scroll, checks
 
 
+def _focus_op_combo(*, default_op: str = FOCUS_OP_OFF) -> QComboBox:
+    combo = QComboBox()
+    combo.setFixedWidth(58)
+    for key, label in FOCUS_OP_OPTIONS:
+        combo.addItem(label, key)
+    index = combo.findData(default_op)
+    combo.setCurrentIndex(index if index >= 0 else 0)
+    popup = combo.view()
+    if popup is not None:
+        popup.setMinimumWidth(58)
+    return combo
+
+
+def _focus_clause_header(layout: QVBoxLayout, label: str, op_combo: QComboBox) -> None:
+    row = QHBoxLayout()
+    row.setSpacing(6)
+    row.addWidget(op_combo, stretch=0)
+    title = QLabel(label)
+    title.setStyleSheet("color: #e8e8e8;")
+    row.addWidget(title, stretch=1)
+    layout.addLayout(row)
+
+
+def _checked_colors(checks: dict[str, QCheckBox]) -> frozenset[str]:
+    return frozenset(key for key, cb in checks.items() if cb.isChecked())
+
+
 class EasyFindControlsPanel(QFrame):
     apply_requested = Signal()
     clear_focus_requested = Signal()
@@ -81,6 +114,9 @@ class EasyFindControlsPanel(QFrame):
         self._magic_checks: dict[str, QCheckBox] = {}
         self._primary_color_checks: dict[str, QCheckBox] = {}
         self._secondary_color_checks: dict[str, QCheckBox] = {}
+        self._primary_op_combo: QComboBox | None = None
+        self._secondary_op_combo: QComboBox | None = None
+        self._type_op_combo: QComboBox | None = None
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -199,22 +235,26 @@ class EasyFindControlsPanel(QFrame):
         layout.setSpacing(8)
 
         hint = QLabel(
-            "Focus mode: pick color(s), a type, or both. Organize filters are ignored. "
-            "Double-click clusters to open tiles."
+            "Focus: empty primary = any main color. Secondary = accent colors in the thumbnail "
+            "(not the main color). Click a cluster arrow to open; double-click an open cluster to close. "
+            "Use — / AND / OR / NOT before each filter row."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #b8b8b8; font-size: 11px;")
         layout.addWidget(hint)
 
-        layout.addWidget(QLabel("Primary colors"))
+        self._primary_op_combo = _focus_op_combo()
+        _focus_clause_header(layout, "Primary color", self._primary_op_combo)
         primary_scroll, self._primary_color_checks = _color_checkbox_scroll(FOCUS_COLOR_OPTIONS)
         layout.addWidget(primary_scroll)
 
-        layout.addWidget(QLabel("Secondary colors (optional)"))
+        self._secondary_op_combo = _focus_op_combo()
+        _focus_clause_header(layout, "Secondary color", self._secondary_op_combo)
         secondary_scroll, self._secondary_color_checks = _color_checkbox_scroll(FOCUS_COLOR_OPTIONS)
         layout.addWidget(secondary_scroll)
 
-        layout.addWidget(QLabel("Type"))
+        self._type_op_combo = _focus_op_combo()
+        _focus_clause_header(layout, "Type", self._type_op_combo)
         self.focus_type_box = QComboBox()
         for key, label in TYPE_FILTER_OPTIONS.items():
             self.focus_type_box.addItem(label, key if key != "all" else "any")
@@ -227,6 +267,12 @@ class EasyFindControlsPanel(QFrame):
             cb.setChecked(False)
         for cb in self._secondary_color_checks.values():
             cb.setChecked(False)
+        if self._primary_op_combo is not None:
+            self._primary_op_combo.setCurrentIndex(0)
+        if self._secondary_op_combo is not None:
+            self._secondary_op_combo.setCurrentIndex(0)
+        if self._type_op_combo is not None:
+            self._type_op_combo.setCurrentIndex(0)
         self.focus_type_box.setCurrentIndex(0)
         self.tabs.setCurrentIndex(1)
         self.clear_focus_requested.emit()
@@ -247,12 +293,11 @@ class EasyFindControlsPanel(QFrame):
             return EasyFindCanvasFilters(
                 group_by=self.group_box.currentData() or "color",
                 filter_mode=FILTER_MODE_FOCUS,
-                focus_primary_colors=frozenset(
-                    key for key, cb in self._primary_color_checks.items() if cb.isChecked()
-                ),
-                focus_secondary_colors=frozenset(
-                    key for key, cb in self._secondary_color_checks.items() if cb.isChecked()
-                ),
+                focus_primary_colors=_checked_colors(self._primary_color_checks),
+                focus_secondary_colors=_checked_colors(self._secondary_color_checks),
+                focus_primary_op=self._primary_op_combo.currentData() if self._primary_op_combo else FOCUS_OP_OFF,
+                focus_secondary_op=self._secondary_op_combo.currentData() if self._secondary_op_combo else FOCUS_OP_OFF,
+                focus_type_op=self._type_op_combo.currentData() if self._type_op_combo else FOCUS_OP_OFF,
                 focus_type=self.focus_type_box.currentData() or "any",
             )
 
