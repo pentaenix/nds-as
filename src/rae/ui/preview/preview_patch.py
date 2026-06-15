@@ -18,6 +18,9 @@ class PreviewGlbPatcher:
         *,
         mesh_labels: list[str],
         mesh_texture_paths: list[Path | None],
+        texture_by_name: dict[str, Path] | None = None,
+        material_to_texture: dict[str, str] | None = None,
+        stage_texture_paths: list[Path] | None = None,
     ) -> Path:
         source_glb = source_glb.resolve()
         preview_dir = source_glb.parent / ".rae_preview"
@@ -29,6 +32,9 @@ class PreviewGlbPatcher:
             out_path,
             mesh_labels=mesh_labels,
             mesh_texture_paths=mesh_texture_paths,
+            texture_by_name=texture_by_name,
+            material_to_texture=material_to_texture,
+            stage_texture_paths=stage_texture_paths,
         )
 
     def build_flipbook_glbs(

@@ -68,6 +68,7 @@ from ...nitro_names import asset_browser_name, asset_filename_label, extract_nit
 from ...nitro_textures import decode_btx_images, decode_guided_tex0_images, make_contact_sheet, parse_tex0_manifest, save_decoded_images
 from ...profiles import detect_profile
 from ...scanner import Asset, asset_search_text, filter_assets, filter_assets_by_types, filter_assets_indexed, scan_nds_path
+from ...virtual_texture_assets import expand_btx0_texture_slots
 from ...session import load_session_zip, save_session_zip
 from ...texture_library import TextureLibrary, TextureLibraryStore
 from ...util import human_size
@@ -121,6 +122,8 @@ class SessionActionsMixin:
             Path(target),
             self.assets,
             rom_path=self.rom_path,
+            rom_game_code=getattr(self, "rom_game_code", ""),
+            rom_title=getattr(self, "rom_title", ""),
             profile_text=self.profile_text,
             mapping_id=mapping_id,
             pinned_texture_asset_id=self._pinned_texture_asset_id,
@@ -163,10 +166,12 @@ class SessionActionsMixin:
         self._clear_texture_caches()
         self.rom_path = None
         self.session_path = str(data.get("path", ""))
-        self.assets = list(data.get("assets", []))
+        self.assets = expand_btx0_texture_slots(list(data.get("assets", [])))
         self.assets_by_id = {a.asset_id: a for a in self.assets}
         manifest = data.get("manifest", {}) if isinstance(data.get("manifest"), dict) else {}
         self.profile_text = str(manifest.get("profile_text", ""))
+        self.rom_game_code = str(manifest.get("source_rom_game_code", "")).strip().upper()[:4]
+        self.rom_title = str(manifest.get("source_rom_title", "")).strip()
         self._pinned_texture_asset_id = manifest.get("pinned_texture_asset_id") or None
         from ...core.texture_assignments import load_texture_assignments
         from ...core.texture_sequences import load_texture_sequences
@@ -207,6 +212,10 @@ class SessionActionsMixin:
         self.details.setPlainText(overview)
         self.preview.show_message("Session loaded. Select an asset to preview or export selected data.")
         self._update_status(f"Session loaded: {total} assets restored. Original ROM is not required for this session.")
+        if hasattr(self, "_update_main_toolbar"):
+            self._update_main_toolbar()
+        if hasattr(self, "_bind_easyfind_for_current_game"):
+            self._bind_easyfind_for_current_game(log=True)
 
     def _session_load_failed(self, message: str) -> None:
         QMessageBox.warning(self, "Session load failed", message)

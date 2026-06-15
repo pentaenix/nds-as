@@ -668,6 +668,50 @@ def _best_path_for_key(
     return max(candidates, key=image_pixel_area)
 
 
+def extract_named_meshes(loaded) -> list[tuple[str, object]]:
+    """Split a trimesh scene the same way the GL preview path does."""
+    try:
+        import trimesh
+    except ImportError:
+        return []
+
+    if isinstance(loaded, trimesh.Scene):
+        geom_nodes: dict[str, list[str]] = {}
+        try:
+            for node_name, geom_name in loaded.graph.nodes_geometry:
+                geom_nodes.setdefault(str(geom_name), []).append(str(node_name))
+        except Exception:
+            pass
+
+        raw = loaded.dump()
+        named: list[tuple[str, object]] = []
+        for idx, mesh in enumerate(raw):
+            if isinstance(mesh, trimesh.Trimesh) and len(mesh.vertices) and len(mesh.faces):
+                meta = getattr(mesh, "metadata", {}) or {}
+                geom_key = str(meta.get("geometry", "") or "")
+                node_names = geom_nodes.get(geom_key, [])
+                material = getattr(getattr(mesh, "visual", None), "material", None)
+                mat_name = str(getattr(material, "name", "") or "")
+                name = str(
+                    mat_name
+                    or meta.get("name", "")
+                    or (node_names[0] if node_names else "")
+                    or geom_key
+                    or f"mesh_{idx}"
+                )
+                named.append((name, mesh))
+        if named:
+            return named
+        for name, geom in loaded.geometry.items():
+            if isinstance(geom, trimesh.Trimesh) and len(geom.vertices) and len(geom.faces):
+                named.append((str(name), geom))
+        return named
+    if isinstance(loaded, trimesh.Trimesh) and len(loaded.vertices) and len(loaded.faces):
+        name = str(getattr(loaded, "metadata", {}).get("name", "") or "mesh_0")
+        return [(name, loaded)]
+    return []
+
+
 def _unique_paths(paths: list[Path]) -> list[Path]:
     out: list[Path] = []
     seen: set[str] = set()

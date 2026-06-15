@@ -21,6 +21,8 @@ class SessionSaveWorker(QThread):
         rom_path: str | None,
         profile_text: str,
         mapping_id: str,
+        rom_game_code: str = "",
+        rom_title: str = "",
         pinned_texture_asset_id: str | None,
         texture_assignments: dict[str, dict[str, str]] | None = None,
         texture_sequences: dict[str, dict] | None = None,
@@ -29,6 +31,8 @@ class SessionSaveWorker(QThread):
         self.target = target
         self.assets = list(assets)
         self.rom_path = rom_path
+        self.rom_game_code = rom_game_code
+        self.rom_title = rom_title
         self.profile_text = profile_text
         self.mapping_id = mapping_id
         self.pinned_texture_asset_id = pinned_texture_asset_id
@@ -41,6 +45,8 @@ class SessionSaveWorker(QThread):
                 self.target,
                 assets=self.assets,
                 rom_path=self.rom_path,
+                rom_game_code=self.rom_game_code,
+                rom_title=self.rom_title,
                 profile_text=self.profile_text,
                 mapping_id=self.mapping_id,
                 pinned_texture_asset_id=self.pinned_texture_asset_id,

@@ -442,6 +442,159 @@ def parse_oam(attr0: int, attr1: int, attr2: int) -> CellOam | None:
     )
 
 
+def tight_crop_pil(im):
+    if Image is None:
+        return im
+    rgba = im.convert("RGBA")
+    bbox = rgba.getchannel("A").getbbox()
+    if not bbox:
+        return rgba
+    return rgba.crop(bbox)
+
+
+def tight_crop_decoded(image: DecodedImage) -> DecodedImage:
+    im = tight_crop_pil(image.to_pil())
+    return DecodedImage(
+        image.name,
+        im.width,
+        im.height,
+        im.tobytes(),
+        image.source,
+        image.format_id,
+        image.palette_name,
+    )
+
+
+def _thumbnail_cell_index(asset, cell_count: int) -> int:
+    if cell_count <= 0:
+        return 0
+    num = _asset_number(asset)
+    if num is None:
+        return 0
+    return num % cell_count
+
+
+def render_ncer_cell_oams(
+    oams: list[CellOam],
+    gfx: TileGraphics,
+    palette: list[tuple[int, int, int, int]],
+):
+    if not oams or Image is None:
+        return None
+    min_x = min(oam.x for oam in oams)
+    min_y = min(oam.y for oam in oams)
+    max_x = max(oam.x + oam.width for oam in oams)
+    max_y = max(oam.y + oam.height for oam in oams)
+    width = max(1, max_x - min_x)
+    height = max(1, max_y - min_y)
+    im = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    for oam in oams:
+        tiles_x = max(1, oam.width // 8)
+        tiles_y = max(1, oam.height // 8)
+        for ty in range(tiles_y):
+            for tx in range(tiles_x):
+                tile_index = oam.tile_index + ty * tiles_x + tx
+                pixels = tile_pixels(gfx, tile_index, palette, oam.palette_bank, oam.hflip, oam.vflip)
+                px0 = (oam.x - min_x) + tx * 8
+                py0 = (oam.y - min_y) + ty * 8
+                for py in range(8):
+                    for px in range(8):
+                        color = pixels[py * 8 + px]
+                        if color[3] == 0:
+                            continue
+                        xx, yy = px0 + px, py0 + py
+                        if 0 <= xx < width and 0 <= yy < height:
+                            im.putpixel((xx, yy), color)
+    return tight_crop_pil(im)
+
+
+def render_ncer_cell(
+    ncer_data: bytes,
+    ncgr_data: bytes,
+    nclr_data: bytes,
+    cell_index: int = 0,
+) -> DecodedImage | None:
+    cells = parse_ncer_cells(ncer_data, max_cells=max(cell_index + 1, 64))
+    if not cells or cell_index < 0 or cell_index >= len(cells):
+        return None
+    gfx = parse_ncgr(ncgr_data)
+    palette = decode_nclr_colors(nclr_data)
+    if not gfx or not palette:
+        return None
+    im = render_ncer_cell_oams(cells[cell_index], gfx, palette)
+    if im is None:
+        return None
+    return DecodedImage(
+        f"ncer_cell_{cell_index}",
+        im.width,
+        im.height,
+        im.tobytes(),
+        "NCER cell sprite",
+    )
+
+
+def decode_nitro2d_thumbnail_preview(asset, related_assets: list) -> DecodedImage | None:
+    """Render one composed sprite for thumbnails instead of a full tile/cell sheet."""
+    magic = getattr(asset, "magic", "")
+    data = getattr(asset, "data", b"")
+
+    if magic == "RECN":
+        tile = _best_related(asset, related_assets, "RGCN")
+        palette = _best_related(asset, related_assets, "RLCN")
+        if tile and palette:
+            cells = parse_ncer_cells(data, max_cells=64)
+            if cells:
+                idx = _thumbnail_cell_index(asset, len(cells))
+                return render_ncer_cell(data, tile.data, palette.data, idx)
+
+    if magic == "RGCN":
+        ncer = _best_related(asset, related_assets, "RECN")
+        palette = _best_related(asset, related_assets, "RLCN")
+        if ncer and palette:
+            cells = parse_ncer_cells(ncer.data, max_cells=64)
+            if cells:
+                idx = _thumbnail_cell_index(asset, len(cells))
+                return render_ncer_cell(ncer.data, data, palette.data, idx)
+        palette = _best_related(asset, related_assets, "RLCN")
+        if palette:
+            sheet = compose_tilesheet(data, palette.data)
+            if sheet:
+                return tight_crop_decoded(sheet)
+
+    if magic == "RNAN":
+        ncer = _best_related(asset, related_assets, "RECN")
+        tile = _best_related(asset, related_assets, "RGCN")
+        palette = _best_related(asset, related_assets, "RLCN")
+        if ncer and tile and palette:
+            cells = parse_ncer_cells(ncer.data, max_cells=64)
+            if cells:
+                idx = _thumbnail_cell_index(asset, len(cells))
+                return render_ncer_cell(ncer.data, tile.data, palette.data, idx)
+
+    if magic == "RCSN":
+        tile = _best_related(asset, related_assets, "RGCN")
+        palette = _best_related(asset, related_assets, "RLCN")
+        if tile and palette:
+            screen = compose_screen(data, tile.data, palette.data)
+            if screen:
+                return tight_crop_decoded(screen)
+
+    related = decode_nitro2d_related_preview(asset, related_assets)
+    if related:
+        image = related[0]
+        if image.width > 96 or image.height > 96:
+            return tight_crop_decoded(image)
+        return image
+
+    solo = decode_nitro2d_preview(data, magic)
+    if solo:
+        image = solo[0]
+        if image.width > 96 or image.height > 96:
+            return tight_crop_decoded(image)
+        return image
+    return None
+
+
 def decode_ncer_oam_preview(data: bytes) -> DecodedImage | None:
     cells = parse_ncer_cells(data, max_cells=32)
     if not cells or Image is None:
@@ -478,29 +631,16 @@ def compose_ncer_cells(ncer_data: bytes, ncgr_data: bytes, nclr_data: bytes, *, 
     im = Image.new("RGBA", (cols * cell_w, rows * cell_h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(im) if ImageDraw else None
     for idx, oams in enumerate(cells):
-        base_x = (idx % cols) * cell_w + cell_w // 2
-        base_y = (idx // cols) * cell_h + cell_h // 2
-        for oam in oams:
-            # DS sprite tile index addresses 8x8 tiles. Wide/tall sprites consume
-            # sequential tiles left-to-right, top-to-bottom.
-            tiles_x = max(1, oam.width // 8)
-            tiles_y = max(1, oam.height // 8)
-            for ty in range(tiles_y):
-                for tx in range(tiles_x):
-                    tile_index = oam.tile_index + ty * tiles_x + tx
-                    pixels = tile_pixels(gfx, tile_index, palette, oam.palette_bank, oam.hflip, oam.vflip)
-                    px0 = base_x + oam.x + tx * 8
-                    py0 = base_y + oam.y + ty * 8
-                    for py in range(8):
-                        for px in range(8):
-                            color = pixels[py * 8 + px]
-                            if color[3] == 0:
-                                continue
-                            xx, yy = px0 + px, py0 + py
-                            if 0 <= xx < im.width and 0 <= yy < im.height:
-                                im.putpixel((xx, yy), color)
+        sprite = render_ncer_cell_oams(oams, gfx, palette)
+        if sprite is None:
+            continue
+        slot_x = (idx % cols) * cell_w
+        slot_y = (idx // cols) * cell_h
+        paste_x = slot_x + max(0, (cell_w - sprite.width) // 2)
+        paste_y = slot_y + max(0, (cell_h - sprite.height) // 2)
+        im.alpha_composite(sprite, (paste_x, paste_y))
         if draw:
-            draw.text(((idx % cols) * cell_w + 3, (idx // cols) * cell_h + 3), f"cell {idx}", fill=(255, 255, 255, 220))
+            draw.text((slot_x + 3, slot_y + 3), f"cell {idx}", fill=(255, 255, 255, 220))
     return DecodedImage(title, im.width, im.height, im.tobytes(), "NCER + NCGR + NCLR paired cell sheet")
 
 

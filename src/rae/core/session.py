@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Callable
 
 from ..scanner import Asset
+from ..virtual_texture_assets import physical_assets
 
 Progress = Callable[[str], None]
 
@@ -24,6 +25,8 @@ def save_session_zip(
     *,
     assets: list[Asset],
     rom_path: str | None,
+    rom_game_code: str = "",
+    rom_title: str = "",
     profile_text: str = "",
     mapping_id: str = "",
     pinned_texture_asset_id: str | None = None,
@@ -43,12 +46,13 @@ def save_session_zip(
         target = target.with_suffix(".raesession")
     target.parent.mkdir(parents=True, exist_ok=True)
 
+    stored_assets = physical_assets(assets)
     manifest_assets = []
-    total = len(assets)
+    total = len(stored_assets)
     if progress:
         progress(f"Saving RAE session with {total} asset(s): {target}")
     with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
-        for idx, asset in enumerate(assets, start=1):
+        for idx, asset in enumerate(stored_assets, start=1):
             if progress and (idx == 1 or idx % 250 == 0 or idx == total):
                 progress(f"Session save {idx}/{total}: {asset.virtual_path}")
             data_name = _safe_name(asset, ".bin")
@@ -80,6 +84,8 @@ def save_session_zip(
             "created_utc": datetime.now(timezone.utc).isoformat(),
             "source_rom_name": Path(rom_path).name if rom_path else "",
             "source_rom_path_note": str(rom_path or ""),
+            "source_rom_game_code": rom_game_code,
+            "source_rom_title": rom_title,
             "asset_count": total,
             "profile_text": profile_text,
             "mapping_id": mapping_id,

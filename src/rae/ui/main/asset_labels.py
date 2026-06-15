@@ -124,16 +124,33 @@ class AssetLabelsMixin:
         item.setText(3, breadcrumb)
         item.setToolTip(0, breadcrumb)
 
+    def _texture_slot_parent_asset(self, asset: Asset) -> Asset | None:
+        if not getattr(asset, "is_texture_slot", False) or not asset.parent_asset_id:
+            return None
+        by_id = getattr(self, "assets_by_id", {})
+        return by_id.get(asset.parent_asset_id)
+
     def _asset_display_name(self, asset: Asset) -> str:
         cached = self._display_name_cache.get(asset.asset_id)
         if cached is not None:
             return cached
-        label = asset_browser_name(asset)
+        if getattr(asset, "is_texture_slot", False) and asset.texture_slot:
+            label = asset.texture_slot
+        else:
+            label = asset_browser_name(asset)
         self._display_name_cache[asset.asset_id] = label
         return label
 
     def _asset_file_label(self, asset: Asset) -> str:
-        return asset_filename_label(asset.virtual_path)
+        parent = self._texture_slot_parent_asset(asset)
+        if parent is not None:
+            return asset_filename_label(parent.virtual_path)
+        return asset_filename_label(asset.virtual_path.split("#", 1)[0])
+
+    def _asset_type_label(self, asset: Asset) -> str:
+        if getattr(asset, "is_texture_slot", False):
+            return "Tex slot"
+        return TYPE_LABELS.get(asset.magic, asset.magic or asset.kind or "unknown")
 
     def _asset_names(self, asset: Asset) -> set[str]:
         names = self._name_cache.get(asset.asset_id)

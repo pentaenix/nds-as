@@ -105,7 +105,7 @@ class DetailsMixin:
             return
         details = [
             f"Name: {self._asset_display_name(asset)}",
-            f"File: {asset_filename_label(asset.virtual_path)}",
+            f"File: {self._asset_file_label(asset)}",
             f"Path: {asset.virtual_path}",
             f"Kind: {asset.kind}",
             f"Magic: {asset.magic}",
@@ -144,22 +144,36 @@ class DetailsMixin:
                 details.append("")
                 details.append("Tip: build apicula in tools/apicula/target/release/apicula or set DSAS_APICULA to its path.")
         elif asset.magic == "BTX0":
-            entries = self._btx0_texture_entries(asset)
-            names = [name for name, *_rest in entries] or sorted(self._asset_names(asset))
+            parent = self._texture_slot_parent_asset(asset) if getattr(asset, "is_texture_slot", False) else None
+            archive = parent or asset
+            entries = self._btx0_texture_entries(archive)
+            names = [name for name, *_rest in entries] or sorted(self._asset_names(archive))
             details.append("")
-            self._sync_btx0_texture_combo(asset)
-            preview_name = self._selected_btx0_texture_name or self._preview_btx0_texture_name(asset)
-            details.append(f"Texture dictionary entries: {len(entries) or len(names)}")
+            if getattr(asset, "is_texture_slot", False) and asset.texture_slot:
+                details.append(f"Texture slot: {asset.texture_slot}")
+                if parent is not None:
+                    details.append(f"Parent archive: {parent.virtual_path}")
+                self._selected_btx0_texture_name = asset.texture_slot
+            self._sync_btx0_texture_combo(archive)
+            preview_name = (
+                asset.texture_slot
+                if getattr(asset, "is_texture_slot", False) and asset.texture_slot
+                else self._selected_btx0_texture_name or self._preview_btx0_texture_name(archive)
+            )
+            if not getattr(asset, "is_texture_slot", False):
+                details.append(f"Texture dictionary entries: {len(entries) or len(names)}")
             if preview_name:
                 entry = next((row for row in entries if row[0] == preview_name), None)
                 details.append(f"Preview entry: {preview_name}")
                 if entry:
                     _name, fmt, width, height = entry
                     details.append(f"  Format: {fmt}  Size: {width}x{height}")
-            if len(entries) > 1:
-                details.append("  Use the Texture entry dropdown (preview panel) to switch dictionary slots.")
+            if not getattr(asset, "is_texture_slot", False) and len(entries) > 1:
+                details.append("  Each dictionary slot also appears as its own row under Texture slots in the browser.")
+                details.append("  Use the Texture entry dropdown (preview panel) to switch slots on the archive row.")
             details.append("Texture preview/decode runs on a worker thread when you select a row.")
-            details.append("Tip: click Use Selected BTX0 to pin this texture archive for the next BMD0 preview, or Extract Texture PNGs / Export Readable to save PNGs.")
+            if not getattr(asset, "is_texture_slot", False):
+                details.append("Tip: click Use Selected BTX0 to pin this texture archive for the next BMD0 preview, or Extract Texture PNGs / Export Readable to save PNGs.")
         elif asset.magic in {"RGCN", "RLCN", "RCSN", "RECN", "RNAN", "NFTR"}:
             details.append("")
             if asset.magic in {"RGCN", "RLCN", "RCSN", "RECN", "RNAN"}:
@@ -249,7 +263,7 @@ class DetailsMixin:
             if status:
                 lines.append(f"  {status}")
             lines.append("")
-            lines.append("  RAE auto-resolves textures on preview. Open the Texture Assigner tab to match textures to model parts.")
+            lines.append("  RAE auto-resolves textures on preview. Open Texture Assigner to match textures to model parts.")
             saved = len(self._texture_assignments.get(asset.asset_id, {}))
             if saved:
                 lines.append(f"  Manual texture assignments saved in session: {saved} part(s)")
@@ -262,7 +276,12 @@ class DetailsMixin:
             lines.append("")
             lines.append("Sprite/tile status")
             lines.append("  NCGR/RGCN = tile pixels; NCLR/RLCN = palette; NCER/RECN = cell layout; NANR/RNAN = animation timing.")
-            lines.append("  Set Textures or Export Selected… to build a focused bundle before preview/export.")
+            lines.append("  Multi-entry previews open the Texture Sheet tab to pick individual decoded entries.")
+        elif asset.magic == "BTX0":
+            lines.append("")
+            lines.append("Texture archive status")
+            lines.append("  Preview decodes NSBTX entries into a contact sheet when multiple textures are present.")
+            lines.append("  Use the Texture Sheet tab to inspect one decoded texture at a time.")
         elif asset.magic in {"SDAT", "SWAR", "SWAV", "STRM", "SSEQ", "SSAR", "SBNK"}:
             lines.append("")
             lines.append("Audio status")

@@ -104,3 +104,31 @@ def test_write_flipbook_preview_glbs_writes_one_glb_per_frame(tmp_path: Path) ->
         assert path.name == f"frame_{frame_idx:03d}.glb"
         glb = read_glb(path)
         assert glb.json["images"][0]["uri"] == f"lamp.{frame_idx + 1}.png"
+
+
+def test_write_patched_preview_glb_stages_subdir_textures(tmp_path: Path) -> None:
+    glb_path = tmp_path / "model.glb"
+    nested = tmp_path / "dsm_resolved_textures"
+    nested.mkdir()
+    png_path = nested / "tree_kage.png"
+    png_path.write_bytes(b"\x89PNG\r\n")
+    _write_minimal_glb(
+        glb_path,
+        materials=[
+            {"name": "Leaves"},
+            {"name": "Trunk"},
+        ],
+    )
+
+    out_path = tmp_path / "rae_preview.glb"
+    write_patched_preview_glb(
+        glb_path,
+        out_path,
+        mesh_labels=["Leaves"],
+        mesh_texture_paths=[png_path],
+        texture_by_name={"Trunk": png_path},
+        stage_texture_paths=[png_path],
+    )
+    assert (out_path.parent / "tree_kage.png").is_file()
+    patched = read_glb(out_path)
+    assert patched.json["images"][0]["uri"] == "tree_kage.png"

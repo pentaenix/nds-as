@@ -1,10 +1,13 @@
 """Qt WebEngine + three.js GLB preview."""
 from __future__ import annotations
 
+import base64
+import json
+import time
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, QUrl, Qt
-from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PySide6.QtCore import QEventLoop, QBuffer, QByteArray, QIODevice, QTimer, QUrl, Qt
+from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget, QApplication
 
 from .preview_server import get_preview_server
 
@@ -28,6 +31,15 @@ def _configure_web_settings(page) -> None:
     settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
     settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
     settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
+
+
+def _png_from_data_url(data_url: object) -> bytes | None:
+    if not isinstance(data_url, str) or not data_url.startswith("data:image/png;base64,"):
+        return None
+    try:
+        return base64.b64decode(data_url.split(",", 1)[1])
+    except Exception:
+        return None
 
 
 class WebGlbPreviewWidget(QWidget):
@@ -145,8 +157,6 @@ class WebGlbPreviewWidget(QWidget):
                 return
             if attempt >= 200:
                 return
-            from PySide6.QtCore import QTimer
-
             QTimer.singleShot(50, lambda: self._poll_api_ready(attempt=attempt + 1))
 
         self._view.page().runJavaScript("Boolean(window.raeGlbPreview)", _check)
@@ -179,6 +189,128 @@ class WebGlbPreviewWidget(QWidget):
         super().showEvent(event)
         if self._last_glb_path is not None:
             self.load_glb(self._last_glb_path)
+
+    def wait_until_api_ready(self, *, timeout_ms: int = 20000) -> bool:
+        if not self._available:
+            return False
+        if self._api_ready:
+            return True
+        loop = QEventLoop()
+        timer = QTimer()
+        timer.setSingleShot(True)
+        timer.timeout.connect(loop.quit)
+        timer.start(timeout_ms)
+
+        def poll() -> None:
+            if self._api_ready:
+                loop.quit()
+                return
+            QTimer.singleShot(50, poll)
+
+        poll()
+        loop.exec()
+        return self._api_ready
+
+    def _run_javascript_sync(self, js: str, *, timeout_ms: int = 5000) -> object:
+        """Run JS that returns plain data (never a Promise)."""
+        if not self._available:
+            return None
+        loop = QEventLoop()
+        holder: dict[str, object] = {"value": None}
+        timer = QTimer()
+        timer.setSingleShot(True)
+
+        def finish() -> None:
+            if loop.isRunning():
+                loop.quit()
+
+        def on_result(value: object) -> None:
+            holder["value"] = value
+            finish()
+
+        timer.timeout.connect(finish)
+        timer.start(timeout_ms)
+        self._view.page().runJavaScript(js, on_result)
+
+        def pump_events() -> None:
+            app = QApplication.instance()
+            if app is not None:
+                app.processEvents()
+            if loop.isRunning():
+                QTimer.singleShot(16, pump_events)
+
+        pump_events()
+        loop.exec()
+        return holder["value"]
+
+    def _grab_widget_png(self) -> bytes | None:
+        if not self._available:
+            return None
+        pixmap = self._view.grab()
+        if pixmap.isNull():
+            return None
+        ba = QByteArray()
+        buf = QBuffer(ba)
+        buf.open(QIODevice.OpenModeFlag.WriteOnly)
+        pixmap.save(buf, "PNG")
+        data = bytes(ba)
+        return data if len(data) > 64 else None
+
+    def capture_snapshot_png(
+        self,
+        glb_path: Path,
+        width: int,
+        height: int,
+        *,
+        timeout_ms: int = 60000,
+        yaw_deg: float = 35.0,
+        pitch_deg: float = 28.0,
+        zoom_factor: float = 1.0,
+        opaque_gray: bool = False,
+    ) -> bytes | None:
+        """Render a GLB to PNG using the same three.js path as the live viewport."""
+        del width, height, opaque_gray  # WYSIWYG: capture at widget size, not a resized pass.
+        if not self._available or self._server is None:
+            return None
+        if not self.wait_until_api_ready(timeout_ms=min(timeout_ms, 20000)):
+            return None
+
+        url = self._server.model_url(glb_path.resolve())
+        kickoff = (
+            "window.raeGlbPreview.beginSnapshotCapture("
+            f"{_js_string(url)}, {float(yaw_deg)}, {float(pitch_deg)}, {float(zoom_factor)}"
+            ");"
+        )
+        self._run_javascript_sync(kickoff, timeout_ms=5000)
+
+        deadline = time.monotonic() + (timeout_ms / 1000.0)
+        job_state: dict[str, object] = {}
+        while time.monotonic() < deadline:
+            app = QApplication.instance()
+            if app is not None:
+                app.processEvents()
+
+            raw = self._run_javascript_sync(
+                "window.raeGlbPreview.getSnapshotJobState()",
+                timeout_ms=3000,
+            )
+            if isinstance(raw, str):
+                try:
+                    job_state = json.loads(raw)
+                except json.JSONDecodeError:
+                    job_state = {}
+                if job_state.get("done"):
+                    png = _png_from_data_url(job_state.get("dataUrl"))
+                    if png and len(png) > 64:
+                        return png
+                    break
+
+            wait_loop = QEventLoop()
+            QTimer.singleShot(50, wait_loop.quit)
+            wait_loop.exec()
+
+        png = self._grab_widget_png()
+        return png
 
 
 def _js_string(value: str) -> str:
