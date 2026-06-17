@@ -10,6 +10,7 @@ from ...asset_resolver import MODEL_ANIMATION_MAGICS, folder_sibling_assets
 from ...exporter import convert_texture_with_apicula, convert_with_apicula, texture_outputs
 from ...glb_preview_textures import merge_texture_by_name, merge_texture_paths, texture_map_from_paths
 from ...model_texture_resolver import build_preview_texture_maps, resolve_model_textures, write_resolution_images
+from ...preview_policy import ModelPreviewPolicy, model_preview_policy
 from ...nitro_2d import (
     decode_nitro2d_preview,
     decode_nitro2d_related_preview,
@@ -67,6 +68,7 @@ class TextureResolveWorker(QThread):
         *,
         texture_library: TextureLibrary | None = None,
         texture_store: TextureLibraryStore | None = None,
+        preview_policy: ModelPreviewPolicy | None = None,
     ):
         super().__init__()
         self.asset = asset
@@ -75,6 +77,7 @@ class TextureResolveWorker(QThread):
         self.pinned_texture_asset_id = pinned_texture_asset_id
         self.texture_library = texture_library
         self.texture_store = texture_store
+        self.preview_policy = model_preview_policy(preview_policy)
 
     def _resolve_textures(self, pinned: Asset | None):
         resolution = resolve_model_textures(
@@ -84,6 +87,7 @@ class TextureResolveWorker(QThread):
             manual_texture=pinned,
             defer_library_build=True,
             progress=self.progress.emit,
+            policy=self.preview_policy,
         )
         if resolution.verified or (resolution.decoded_images and resolution.status != "unresolved"):
             return resolution
@@ -102,6 +106,7 @@ class TextureResolveWorker(QThread):
             texture_library=library,
             manual_texture=pinned,
             progress=self.progress.emit,
+            policy=self.preview_policy,
         )
 
     def run(self) -> None:
@@ -110,7 +115,7 @@ class TextureResolveWorker(QThread):
                 self.failed.emit(self.asset.asset_id, "Set Textures only works on BMD0/NSBMD model assets.")
                 return
             self.out_dir.mkdir(parents=True, exist_ok=True)
-            self.progress.emit("Set Textures: parsing the selected NSBMD/BMD0 model.")
+            self.progress.emit(f"Set Textures: parsing the selected NSBMD/BMD0 model ({self.preview_policy.label}).")
 
             pinned = None
             if self.pinned_texture_asset_id:
@@ -120,7 +125,11 @@ class TextureResolveWorker(QThread):
 
             resolution = self._resolve_textures(pinned)
 
-            report_lines = [resolution.report, ""]
+            report_lines = [
+                resolution.report,
+                "",
+                f"Preview quality policy: {self.preview_policy.label} ({self.preview_policy.summary()})",
+            ]
             selected_texture_id = ""
             siblings = [a for a in resolution.resolved_assets if a.magic == "BTX0"]
             if resolution.status == "embedded_texture" and resolution.decoded_images:
@@ -160,11 +169,16 @@ class TextureResolveWorker(QThread):
             result = convert_with_apicula(self.asset, trial_dir, sibling_assets=siblings, output_format="glb", more_textures=True)
 
             if result.ok and result.output_files:
+                result.preview_policy_key = self.preview_policy.cache_key
                 best_path = best_preview_path(result.output_files)
                 if best_path is not None:
                     result.output_files = [best_path, *[p for p in result.output_files if p != best_path]]
                 apicula_pngs = texture_outputs(trial_dir)
-                aux = write_resolution_images(resolution, trial_dir / "dsm_resolved_textures")
+                aux = write_resolution_images(
+                    resolution,
+                    trial_dir / "dsm_resolved_textures",
+                    max_images=self.preview_policy.max_decoded_images,
+                )
                 all_pngs = merge_texture_paths(apicula_pngs, aux)
                 if all_pngs:
                     result.auxiliary_files = all_pngs

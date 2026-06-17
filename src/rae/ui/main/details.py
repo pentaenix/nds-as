@@ -250,6 +250,9 @@ class DetailsMixin:
         if asset.magic == "BMD0":
             lines.append("")
             lines.append("Model texture status")
+            if hasattr(self, "_model_preview_policy"):
+                policy = self._model_preview_policy()
+                lines.append(f"  Preview quality: {policy.label} ({policy.summary()})")
             lines.append(f"  Pinned external texture: {pinned.virtual_path if pinned else 'none'}")
             fallback_count = self._preview_fallback_count_by_asset_id.get(asset.asset_id, 0)
             if fallback_count:

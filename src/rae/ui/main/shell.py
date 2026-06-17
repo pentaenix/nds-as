@@ -86,6 +86,7 @@ from ..constants import (
 )
 from ..preview_btx import write_btx_preview_images
 from ..preview_quality import CachedTextureResolution, TextureQuality, converted_texture_quality
+from ...preview_policy import MODEL_PREVIEW_QUALITY_CHOICES, ModelPreviewQuality, model_preview_policy
 from ..preview_widgets import PreviewWidget, qcolor_rgbf
 from ..workers import (
     FilterWorker,
@@ -125,6 +126,7 @@ class ShellMixin:
         self._texture_library_store = TextureLibraryStore()
         self._texture_resolution_cache: dict[str, CachedTextureResolution] = {}
         self._texture_preview_switch_to_details = False
+        self.model_preview_quality = ModelPreviewQuality.FULL_FIDELITY
         self._init_texture_assigner_state()
         self._init_texture_animation_state()
         self._init_texture_sheet_state()
@@ -153,6 +155,32 @@ class ShellMixin:
 
         self._build_ui()
         self._update_status("Open a local .nds ROM to start. Use ./rae run next time to launch this app.")
+
+    def _model_preview_policy(self):
+        return model_preview_policy(getattr(self, "model_preview_quality", ModelPreviewQuality.FULL_FIDELITY))
+
+    def _on_model_preview_quality_changed(self, _index: int) -> None:
+        if not hasattr(self, "model_preview_quality_box"):
+            return
+        value = self.model_preview_quality_box.currentData()
+        quality = value if isinstance(value, ModelPreviewQuality) else ModelPreviewQuality(str(value))
+        old_policy = self._model_preview_policy()
+        if quality == old_policy.mode:
+            return
+        self.model_preview_quality = quality
+        policy = self._model_preview_policy()
+        # Texture-resolution preview caches are keyed by asset today, so avoid
+        # accidentally reusing a Full Fidelity GLB after switching to a faster mode.
+        self._texture_resolution_cache.clear()
+        self._preview_status_by_asset_id.clear()
+        self._preview_fallback_count_by_asset_id.clear()
+        self._update_status(f"Model preview quality changed to {policy.label}: {policy.summary()}.")
+        asset = self.selected_asset() if hasattr(self, "selected_asset") else None
+        if asset is not None and asset.magic == "BMD0":
+            self._last_texture_resolve_report.pop(asset.asset_id, None)
+            self._update_preview_details(asset)
+            # Re-run the currently selected model under the new app-wide policy.
+            QTimer.singleShot(0, lambda: self._preview_model_with_textures(asset, manual=False, force=True, switch_to_details=False))
 
     def _build_ui(self) -> None:
         menubar = self.menuBar()
@@ -389,8 +417,16 @@ class ShellMixin:
         self.export_button = QPushButton("Export…")
         self.export_button.setToolTip("Export the selected asset, or export a tree folder as a ZIP when a folder row is selected.")
         self.export_button.clicked.connect(self.export_selected_smart)
+        self.model_preview_quality_box = QComboBox()
+        for quality, label in MODEL_PREVIEW_QUALITY_CHOICES:
+            self.model_preview_quality_box.addItem(label, quality)
+        self.model_preview_quality_box.setToolTip(
+            "Temporary per-run model preview quality. Resets to Full Fidelity on app restart."
+        )
+        self.model_preview_quality_box.currentIndexChanged.connect(self._on_model_preview_quality_changed)
         self.preview.action_layout.addWidget(self.reset_view_button)
         self.preview.action_layout.addWidget(self.export_button)
+        self.preview.action_layout.addWidget(self.model_preview_quality_box)
 
         self.preview_inspector = QWidget()
         inspector_layout = QVBoxLayout(self.preview_inspector)

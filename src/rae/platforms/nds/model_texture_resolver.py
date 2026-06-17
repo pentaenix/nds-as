@@ -14,6 +14,7 @@ from .nitro_textures import (
     decode_guided_tex0_report,
 )
 from .texture_library import TextureBinding, TextureLibrary
+from ...preview_policy import ModelPreviewPolicy, model_preview_policy
 
 ResolutionStatus = Literal[
     "textured_verified",
@@ -96,30 +97,54 @@ def _embedded_resolution(
     model: Asset,
     manifest: NsbmdManifest,
     lines: list[str],
+    *,
+    policy: ModelPreviewPolicy | None = None,
 ) -> ModelTextureResolution | None:
-    embedded_images = decode_btx_images(model.data, max_images=128, mode="resolved")
-    embedded_reason = "embedded TEX0 in NSBMD"
-    if not embedded_images and manifest.embedded_tex0 is not None:
-        embedded_images = decode_btx_images(model.data, max_images=128, mode="all-palettes")
-        if embedded_images:
-            embedded_reason = "embedded TEX0 in NSBMD; palette pairing was not proven, decoded inspectable variants"
-            lines.append("- embedded TEX0 strict material/palette pairing did not decode; using embedded palette variants for preview/export")
-    if not embedded_images and manifest.embedded_tex0 is not None:
+    policy = model_preview_policy(policy)
+    if policy.geometry_only:
+        lines.append(f"- preview quality {policy.label}: embedded texture decode skipped")
+        return None
+    max_images = policy.max_decoded_images or 128
+    if policy.exact_materials_only and manifest.embedded_tex0 is not None:
         guided_report = decode_guided_tex0_report(
             model.data,
             texture_requests=_material_texture_requests(manifest),
-            max_images=128,
+            max_images=max_images,
         )
-        if guided_report.images:
-            embedded_images = guided_report.images
-            embedded_reason = "embedded TEX0 decoded via NSBMD material/dictionary requests"
-            lines.append("- generic embedded decode failed; material-guided TEX0 decode succeeded")
-        elif guided_report.failures:
-            lines.append("- embedded TEX0 guided decode diagnostics:")
-            for failure in guided_report.failures[:12]:
-                lines.extend(f"- {line}" for line in format_decode_failure(failure, source_path=model.virtual_path))
-            for summary in guided_report.candidate_summaries[:4]:
-                lines.append(f"- {summary}")
+        embedded_images = guided_report.images
+        embedded_reason = "embedded TEX0 decoded via exact NSBMD material/dictionary requests"
+        if not embedded_images:
+            lines.append(
+                f"- preview quality {policy.label}: no exact embedded material texture match decoded; broad embedded fallback skipped"
+            )
+            return None
+        lines.append(
+            f"- preview quality {policy.label}: exact embedded material decode returned {len(embedded_images)} image(s)"
+        )
+    else:
+        embedded_images = decode_btx_images(model.data, max_images=max_images, mode="resolved")
+        embedded_reason = "embedded TEX0 in NSBMD"
+        if not embedded_images and manifest.embedded_tex0 is not None:
+            embedded_images = decode_btx_images(model.data, max_images=max_images, mode="all-palettes")
+            if embedded_images:
+                embedded_reason = "embedded TEX0 in NSBMD; palette pairing was not proven, decoded inspectable variants"
+                lines.append("- embedded TEX0 strict material/palette pairing did not decode; using embedded palette variants for preview/export")
+        if not embedded_images and manifest.embedded_tex0 is not None:
+            guided_report = decode_guided_tex0_report(
+                model.data,
+                texture_requests=_material_texture_requests(manifest),
+                max_images=max_images,
+            )
+            if guided_report.images:
+                embedded_images = guided_report.images
+                embedded_reason = "embedded TEX0 decoded via NSBMD material/dictionary requests"
+                lines.append("- generic embedded decode failed; material-guided TEX0 decode succeeded")
+            elif guided_report.failures:
+                lines.append("- embedded TEX0 guided decode diagnostics:")
+                for failure in guided_report.failures[:12]:
+                    lines.extend(f"- {line}" for line in format_decode_failure(failure, source_path=model.virtual_path))
+                for summary in guided_report.candidate_summaries[:4]:
+                    lines.append(f"- {summary}")
     if not embedded_images:
         return None
     lines.append(f"- embedded TEX0 decoded {len(embedded_images)} texture image(s)")
@@ -140,7 +165,10 @@ def _resolve_from_library(
     *,
     asset_filter: set[str] | None = None,
     reason_prefix: str = "exact NSBMD material texture name matched NSBTX texture dictionary name",
+    policy: ModelPreviewPolicy | None = None,
 ) -> tuple[list[ResolvedMaterialTexture], list[DecodedImage], list[MaterialBinding], list[Asset], list[str]]:
+    policy = model_preview_policy(policy)
+    max_images = policy.max_decoded_images
     resolved: list[ResolvedMaterialTexture] = []
     decoded_images: list[DecodedImage] = []
     unresolved: list[MaterialBinding] = []
@@ -166,6 +194,12 @@ def _resolve_from_library(
             reason = binding.reason
             status_for_binding = "strict"
             if image is None:
+                if not policy.allow_palette_variants:
+                    unresolved.append(material)
+                    lines.append(
+                        f"- preview quality {policy.label}: skipped palette-variant decode for {binding.texture_name} in {binding.texture_asset_path}"
+                    )
+                    continue
                 images_for_binding = texture_library.decode_texture_all_palettes(binding.texture_asset_id, binding.texture_name)
                 if images_for_binding:
                     reason = f"{reason_prefix}; palette pairing not proven, decoded all palette variants"
@@ -190,6 +224,11 @@ def _resolve_from_library(
                 if key not in seen_images:
                     decoded_images.append(img)
                     seen_images.add(key)
+                    if max_images is not None and len(decoded_images) >= max_images:
+                        lines.append(
+                            f"- preview quality {policy.label}: stopped texture decode at {max_images} image(s); switch to Full Fidelity for exhaustive fallback"
+                        )
+                        return resolved, decoded_images, unresolved, resolved_assets, lines
             first_image = images_for_binding[0] if images_for_binding else None
             resolved.append(ResolvedMaterialTexture(
                 material_name=material.material_name,
@@ -211,7 +250,10 @@ def _sibling_btx0_resolution(
     manifest: NsbmdManifest,
     assets: Iterable[Asset],
     lines: list[str],
+    *,
+    policy: ModelPreviewPolicy | None = None,
 ) -> ModelTextureResolution | None:
+    policy = model_preview_policy(policy)
     siblings = _sibling_btx0_assets(model, assets)
     if not siblings:
         return None
@@ -221,7 +263,7 @@ def _sibling_btx0_resolution(
     decoded_images: list[DecodedImage] = []
     resolved_assets: list[Asset] = []
     for btx in siblings:
-        images = decode_guided_tex0_images(btx.data, texture_requests=requests, max_images=128)
+        images = decode_guided_tex0_images(btx.data, texture_requests=requests, max_images=policy.max_decoded_images or 128)
         if not images:
             continue
         decoded_images.extend(images)
@@ -245,7 +287,9 @@ def resolve_model_textures(
     manual_texture: Asset | None = None,
     defer_library_build: bool = False,
     progress=None,
+    policy: ModelPreviewPolicy | None = None,
 ) -> ModelTextureResolution:
+    policy = model_preview_policy(policy)
     def log(text: str) -> None:
         if progress:
             progress(text)
@@ -255,10 +299,14 @@ def resolve_model_textures(
         return ModelTextureResolution("unresolved", None, report="Selected asset is not a valid BMD0/NSBMD model.")
 
     lines = ["Texture resolution report", f"Model: {model.virtual_path}", ""]
+    lines.append(f"Preview quality: {policy.label} ({policy.summary()})")
+    if policy.geometry_only:
+        lines.append("- texture resolution skipped by selected preview quality")
+        return ModelTextureResolution("unresolved", manifest, report="\n".join(lines))
     lines.extend(f"- {note}" for note in manifest.parse_notes)
     lines.append(f"- reliable model dictionary names: {len(manifest.raw_names)}")
 
-    embedded = _embedded_resolution(model, manifest, lines)
+    embedded = _embedded_resolution(model, manifest, lines, policy=policy)
     if embedded is not None:
         return embedded
 
@@ -267,7 +315,7 @@ def resolve_model_textures(
     if texture_library is None:
         if defer_library_build:
             if manual_texture is not None and manual_texture.magic == "BTX0":
-                images = decode_btx_images(manual_texture.data, max_images=128, mode="all-palettes")
+                images = decode_btx_images(manual_texture.data, max_images=policy.max_decoded_images or 128, mode="all-palettes")
                 lines.append(f"- manual BTX0 override: {manual_texture.virtual_path}")
                 lines.append(f"- manual override decoded {len(images)} texture image(s); pairing is user-selected, not proven by model manifest")
                 bindings = [
@@ -286,7 +334,7 @@ def resolve_model_textures(
 
     # 2. Exact texture dictionary matches.
     log("Resolving model material texture names against the NSBTX texture dictionary...")
-    resolved, decoded_images, unresolved, resolved_assets, library_lines = _resolve_from_library(model, manifest, texture_library)
+    resolved, decoded_images, unresolved, resolved_assets, library_lines = _resolve_from_library(model, manifest, texture_library, policy=policy)
     lines.extend(library_lines)
 
     if resolved and decoded_images:
@@ -305,6 +353,7 @@ def resolve_model_textures(
             texture_library,
             asset_filter=sibling_ids,
             reason_prefix="exact material name matched NSBTX in the same archive/folder",
+            policy=policy,
         )
         lines.extend(sibling_lines)
         if sibling_resolved and sibling_images:
@@ -312,14 +361,14 @@ def resolve_model_textures(
             status = "exact_match_unverified"
             return ModelTextureResolution(status, manifest, sibling_resolved, sibling_images, sibling_unresolved, sibling_assets, "\n".join(lines))
 
-    sibling_guided = _sibling_btx0_resolution(model, manifest, asset_list, lines)
+    sibling_guided = _sibling_btx0_resolution(model, manifest, asset_list, lines, policy=policy)
     if sibling_guided is not None:
         return sibling_guided
 
     # 3. Manual override. This is explicit, not automatic proof. Decode all palettes
     # for inspection and preview fallback, but mark the status honestly.
     if manual_texture is not None and manual_texture.magic == "BTX0":
-        images = decode_btx_images(manual_texture.data, max_images=128, mode="all-palettes")
+        images = decode_btx_images(manual_texture.data, max_images=policy.max_decoded_images or 128, mode="all-palettes")
         lines.append(f"- manual BTX0 override: {manual_texture.virtual_path}")
         lines.append(f"- manual override decoded {len(images)} texture image(s); pairing is user-selected, not proven by model manifest")
         bindings = [ResolvedMaterialTexture(img.name, img.name, img.palette_name, manual_texture.asset_id, manual_texture.virtual_path, img, "manual BTX0 override") for img in images]
@@ -334,11 +383,19 @@ def resolve_model_textures(
     return ModelTextureResolution("unresolved", manifest, [], [], unresolved, [], "\n".join(lines))
 
 
-def write_resolution_images(resolution: ModelTextureResolution, out_dir: str | Path) -> list[Path]:
+def write_resolution_images(
+    resolution: ModelTextureResolution,
+    out_dir: str | Path,
+    *,
+    max_images: int | None = None,
+) -> list[Path]:
     from .nitro_textures import save_decoded_images
     if not resolution.decoded_images:
         return []
-    return save_decoded_images(resolution.decoded_images, out_dir, prefix="resolved_texture")
+    images = resolution.decoded_images
+    if max_images is not None:
+        images = images[:max_images]
+    return save_decoded_images(images, out_dir, prefix="resolved_texture")
 
 
 def build_preview_texture_maps(

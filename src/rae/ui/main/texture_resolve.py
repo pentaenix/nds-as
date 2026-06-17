@@ -84,6 +84,7 @@ from ..constants import (
 )
 from ..preview_btx import write_btx_preview_images
 from ..preview_quality import CachedTextureResolution, TextureQuality, best_preview_path, converted_texture_quality
+from ...preview_policy import ModelPreviewQuality
 from ..preview_widgets import PreviewWidget, qcolor_rgbf
 from ..workers import (
     FilterWorker,
@@ -133,8 +134,23 @@ class TextureResolveMixin:
             self.show_selected_details()
             self.info_tabs.setCurrentWidget(self.details)
 
+
+    def _full_fidelity_auto_preview_is_risky(self, asset: Asset) -> bool:
+        if asset.magic != "BMD0":
+            return False
+        if not self._model_preview_policy().full_fidelity:
+            return False
+        if self._texture_warmup_running():
+            return True
+        btx_count = sum(1 for item in self.assets if item.magic == "BTX0")
+        # Gen 5-style ROMs can expose thousands of texture dictionaries. Full
+        # Fidelity remains available manually, but Auto Preview should not start
+        # an exhaustive resolver job just because the user clicked a row.
+        return btx_count >= 1000
+
     def _start_texture_resolve_worker(self, asset: Asset) -> None:
-        out_dir = self.preview_temp / asset.asset_id / "texture_resolve"
+        policy = self._model_preview_policy()
+        out_dir = self.preview_temp / asset.asset_id / f"texture_resolve_{policy.cache_key}"
         self.texture_resolve_worker = TextureResolveWorker(
             asset,
             out_dir,
@@ -142,6 +158,7 @@ class TextureResolveMixin:
             self._pinned_texture_asset_id,
             texture_library=self._texture_library_for_session(),
             texture_store=self._texture_library_store,
+            preview_policy=policy,
         )
         self.texture_resolve_worker.progress.connect(self._update_status)
         self.texture_resolve_worker.finished_ok.connect(self._texture_resolve_finished)
@@ -168,12 +185,33 @@ class TextureResolveMixin:
                 self._update_status("apicula was not found, so RAE can list/export but not preview models yet.")
             return
 
+        policy = self._model_preview_policy()
+        if policy.geometry_only:
+            self._last_texture_resolve_report[asset.asset_id] = (
+                "Texture resolution report\n"
+                f"Preview quality: {policy.label} — texture matching skipped by user-selected preview mode."
+            )
+            self._start_geometry_preview(asset, manual=manual)
+            return
+        if not manual and self._full_fidelity_auto_preview_is_risky(asset):
+            self._last_texture_resolve_report[asset.asset_id] = (
+                "Texture resolution report\n"
+                "Preview quality: Full Fidelity\n"
+                "Auto Preview paused: this ROM has many texture archives or the texture index is still warming. "
+                "Use Preview manually for exhaustive matching, or switch Model Preview to Balanced/Fast Textured while browsing."
+            )
+            self.preview.show_message(
+                f"Full Fidelity Auto Preview paused for this model.\n\n{asset.virtual_path}\n\n"
+                "Use Preview manually to run the exhaustive resolver, or switch Model Preview to Balanced/Fast Textured."
+            )
+            self._update_status(f"Auto Preview paused for expensive Full Fidelity model preview: {asset.virtual_path}")
+            self._update_preview_details(asset)
+            return
         if self.texture_resolve_worker is not None and self.texture_resolve_worker.isRunning():
             self._queued_preview_asset_id = asset.asset_id
             self._update_status(f"Queued textured preview for {asset.virtual_path}...")
             return
-
-        if not force:
+        if not force and policy.full_fidelity:
             cached = self._get_cached_texture_resolution(asset.asset_id)
             if cached is not None:
                 self._apply_texture_resolution_cache(asset, cached, switch_to_details=switch_to_details)
@@ -192,10 +230,11 @@ class TextureResolveMixin:
         )
         self.preview.show_message(
             f"Previewing model with textures...\n\n{asset.virtual_path}{pin_note}\n\n"
+            f"Preview quality: {policy.label} — {policy.summary()}\n"
             "RAE is matching NSBMD materials to NSBTX dictionaries and converting the preview."
             f"{warmup_note}"
         )
-        self._update_status(f"Previewing textured model: {asset.virtual_path}")
+        self._update_status(f"Previewing textured model ({policy.label}): {asset.virtual_path}")
         self._start_texture_resolve_worker(asset)
 
     def _finish_texture_preview_queue(self, completed_asset_id: str) -> None:
@@ -223,16 +262,17 @@ class TextureResolveMixin:
             texture_by_name = dict(getattr(result, "texture_by_name", {}) or {})
             material_to_texture = dict(getattr(result, "material_to_texture", {}) or {})
             texture_bind_order = list(getattr(result, "texture_bind_order", []) or [])
-            self._store_texture_resolution_cache(
-                asset_id,
-                report=report,
-                selected_texture_id=texture_asset_id,
-                preview_path=first,
-                auxiliary_paths=fallback_paths,
-                texture_by_name=texture_by_name,
-                material_to_texture=material_to_texture,
-                texture_bind_order=texture_bind_order,
-            )
+            if getattr(result, "preview_policy_key", "full_fidelity") == ModelPreviewQuality.FULL_FIDELITY.value:
+                self._store_texture_resolution_cache(
+                    asset_id,
+                    report=report,
+                    selected_texture_id=texture_asset_id,
+                    preview_path=first,
+                    auxiliary_paths=fallback_paths,
+                    texture_by_name=texture_by_name,
+                    material_to_texture=material_to_texture,
+                    texture_bind_order=texture_bind_order,
+                )
             selected = self.selected_asset()
             if selected is not None and selected.asset_id == asset_id:
                 self._load_model_preview_glb(
