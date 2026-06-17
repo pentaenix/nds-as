@@ -1,6 +1,7 @@
 """Re-export canvas layout helpers for UI code."""
 from ...easyfind.canvas_filters import (
     FOCUS_COLOR_OPTIONS,
+    FOCUS_REGION_OPTIONS,
     GROUP_BY_OPTIONS,
     EasyFindCanvasFilters,
     SECTION_DISPLAY_NAMES,
@@ -24,6 +25,7 @@ from ...easyfind.canvas_layout import (
 
 __all__ = [
     "FOCUS_COLOR_OPTIONS",
+    "FOCUS_REGION_OPTIONS",
     "GROUP_BY_OPTIONS",
     "EasyFindCanvasFilters",
     "EasyFindCanvasLayout",

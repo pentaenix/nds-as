@@ -3,6 +3,14 @@
   "mappingId": "pokemon_pt",
   "generatedOn": "2026-06-05",
   "gameFamily": "pokemon_gen4",
+  "usageProfile": "pokemon_gen4",
+  "usageArchives": {
+    "mapNames": "/fielddata/maptable/mapname.bin",
+    "areaData": "/fielddata/areadata/area_data.narc",
+    "areaBuild": "/fielddata/areadata/area_build_model/area_build.narc",
+    "buildModels": "/fielddata/build_model/build_model.narc",
+    "landData": "/fielddata/land_data/land_data.narc"
+  },
   "coverage": "good-filelist-partial-semantic",
   "notes": "Platinum paths are based on Project Pokémon rawdb. Many DP assets remain, with Platinum-specific copies and additions.",
   "games": [

@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QScrollArea,
     QTabWidget,
@@ -17,7 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..constants import CHROME_BUTTON_STYLE
-from ...easyfind.canvas_filters import FOCUS_OP_OFF, FOCUS_OP_OPTIONS
+from ...easyfind.canvas_filters import FOCUS_OP_OFF, FOCUS_OP_OPTIONS, FOCUS_REGION_OPTIONS
 from .layout import FOCUS_COLOR_OPTIONS, GROUP_BY_OPTIONS, TYPE_FILTER_OPTIONS
 
 PANEL_STYLE = """
@@ -95,6 +96,62 @@ def _focus_clause_header(layout: QVBoxLayout, label: str, op_combo: QComboBox) -
     layout.addLayout(row)
 
 
+def _searchable_checkbox_scroll(
+    *,
+    max_height: int = 120,
+) -> tuple[QScrollArea, QLineEdit, QWidget, dict[str, QCheckBox]]:
+    search = QLineEdit()
+    search.setPlaceholderText("Search…")
+    search.setClearButtonEnabled(True)
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setMaximumHeight(max_height)
+    scroll.setStyleSheet("background: transparent; border: none;")
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(4)
+    layout.addStretch()
+    scroll.setWidget(host)
+    checks: dict[str, QCheckBox] = {}
+    return scroll, search, host, checks
+
+
+def _repopulate_map_checks(
+    host: QWidget,
+    checks: dict[str, QCheckBox],
+    *,
+    locations: list,
+    tagged_location_ids: set[str],
+    only_tagged: bool = True,
+) -> None:
+    layout = host.layout()
+    while layout.count():
+        item = layout.takeAt(0)
+        widget = item.widget()
+        if widget is not None:
+            widget.deleteLater()
+    checks.clear()
+    for loc in sorted(locations, key=lambda item: (item.group, item.order or 0, item.name)):
+        if getattr(loc, "kind", "") != "map":
+            continue
+        if only_tagged and loc.location_id not in tagged_location_ids:
+            continue
+        cb = QCheckBox(loc.name)
+        cb.setProperty("location_id", loc.location_id)
+        cb.setProperty("search_text", f"{loc.name} {loc.location_id} {' '.join(loc.aliases)}".casefold())
+        checks[loc.location_id] = cb
+        layout.addWidget(cb)
+    layout.addStretch()
+
+
+def _apply_map_search_filter(checks: dict[str, QCheckBox], query: str) -> None:
+    needle = query.strip().casefold()
+    for cb in checks.values():
+        hay = str(cb.property("search_text") or cb.text().casefold())
+        cb.setVisible(not needle or needle in hay)
+
+
 def _checked_colors(checks: dict[str, QCheckBox]) -> frozenset[str]:
     return frozenset(key for key, cb in checks.items() if cb.isChecked())
 
@@ -116,7 +173,14 @@ class EasyFindControlsPanel(QFrame):
         self._secondary_color_checks: dict[str, QCheckBox] = {}
         self._primary_op_combo: QComboBox | None = None
         self._secondary_op_combo: QComboBox | None = None
+        self._region_op_combo: QComboBox | None = None
+        self._map_op_combo: QComboBox | None = None
         self._type_op_combo: QComboBox | None = None
+        self._region_color_checks: dict[str, QCheckBox] = {}
+        self._map_checks: dict[str, QCheckBox] = {}
+        self._map_search: QLineEdit | None = None
+        self._map_scroll_host: QWidget | None = None
+        self._place_section: QWidget | None = None
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -235,9 +299,9 @@ class EasyFindControlsPanel(QFrame):
         layout.setSpacing(8)
 
         hint = QLabel(
-            "Focus: empty primary = any main color. Secondary = accent colors in the thumbnail "
-            "(not the main color). Click a cluster arrow to open; double-click an open cluster to close. "
-            "Use — / AND / OR / NOT before each filter row."
+            "Focus: empty primary = any main color. Secondary = accent colors (not main). "
+            "Region / Map filter assets by in-game placement (rebuild EasyFind to refresh). "
+            "Click a cluster arrow to open; double-click an open cluster to close."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #b8b8b8; font-size: 11px;")
@@ -253,6 +317,31 @@ class EasyFindControlsPanel(QFrame):
         secondary_scroll, self._secondary_color_checks = _color_checkbox_scroll(FOCUS_COLOR_OPTIONS)
         layout.addWidget(secondary_scroll)
 
+        self._place_section = QWidget()
+        place_layout = QVBoxLayout(self._place_section)
+        place_layout.setContentsMargins(0, 0, 0, 0)
+        place_layout.setSpacing(8)
+
+        self._region_op_combo = _focus_op_combo()
+        _focus_clause_header(place_layout, "Region", self._region_op_combo)
+        region_scroll, self._region_color_checks = _color_checkbox_scroll(FOCUS_REGION_OPTIONS, skip_any=False)
+        place_layout.addWidget(region_scroll)
+
+        self._map_op_combo = _focus_op_combo()
+        _focus_clause_header(place_layout, "Map", self._map_op_combo)
+        map_search_row = QHBoxLayout()
+        self._map_search = QLineEdit()
+        self._map_search.setPlaceholderText("Search maps…")
+        self._map_search.setClearButtonEnabled(True)
+        self._map_search.textChanged.connect(self._on_map_search_changed)
+        map_search_row.addWidget(self._map_search)
+        place_layout.addLayout(map_search_row)
+        map_scroll, _, self._map_scroll_host, self._map_checks = _searchable_checkbox_scroll(max_height=140)
+        place_layout.addWidget(map_scroll)
+
+        layout.addWidget(self._place_section)
+        self._place_section.hide()
+
         self._type_op_combo = _focus_op_combo()
         _focus_clause_header(layout, "Type", self._type_op_combo)
         self.focus_type_box = QComboBox()
@@ -262,15 +351,72 @@ class EasyFindControlsPanel(QFrame):
         layout.addStretch()
         return tab
 
+    def _on_map_search_changed(self, text: str) -> None:
+        _apply_map_search_filter(self._map_checks, text)
+
+    def set_place_options(self, document) -> None:
+        """Populate Region/Map controls from a loaded EasyFind document."""
+        if self._place_section is None or self._map_scroll_host is None:
+            return
+        locations = list(getattr(document, "locations", []) or [])
+        tagged_ids = {
+            tag.location_id
+            for tag in getattr(document, "asset_tags", []) or []
+            if tag.location_id
+        }
+        has_places = bool(locations)
+        self._place_section.setVisible(has_places)
+        if not has_places:
+            return
+        _repopulate_map_checks(
+            self._map_scroll_host,
+            self._map_checks,
+            locations=locations,
+            tagged_location_ids=tagged_ids,
+            only_tagged=True,
+        )
+        if not self._map_checks:
+            _repopulate_map_checks(
+                self._map_scroll_host,
+                self._map_checks,
+                locations=locations,
+                tagged_location_ids=tagged_ids,
+                only_tagged=False,
+            )
+        if self._map_search is not None:
+            self._on_map_search_changed(self._map_search.text())
+
+    def apply_map_filter(self, location_id: str) -> None:
+        """Select a single map and clear other map checks."""
+        for cb in self._map_checks.values():
+            cb.setChecked(False)
+        target = self._map_checks.get(location_id)
+        if target is not None:
+            target.setChecked(True)
+        if self._map_op_combo is not None:
+            index = self._map_op_combo.findData(FOCUS_OP_OFF)
+            if index >= 0:
+                self._map_op_combo.setCurrentIndex(index)
+
     def _clear_focus(self) -> None:
         for cb in self._primary_color_checks.values():
             cb.setChecked(False)
         for cb in self._secondary_color_checks.values():
             cb.setChecked(False)
+        for cb in self._region_color_checks.values():
+            cb.setChecked(False)
+        for cb in self._map_checks.values():
+            cb.setChecked(False)
+        if self._map_search is not None:
+            self._map_search.clear()
         if self._primary_op_combo is not None:
             self._primary_op_combo.setCurrentIndex(0)
         if self._secondary_op_combo is not None:
             self._secondary_op_combo.setCurrentIndex(0)
+        if self._region_op_combo is not None:
+            self._region_op_combo.setCurrentIndex(0)
+        if self._map_op_combo is not None:
+            self._map_op_combo.setCurrentIndex(0)
         if self._type_op_combo is not None:
             self._type_op_combo.setCurrentIndex(0)
         self.focus_type_box.setCurrentIndex(0)
@@ -297,6 +443,10 @@ class EasyFindControlsPanel(QFrame):
                 focus_secondary_colors=_checked_colors(self._secondary_color_checks),
                 focus_primary_op=self._primary_op_combo.currentData() if self._primary_op_combo else FOCUS_OP_OFF,
                 focus_secondary_op=self._secondary_op_combo.currentData() if self._secondary_op_combo else FOCUS_OP_OFF,
+                focus_region_groups=_checked_colors(self._region_color_checks),
+                focus_region_op=self._region_op_combo.currentData() if self._region_op_combo else FOCUS_OP_OFF,
+                focus_map_ids=_checked_colors(self._map_checks),
+                focus_map_op=self._map_op_combo.currentData() if self._map_op_combo else FOCUS_OP_OFF,
                 focus_type_op=self._type_op_combo.currentData() if self._type_op_combo else FOCUS_OP_OFF,
                 focus_type=self.focus_type_box.currentData() or "any",
             )

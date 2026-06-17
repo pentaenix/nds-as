@@ -3,6 +3,14 @@
   "mappingId": "pokemon_hgss",
   "generatedOn": "2026-06-05",
   "gameFamily": "pokemon_gen4",
+  "usageProfile": "pokemon_gen4",
+  "usageArchives": {
+    "mapNames": "/fielddata/maptable/mapname.bin",
+    "areaData": "/a/0/4/2",
+    "areaBuild": "/a/0/4/3",
+    "buildModels": "/a/0/4/0",
+    "landData": "/a/0/6/5"
+  },
   "coverage": "strong-public-narc-map-partial-relations",
   "notes": "HGSS has strong public numbered NARC notes. This seed favors asset extraction/rendering categories and includes known model↔texture relationship archives.",
   "games": [

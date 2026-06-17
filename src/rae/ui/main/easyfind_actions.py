@@ -103,6 +103,7 @@ class EasyFindActionsMixin:
         ws.canvas_view.cluster_expand_requested.connect(self._expand_easyfind_cluster)
         ws.canvas_view.cluster_collapse_requested.connect(self._collapse_easyfind_cluster)
         ws.inspector_panel.show_in_browser_requested.connect(self._show_easyfind_node_in_browser)
+        ws.inspector_panel.filter_map_requested.connect(self._easyfind_filter_by_map)
 
         if hasattr(self, "workspace_stack"):
             self.workspace_stack.addWidget(ws)
@@ -378,6 +379,7 @@ class EasyFindActionsMixin:
         )
         if self._in_easyfind_workspace:
             self._show_easyfind_map_workspace(restore_layout=False)
+            self.easyfind_workspace.controls_panel.set_place_options(document)
         self._update_main_toolbar()
 
     def _on_easyfind_load_failed(self, message: str, job_id: int) -> None:
@@ -714,7 +716,19 @@ class EasyFindActionsMixin:
         asset = None
         if item.node.asset_refs:
             asset = scene._assets_by_id.get(item.node.asset_refs[0].asset_id)
-        self.easyfind_workspace.inspector_panel.show_node(item.node, asset)
+        self.easyfind_workspace.inspector_panel.show_node(
+            item.node,
+            asset,
+            document=self._easyfind_document,
+        )
+
+    def _easyfind_filter_by_map(self, location_id: str) -> None:
+        if not location_id:
+            return
+        ws = self.easyfind_workspace
+        ws.controls_panel.tabs.setCurrentIndex(1)
+        ws.controls_panel.apply_map_filter(location_id)
+        self._apply_easyfind_canvas_filters()
 
     def _show_easyfind_node_in_browser(self, node_id: str) -> None:
         if not node_id:

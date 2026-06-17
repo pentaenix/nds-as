@@ -53,6 +53,8 @@ GROUPING_LEVELS: dict[str, tuple[str, ...]] = {
     "type": ("type", "color"),
     "color_type": ("color", "type"),
     "type_color": ("type", "color"),
+    "location": ("location",),
+    "region": ("region",),
 }
 
 DEFAULT_HIDDEN_MAGICS: frozenset[str] = frozenset({"RLCN"})
@@ -73,6 +75,10 @@ FOCUS_OP_OPTIONS: tuple[tuple[str, str], ...] = (
     (FOCUS_OP_OR, "OR"),
     (FOCUS_OP_NOT, "NOT"),
 )
+
+from .usage.place_names import REGION_GROUPS
+
+FOCUS_REGION_OPTIONS: dict[str, str] = {key: key for key in REGION_GROUPS}
 
 FOCUS_COLOR_OPTIONS: dict[str, str] = {
     FOCUS_ANY: "— Any —",
@@ -107,6 +113,10 @@ class EasyFindCanvasFilters:
     focus_secondary_op: str = FOCUS_OP_UNSET
     focus_type_op: str = FOCUS_OP_UNSET
     focus_type: str = FOCUS_ANY
+    focus_region_groups: frozenset[str] = frozenset()
+    focus_region_op: str = FOCUS_OP_UNSET
+    focus_map_ids: frozenset[str] = frozenset()
+    focus_map_op: str = FOCUS_OP_UNSET
     type_filter: str = FOCUS_ANY  # backward compat alias for focus_type
     # When set, only these node kinds appear. ``None`` skips the gate (tests/legacy).
     # An empty frozenset means show nothing on the canvas.
@@ -150,11 +160,36 @@ def node_color_bucket(document: EasyFindDocument, node: EasyFindNode) -> str:
     return "unknown"
 
 
+def _location_lookup(document: EasyFindDocument) -> dict[str, object]:
+    return {loc.location_id: loc for loc in document.locations}
+
+
+def _primary_location_id_for_node(document: EasyFindDocument, node: EasyFindNode) -> str | None:
+    tagged = [
+        tag.location_id
+        for tag in document.asset_tags
+        if tag.node_id == node.node_id and tag.location_id
+    ]
+    if not tagged:
+        return None
+    return sorted(tagged)[0]
+
+
 def node_group_key(document: EasyFindDocument, node: EasyFindNode, level: str) -> str:
     if level == "color":
         return node_color_bucket(document, node)
     if level == "type":
         return node.node_kind
+    if level == "location":
+        return _primary_location_id_for_node(document, node) or "unlinked"
+    if level == "region":
+        location_id = _primary_location_id_for_node(document, node)
+        if location_id is None:
+            return "Unknown"
+        loc = _location_lookup(document).get(location_id)
+        if loc is None:
+            return "Unknown"
+        return str(getattr(loc, "group", "Unknown") or "Unknown")
     if level == "magic":
         asset = _asset_for_node(document, node)
         magic = asset.magic if asset else str(node.metadata.get("magic", "?"))
@@ -167,6 +202,15 @@ def node_group_title(document: EasyFindDocument, node: EasyFindNode, level: str,
         return bucket_label(key)
     if level == "type":
         return section_display_name(key)
+    if level == "location":
+        if key == "unlinked":
+            return "Not linked"
+        loc = _location_lookup(document).get(key)
+        if loc is not None:
+            return str(loc.name)
+        return key
+    if level == "region":
+        return key
     return key
 
 
@@ -309,6 +353,16 @@ def focus_filters_are_active(filters: EasyFindCanvasFilters) -> bool:
             has_values=has_type,
             legacy=FOCUS_OP_AND,
         ),
+        _effective_focus_op(
+            filters.focus_region_op,
+            has_values=bool(filters.focus_region_groups),
+            legacy=FOCUS_OP_AND,
+        ),
+        _effective_focus_op(
+            filters.focus_map_op,
+            has_values=bool(filters.focus_map_ids),
+            legacy=FOCUS_OP_AND,
+        ),
     ])
 
 
@@ -339,11 +393,27 @@ def _focus_clause_active(
             has_values=has_type,
             legacy=FOCUS_OP_AND,
         ) is not None
+    if clause == "region":
+        return _effective_focus_op(
+            filters.focus_region_op,
+            has_values=bool(filters.focus_region_groups),
+            legacy=FOCUS_OP_AND,
+        ) is not None
+    if clause == "map":
+        return _effective_focus_op(
+            filters.focus_map_op,
+            has_values=bool(filters.focus_map_ids),
+            legacy=FOCUS_OP_AND,
+        ) is not None
     return False
 
 
 def focus_overview_group_by(filters: EasyFindCanvasFilters) -> str:
-    """Small cluster portals: by color when color focus is active, else by type."""
+    """Small cluster portals: by color, map, region, or type when those clauses are active."""
+    if _focus_clause_active(filters, clause="map"):
+        return "location"
+    if _focus_clause_active(filters, clause="region"):
+        return "region"
     if _focus_clause_active(filters, clause="primary") or _focus_clause_active(filters, clause="secondary"):
         return "color"
     if _focus_clause_active(filters, clause="type"):
@@ -374,6 +444,8 @@ def _filter_nodes_focus(
 ) -> list[EasyFindNode]:
     from .node_index import (
         EasyFindNodeIndex,
+        nodes_for_location_groups,
+        nodes_for_locations,
         nodes_for_node_kind,
         nodes_for_primary_colors,
         nodes_for_secondary_colors,
@@ -425,6 +497,32 @@ def _filter_nodes_focus(
             result,
             type_op,
             nodes_for_node_kind(index, focus_type),
+            universe=universe,
+        )
+
+    region_op = _effective_focus_op(
+        filters.focus_region_op,
+        has_values=bool(filters.focus_region_groups),
+        legacy=FOCUS_OP_AND,
+    )
+    if region_op is not None:
+        result = _apply_focus_clause(
+            result,
+            region_op,
+            nodes_for_location_groups(index, filters.focus_region_groups),
+            universe=universe,
+        )
+
+    map_op = _effective_focus_op(
+        filters.focus_map_op,
+        has_values=bool(filters.focus_map_ids),
+        legacy=FOCUS_OP_AND,
+    )
+    if map_op is not None:
+        result = _apply_focus_clause(
+            result,
+            map_op,
+            nodes_for_locations(index, filters.focus_map_ids),
             universe=universe,
         )
 
@@ -511,4 +609,11 @@ def group_key_sort_order(level: str, key: str) -> tuple:
             return (SECTION_ORDER.index(key), key)
         except ValueError:
             return (len(SECTION_ORDER), key)
+    if level == "region":
+        try:
+            return (REGION_GROUPS.index(key), key)
+        except ValueError:
+            return (len(REGION_GROUPS), key)
+    if level == "location":
+        return (key,)
     return (key,)

@@ -3,6 +3,17 @@
   "mappingId": "pokemon_dp",
   "generatedOn": "2026-06-05",
   "gameFamily": "pokemon_gen4",
+  "usageProfile": "pokemon_gen4",
+  "usageArchives": {
+    "mapNames": "/fielddata/maptable/mapname.bin",
+    "areaData": "/fielddata/areadata/area_data.narc",
+    "areaBuild": "/fielddata/areadata/area_build_model/area_build.narc",
+    "buildModels": "/fielddata/build_model/build_model.narc",
+    "landData": "/fielddata/land_data/land_data_release.narc"
+  },
+  "placeNames": {
+    "T20R0101": "Eterna Forest (example — extend via mapping PR)"
+  },
   "coverage": "good-filelist-partial-semantic",
   "notes": "Paths are real file-system paths from public internal filelists; semantic roles are best-effort labels from names and community conventions. No ROM data or extracted assets are included.",
   "games": [

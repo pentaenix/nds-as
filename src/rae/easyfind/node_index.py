@@ -8,7 +8,13 @@ from .format import BUCKET_LOOKUP_VERSION
 from .models import EasyFindDocument, EasyFindNode
 from .validation import EasyFindCorruptError
 
-_LOOKUP_MAP_KEYS = ("by_primary_bucket", "by_secondary_bucket", "by_node_kind")
+_LOOKUP_MAP_KEYS = (
+    "by_primary_bucket",
+    "by_secondary_bucket",
+    "by_node_kind",
+    "by_location_id",
+    "by_location_group",
+)
 
 
 @dataclass(frozen=True)
@@ -17,32 +23,46 @@ class EasyFindNodeIndex:
     by_primary_bucket: dict[str, frozenset[str]]
     by_secondary_bucket: dict[str, frozenset[str]]
     by_node_kind: dict[str, frozenset[str]]
+    by_location_id: dict[str, frozenset[str]]
+    by_location_group: dict[str, frozenset[str]]
 
 
 def _build_bucket_lookup_index(document: EasyFindDocument) -> EasyFindNodeIndex:
     """Bake-time only: derive lookup tables from nodes and color signatures."""
     nodes_by_id = {node.node_id: node for node in document.nodes}
     signatures_by_node = {sig.node_id: sig for sig in document.color_signatures}
+    location_groups = {loc.location_id: loc.group for loc in document.locations}
 
     primary: dict[str, set[str]] = {}
     secondary: dict[str, set[str]] = {}
     by_kind: dict[str, set[str]] = {}
+    by_location: dict[str, set[str]] = {}
+    by_region: dict[str, set[str]] = {}
 
     for node in document.nodes:
         by_kind.setdefault(node.node_kind, set()).add(node.node_id)
         signature = signatures_by_node.get(node.node_id)
         if signature is None:
             primary.setdefault(node_color_bucket(document, node), set()).add(node.node_id)
+        else:
+            primary.setdefault(signature.dominant_bucket, set()).add(node.node_id)
+            for bucket in signature.secondary_buckets:
+                secondary.setdefault(bucket, set()).add(node.node_id)
+
+    for tag in document.asset_tags:
+        if not tag.location_id:
             continue
-        primary.setdefault(signature.dominant_bucket, set()).add(node.node_id)
-        for bucket in signature.secondary_buckets:
-            secondary.setdefault(bucket, set()).add(node.node_id)
+        by_location.setdefault(tag.location_id, set()).add(tag.node_id)
+        group = location_groups.get(tag.location_id, "Unknown")
+        by_region.setdefault(group, set()).add(tag.node_id)
 
     return EasyFindNodeIndex(
         nodes_by_id=nodes_by_id,
         by_primary_bucket={key: frozenset(ids) for key, ids in primary.items()},
         by_secondary_bucket={key: frozenset(ids) for key, ids in secondary.items()},
         by_node_kind={key: frozenset(ids) for key, ids in by_kind.items()},
+        by_location_id={key: frozenset(ids) for key, ids in by_location.items()},
+        by_location_group={key: frozenset(ids) for key, ids in by_region.items()},
     )
 
 
@@ -57,6 +77,8 @@ def bucket_lookup_to_dict(index: EasyFindNodeIndex) -> dict[str, object]:
         "by_primary_bucket": _sorted_bucket_map(index.by_primary_bucket),
         "by_secondary_bucket": _sorted_bucket_map(index.by_secondary_bucket),
         "by_node_kind": _sorted_bucket_map(index.by_node_kind),
+        "by_location_id": _sorted_bucket_map(index.by_location_id),
+        "by_location_group": _sorted_bucket_map(index.by_location_group),
     }
 
 
@@ -81,6 +103,8 @@ def node_index_from_bucket_lookup(
         by_primary_bucket=_read_bucket_map(lookup.get("by_primary_bucket")),
         by_secondary_bucket=_read_bucket_map(lookup.get("by_secondary_bucket")),
         by_node_kind=_read_bucket_map(lookup.get("by_node_kind")),
+        by_location_id=_read_bucket_map(lookup.get("by_location_id")),
+        by_location_group=_read_bucket_map(lookup.get("by_location_group")),
     )
 
 
@@ -136,14 +160,15 @@ def validate_bucket_lookup(
             f"bucket_lookup by_primary_bucket is missing {len(missing_primary)} node(s)"
         )
 
-    by_secondary = _read_bucket_map(lookup.get("by_secondary_bucket"))
-    for bucket, members in by_secondary.items():
-        unknown = members - node_ids
-        if unknown:
-            errors.append(
-                f"bucket_lookup by_secondary_bucket[{bucket!r}] references unknown nodes: "
-                f"{sorted(unknown)[:3]}"
-            )
+    for map_key in ("by_secondary_bucket", "by_location_id", "by_location_group"):
+        by_map = _read_bucket_map(lookup.get(map_key))
+        for bucket, members in by_map.items():
+            unknown = members - node_ids
+            if unknown:
+                errors.append(
+                    f"bucket_lookup {map_key}[{bucket!r}] references unknown nodes: "
+                    f"{sorted(unknown)[:3]}"
+                )
 
     return errors
 
@@ -175,6 +200,8 @@ def attach_bucket_lookup(document: EasyFindDocument) -> EasyFindDocument:
         "primary": len(index.by_primary_bucket),
         "secondary": len(index.by_secondary_bucket),
         "node_kind": len(index.by_node_kind),
+        "location_id": len(index.by_location_id),
+        "location_group": len(index.by_location_group),
     }
     if document.manifest.capabilities:
         caps = dict(document.manifest.capabilities)
@@ -205,6 +232,24 @@ def nodes_for_node_kind(index: EasyFindNodeIndex, node_kind: str) -> frozenset[s
     if not node_kind:
         return frozenset()
     return frozenset(index.by_node_kind.get(node_kind, ()))
+
+
+def nodes_for_locations(index: EasyFindNodeIndex, location_ids: frozenset[str]) -> frozenset[str]:
+    if not location_ids:
+        return frozenset()
+    merged: set[str] = set()
+    for location_id in location_ids:
+        merged |= set(index.by_location_id.get(location_id, ()))
+    return frozenset(merged)
+
+
+def nodes_for_location_groups(index: EasyFindNodeIndex, groups: frozenset[str]) -> frozenset[str]:
+    if not groups:
+        return frozenset()
+    merged: set[str] = set()
+    for group in groups:
+        merged |= set(index.by_location_group.get(group, ()))
+    return frozenset(merged)
 
 
 def materialize_nodes(

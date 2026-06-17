@@ -23,7 +23,7 @@ NOTES_PATH = "annotations/notes.json"
 
 COLOR_INDEX_PATH = "signatures/color_index.jsonl"
 BUCKET_LOOKUP_PATH = "signatures/bucket_lookup.json"
-BUCKET_LOOKUP_VERSION = 1
+BUCKET_LOOKUP_VERSION = 2
 
 PREVIEWS_INDEX_PATH = "previews/index.json"
 PREVIEW_BLOBS_DIR = "previews/blobs"

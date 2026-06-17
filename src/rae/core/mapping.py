@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
@@ -41,6 +41,9 @@ class GameMapping:
     ui_groups: list[dict]
     sources: list[dict]
     search_presets: list[SearchPreset]
+    usage_profile: str = ""
+    usage_archives: dict[str, str] = field(default_factory=dict)
+    place_names: dict[str, str] = field(default_factory=dict)
     path: Path | None = None
 
     @property
@@ -114,6 +117,13 @@ def _parse_mapping_file(path: Path, *, default_platform: str) -> GameMapping | N
         ui_groups=list(raw.get("uiGroups", [])),
         sources=list(raw.get("sources", [])),
         search_presets=presets,
+        usage_profile=str(raw.get("usageProfile", "")),
+        usage_archives={
+            str(k): str(v) for k, v in (raw.get("usageArchives") or {}).items()
+        },
+        place_names={
+            str(k): str(v) for k, v in (raw.get("placeNames") or {}).items()
+        },
         path=path,
     )
 

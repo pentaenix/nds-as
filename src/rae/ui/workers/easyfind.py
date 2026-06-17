@@ -21,6 +21,8 @@ from ...easyfind.build_options import (
     EasyFindBuildOptions,
 )
 from ...easyfind.build_previews import enrich_document_with_previews
+from ...easyfind.usage import enrich_document_with_usage
+from ...core.mapping import choose_mapping, load_mappings
 from ...easyfind.store import read_all_preview_blobs
 from ...scanner import Asset
 
@@ -61,6 +63,7 @@ class EasyFindBuildWorker(QThread):
         self._stage_index = 0
         self._stages = [
             "Creating EasyFind document…",
+            "Extracting map usage links…",
             "Baking previews and color signatures…",
             "Writing .easyfind container…",
             "Validating EasyFind…",
@@ -99,6 +102,21 @@ class EasyFindBuildWorker(QThread):
             if self.options.mode == BUILD_MODE_TYPES and not self.options.bake_node_kinds:
                 self.failed.emit("Select at least one asset type to bake.")
                 return
+
+            mapping = choose_mapping(
+                self.rom_title,
+                self.rom_game_code,
+                load_mappings(self.platform),
+            )
+
+            self._emit_progress("Extracting map usage links…")
+            document = enrich_document_with_usage(
+                document,
+                self.assets,
+                mapping,
+                platform=self.platform,
+                progress=lambda msg: self.progress.emit(msg),
+            )
 
             self._emit_progress("Baking previews and color signatures…")
 
