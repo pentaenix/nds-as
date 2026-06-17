@@ -171,12 +171,12 @@ class RomLoaderMixin:
         self.preview.clear()
         if hasattr(self, "_update_preview_inspector_visibility"):
             self._update_preview_inspector_visibility(None)
-        self.preview.show_message("Opening ROM...\n\nRAE is building a fast asset index. Model conversion and audio expansion run only when you ask for them.")
+        self.preview.show_message("Opening ROM...\n\nRAE is building a guided asset index. Model conversion and audio expansion run only when you ask for them.")
         self._focus_terminal(
             banner="Opening ROM… watch this panel for scan and texture-index progress. The UI stays responsive while background workers run.",
         )
-        mode = "deep" if self.deep_scan_action.isChecked() else "fast"
-        self._update_status(f"Fast scanning {path} in {mode} mode.")
+        mode = "exhaustive" if self.deep_scan_action.isChecked() else "guided"
+        self._update_status(f"Scanning {path} in {mode} mode.")
 
         self.worker = ScanWorker(path, deep_scan=self.deep_scan_action.isChecked())
         self.worker.progress.connect(self._update_status)
@@ -184,7 +184,7 @@ class RomLoaderMixin:
         self.worker.failed.connect(self._scan_failed)
         self.worker.start()
 
-    def _scan_finished(self, assets: list[Asset]) -> None:
+    def _scan_finished(self, assets: list[Asset], _report: object | None = None) -> None:
         self.assets = expand_btx0_texture_slots(assets)
         self.assets_by_id = {a.asset_id: a for a in self.assets}
         self._load_profile_summary()
@@ -199,7 +199,7 @@ class RomLoaderMixin:
         png_count = sum(1 for a in assets if a.magic == "PNG")
         audio_count = sum(1 for a in assets if a.magic in {"SDAT", "SSEQ", "SSAR", "SBNK", "SWAR", "SWAV", "STRM"})
         self._populate_search_presets()
-        mode = "deep" if self.deep_scan_action.isChecked() else "fast"
+        mode = "exhaustive" if self.deep_scan_action.isChecked() else "guided"
         summary = self._session_overview_text(
             source_label=Path(self.rom_path).name if self.rom_path else "Open ROM",
             mode=mode,
@@ -246,4 +246,3 @@ class RomLoaderMixin:
     def _scan_failed(self, message: str) -> None:
         QMessageBox.critical(self, "Scan failed", message)
         self._update_status("Scan failed.")
-

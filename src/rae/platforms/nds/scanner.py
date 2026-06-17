@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from collections import Counter
 import hashlib
+import os
+import time
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Callable, Iterable
 
-from .compression import decompress_lz10, looks_like_lz10
+from .compression import iter_decompression_attempts
 from .narc import NarcArchive, looks_like_narc
 from .rom import NDSRom
 from ...core.util import read_u32le
@@ -31,12 +34,57 @@ KNOWN_EXTENSIONS = {
     ".sdat", ".sseq", ".ssar", ".sbnk", ".swar", ".swav", ".strm",
 }
 
-# Hard safety caps. These keep DSM from turning a malformed/odd ROM blob into
+def _env_int(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name, "") or default)
+    except ValueError:
+        return default
+    return max(0, value)
+
+
+# Hard safety caps. These keep RAE from turning a malformed/odd ROM blob into
 # a runaway allocation. Audio archives are expanded during explicit export or
 # explicit export actions, not during initial ROM load.
-MAX_LZ10_DECOMPRESSED_SIZE = 16 * 1024 * 1024
-MAX_SCAN_ASSETS = 50000
-MAX_CONTAINER_CHILDREN = 25000
+MAX_SCAN_ASSETS = _env_int("RAE_MAX_SCAN_ASSETS", 50000)
+MAX_SCAN_ASSET_BYTES = _env_int("RAE_MAX_SCAN_ASSET_BYTES", 1536 * 1024 * 1024)
+MAX_CONTAINER_CHILDREN = _env_int("RAE_MAX_CONTAINER_CHILDREN", 25000)
+MAX_CARVE_SOURCE_BYTES = _env_int("RAE_MAX_CARVE_SOURCE_BYTES", 64 * 1024 * 1024)
+MAX_CARVED_ASSET_BYTES = _env_int("RAE_MAX_CARVED_ASSET_BYTES", 32 * 1024 * 1024)
+MAX_CARVE_CANDIDATES_PER_BLOB = _env_int("RAE_MAX_CARVE_CANDIDATES_PER_BLOB", 4096)
+GUIDED_SLOW_ARCHIVE_SECONDS = 2.0
+DEFAULT_DECOMPRESSORS = ("lz10",)
+GUIDED_DECOMPRESSORS = ("lz10", "lz11")
+
+
+@dataclass(slots=True)
+class ScanBudget:
+    """Process-wide scan budget used to prevent runaway RAM growth."""
+
+    max_assets: int = MAX_SCAN_ASSETS
+    max_bytes: int = MAX_SCAN_ASSET_BYTES
+    asset_count: int = 0
+    asset_bytes: int = 0
+    stopped: bool = False
+    stop_reason: str = ""
+
+    def reserve(self, asset: "Asset") -> bool:
+        if self.stopped:
+            return False
+        size = len(asset.data)
+        if self.max_assets and self.asset_count + 1 > self.max_assets:
+            self.stopped = True
+            self.stop_reason = f"asset count safety limit reached ({self.max_assets:,})"
+            return False
+        if self.max_bytes and self.asset_bytes + size > self.max_bytes:
+            self.stopped = True
+            self.stop_reason = (
+                f"asset byte safety limit reached ({self.asset_bytes + size:,} > {self.max_bytes:,} bytes); "
+                f"last path: {asset.virtual_path}"
+            )
+            return False
+        self.asset_count += 1
+        self.asset_bytes += size
+        return True
 
 
 @dataclass(slots=True)
@@ -104,15 +152,58 @@ def scan_nds_path(
     *,
     carve_unknown_blobs: bool = True,
     expand_audio_archives: bool = False,
+    scan_mode: str | None = None,
 ) -> list[Asset]:
     rom = NDSRom.from_path(path)
     assets: list[Asset] = []
+    budget = ScanBudget()
     files = list(rom.iter_files())
     total = len(files)
 
+    mode = (scan_mode or ("exhaustive" if carve_unknown_blobs else "fast")).casefold()
+    exhaustive = mode in {"deep", "exhaustive", "full"}
+    guided = mode in {"guided", "mapping", "mapped"}
+    mapping = None
+    scan_hints = []
+    try:
+        from ...core.mapping import apply_mapping_to_assets, choose_mapping, load_mappings, scan_hints_for_mapping
+        mapping = choose_mapping(
+            rom.info.title,
+            rom.info.game_code,
+            available=load_mappings(platform="nds"),
+        )
+        scan_hints = scan_hints_for_mapping(mapping)
+    except Exception:
+        apply_mapping_to_assets = None  # type: ignore[assignment]
+        mapping = None
+        scan_hints = []
+
+    if progress and guided and mapping is not None:
+        progress(f"Guided scan: mapping {mapping.mapping_id} supplied {len(scan_hints)} priority archive hint(s).")
+    elif progress and exhaustive:
+        progress("Exhaustive scan: carving unknown blobs across the ROM.")
+    if progress:
+        progress(
+            "Scan safety caps: "
+            f"resident asset bytes <= {MAX_SCAN_ASSET_BYTES // (1024 * 1024):,} MiB; "
+            f"single carved asset <= {MAX_CARVED_ASSET_BYTES // (1024 * 1024):,} MiB; "
+            f"carve source <= {MAX_CARVE_SOURCE_BYTES // (1024 * 1024):,} MiB."
+        )
+
+    guided_hits: Counter[str] = Counter()
     for index, rom_file in enumerate(files, start=1):
         if progress and (index == 1 or index % 25 == 0 or index == total):
             progress(f"Scanning ROM file {index}/{total}: {rom_file.path}")
+        hint = _best_scan_hint_for_path(rom_file.path, scan_hints) if guided else None
+        should_carve = exhaustive or bool(hint and hint.scan_mode in {"carve", "deep-carve", "deep"})
+        expected_magics = None if exhaustive else tuple(getattr(hint, "expected_magics", ()) or ())
+        decompressors = GUIDED_DECOMPRESSORS if exhaustive else DEFAULT_DECOMPRESSORS
+        max_depth = 10
+        if hint is not None:
+            decompressors = tuple(hint.decompressors or GUIDED_DECOMPRESSORS)
+            max_depth = max(10, int(hint.max_depth or 10))
+        before = len(assets)
+        started = time.perf_counter()
         assets.extend(
             scan_blob(
                 rom_file.path,
@@ -122,26 +213,79 @@ def scan_nds_path(
                 rom_offset=rom_file.start,
                 container_chain=(),
                 depth=0,
-                carve_unknown_blobs=carve_unknown_blobs,
+                max_depth=max_depth,
+                carve_unknown_blobs=should_carve,
                 expand_audio_archives=expand_audio_archives,
+                decompressors=decompressors,
+                expected_magics=expected_magics,
+                budget=budget,
             )
         )
-        if len(assets) > MAX_SCAN_ASSETS:
+        elapsed = time.perf_counter() - started
+        if hint is not None:
+            added = len(assets) - before
+            if added:
+                guided_hits[hint.path] += added
+            if progress and elapsed >= GUIDED_SLOW_ARCHIVE_SECONDS:
+                progress(f"Guided archive scan took {elapsed:.1f}s: {rom_file.path} (+{added} asset(s))")
+        if budget.stopped:
             if progress:
-                progress(f"Safety stop: scan reached {len(assets)} detected assets. Refine with mappings/deep scan later if needed.")
+                progress(f"Safety stop: {budget.stop_reason}")
             break
     deduped = _dedupe_assets(assets)
     try:
-        from ...core.mapping import apply_mapping_to_assets, choose_mapping, load_mappings
-        mapping = choose_mapping(
-            rom.info.title,
-            rom.info.game_code,
-            available=load_mappings(platform="nds"),
-        )
-        apply_mapping_to_assets(deduped, mapping)
+        if mapping is not None:
+            from ...core.mapping import apply_mapping_to_assets
+            apply_mapping_to_assets(deduped, mapping)
     except Exception:
         pass
+    if progress:
+        _emit_scan_coverage(progress, deduped, guided_hits=guided_hits, scan_mode=mode, budget=budget)
     return deduped
+
+
+def _best_scan_hint_for_path(path: str, hints: Iterable[object]) -> object | None:
+    normalized = _scan_path_key(path)
+    best: tuple[int, object] | None = None
+    for hint in hints:
+        hint_path = _scan_path_key(getattr(hint, "path", ""))
+        if not hint_path:
+            continue
+        if normalized == hint_path or normalized.startswith(hint_path.rstrip("/") + "/"):
+            priority = int(getattr(hint, "priority", 0) or 0)
+            if best is None or priority > best[0]:
+                best = (priority, hint)
+    return best[1] if best else None
+
+
+def _scan_path_key(path: str) -> str:
+    return "/" + str(path).replace("\\", "/").strip("/").casefold()
+
+
+def _emit_scan_coverage(
+    progress: Callable[[str], None],
+    assets: list[Asset],
+    *,
+    guided_hits: Counter[str],
+    scan_mode: str,
+    budget: ScanBudget | None = None,
+) -> None:
+    by_magic = Counter(asset.magic for asset in assets)
+    compressed = sum(1 for asset in assets if asset.compressed)
+    carved = sum(1 for asset in assets if asset.carved)
+    progress(
+        "Scan coverage: "
+        f"mode={scan_mode}; total={len(assets):,}; "
+        f"BMD0={by_magic.get('BMD0', 0):,}; BTX0={by_magic.get('BTX0', 0):,}; "
+        f"2D={sum(by_magic.get(m, 0) for m in ('RGCN', 'RLCN', 'RCSN', 'RECN', 'RNAN', 'NFTR')):,}; "
+        f"compressed={compressed:,}; carved={carved:,}; "
+        f"resident_asset_bytes={(budget.asset_bytes if budget else sum(len(a.data) for a in assets)) // (1024 * 1024):,} MiB."
+    )
+    if budget and budget.stopped:
+        progress(f"Scan stopped early by safety budget: {budget.stop_reason}")
+    if guided_hits:
+        top = ", ".join(f"{path}: +{count}" for path, count in guided_hits.most_common(8))
+        progress(f"Guided scan hits: {top}")
 
 
 def scan_blob(
@@ -157,23 +301,26 @@ def scan_blob(
     max_depth: int = 10,
     carve_unknown_blobs: bool = True,
     expand_audio_archives: bool = False,
+    decompressors: Iterable[str] = DEFAULT_DECOMPRESSORS,
+    expected_magics: Iterable[str] | None = None,
+    budget: ScanBudget | None = None,
 ) -> list[Asset]:
-    if depth > max_depth:
+    if depth > max_depth or (budget is not None and budget.stopped):
         return []
 
     original = data if original_data is None else original_data
     assets: list[Asset] = []
 
-    if looks_like_lz10(data):
+    try:
+        attempts = iter_decompression_attempts(data, enabled=decompressors)
+    except Exception:
+        attempts = []
+    for attempt in attempts:
         try:
-            expected_size = data[1] | (data[2] << 8) | (data[3] << 16)
-            if expected_size > MAX_LZ10_DECOMPRESSED_SIZE:
-                raise ValueError(f"Skipping suspicious LZ10 stream with {expected_size} byte output cap")
-            decoded = decompress_lz10(data)
             assets.extend(
                 scan_blob(
-                    virtual_path + "#lz10",
-                    decoded,
+                    virtual_path + f"#{attempt.name}",
+                    attempt.decoded,
                     original_data=data,
                     rom_file_id=rom_file_id,
                     rom_offset=rom_offset,
@@ -183,6 +330,9 @@ def scan_blob(
                     max_depth=max_depth,
                     carve_unknown_blobs=carve_unknown_blobs,
                     expand_audio_archives=expand_audio_archives,
+                    decompressors=decompressors,
+                    expected_magics=expected_magics,
+                    budget=budget,
                 )
             )
             # Do not return yet; some false-positive LZ files are still worth checking raw.
@@ -193,7 +343,8 @@ def scan_blob(
     if info:
         kind, magic, ext = info
         asset_id = _asset_id(virtual_path, data)
-        assets.append(
+        _append_asset(
+            assets,
             Asset(
                 asset_id=asset_id,
                 virtual_path=_with_ext_hint(virtual_path, ext),
@@ -206,13 +357,18 @@ def scan_blob(
                 rom_offset=rom_offset,
                 compressed=compressed,
                 container_chain=container_chain,
-            )
+            ),
+            budget,
         )
 
+    expanded_known_container = False
     if looks_like_narc(data):
         try:
             archive = NarcArchive(data, virtual_path)
+            expanded_known_container = True
             for child_index, entry in enumerate(archive.iter_files()):
+                if budget is not None and budget.stopped:
+                    break
                 if child_index >= MAX_CONTAINER_CHILDREN:
                     break
                 child_path = f"{virtual_path}/{entry.path}"
@@ -229,13 +385,16 @@ def scan_blob(
                         max_depth=max_depth,
                         carve_unknown_blobs=carve_unknown_blobs,
                         expand_audio_archives=expand_audio_archives,
+                        decompressors=decompressors,
+                        expected_magics=expected_magics,
+                        budget=budget,
                     )
                 )
         except Exception:
             pass
 
     # SDAT is the normal Nintendo DS sound archive container. Extracting its
-    # children lets DSM list/export music sequences, banks, wave archives,
+    # children lets RAE list/export music sequences, banks, wave archives,
     # individual samples, and streamed tracks without modifying the ROM.
     if expand_audio_archives and data.startswith(b"SDAT"):
         try:
@@ -254,6 +413,9 @@ def scan_blob(
                         max_depth=max_depth,
                         carve_unknown_blobs=False,
                         expand_audio_archives=False,
+                        decompressors=decompressors,
+                        expected_magics=expected_magics,
+                        budget=budget,
                     )
                 )
         except Exception:
@@ -278,6 +440,9 @@ def scan_blob(
                         max_depth=max_depth,
                         carve_unknown_blobs=False,
                         expand_audio_archives=False,
+                        decompressors=decompressors,
+                        expected_magics=expected_magics,
+                        budget=budget,
                     )
                 )
         except Exception:
@@ -285,13 +450,20 @@ def scan_blob(
 
     # Extra fallback for "any DS game": some tools/games wrap Nitro files in
     # custom containers. Carving catches embedded BMD0/BTX0/etc. with valid Nitro sizes.
-    if carve_unknown_blobs and data and not info:
-        for carved_path, carved_data, offset in carve_nitro_files(virtual_path, data):
+    if carve_unknown_blobs and data and not info and not expanded_known_container:
+        for carved_path, carved_data, offset in carve_nitro_files(
+            virtual_path,
+            data,
+            expected_magics=expected_magics,
+        ):
+            if budget is not None and budget.stopped:
+                break
             carved_info = identify_nitro(carved_data)
             if not carved_info:
                 continue
             kind, magic, ext = carved_info
-            assets.append(
+            _append_asset(
+                assets,
                 Asset(
                     asset_id=_asset_id(carved_path, carved_data),
                     virtual_path=_with_ext_hint(carved_path, ext),
@@ -306,35 +478,77 @@ def scan_blob(
                     container_chain=container_chain + ((virtual_path + "#carved"),),
                     carved=True,
                     carved_offset=offset,
-                )
+                ),
+                budget,
             )
 
     return assets
 
 
-def carve_nitro_files(virtual_path: str, data: bytes) -> list[tuple[str, bytes, int]]:
-    found: list[tuple[str, bytes, int]] = []
+def carve_nitro_files(
+    virtual_path: str,
+    data: bytes,
+    *,
+    expected_magics: Iterable[str] | None = None,
+) -> Iterable[tuple[str, bytes, int]]:
     if len(data) < 16:
-        return found
+        return []
+    if MAX_CARVE_SOURCE_BYTES and len(data) > MAX_CARVE_SOURCE_BYTES:
+        return []
 
-    for magic in NITRO_MAGICS:
+    candidates: list[tuple[int, int]] = []
+    seen_offsets: set[int] = set()
+    for magic in _carve_magic_bytes(expected_magics):
         start = 0
         while True:
             pos = data.find(magic, start)
             if pos < 0:
                 break
             start = pos + 4
-            if pos == 0:
+            if pos == 0 or pos in seen_offsets:
                 continue
             if not _looks_like_nitro_header_at(data, pos):
                 continue
             size = read_u32le(data, pos + 8)
             if size <= 0 or pos + size > len(data):
                 continue
-            blob = data[pos:pos + size]
-            found.append((f"{virtual_path}#carved_0x{pos:X}", blob, pos))
-    found.sort(key=lambda item: item[2])
-    return found
+            if MAX_CARVED_ASSET_BYTES and size > MAX_CARVED_ASSET_BYTES:
+                continue
+            seen_offsets.add(pos)
+            candidates.append((pos, size))
+            if len(candidates) >= MAX_CARVE_CANDIDATES_PER_BLOB:
+                break
+        if len(candidates) >= MAX_CARVE_CANDIDATES_PER_BLOB:
+            break
+
+    for pos, size in sorted(candidates):
+        yield f"{virtual_path}#carved_0x{pos:X}", data[pos:pos + size], pos
+
+
+_MAGIC_ALIASES = {
+    "NSBMD": "BMD0",
+    "NSBTX": "BTX0",
+    "NSBCA": "BCA0",
+    "NSBTA": "BTA0",
+    "NSBTP": "BTP0",
+    "NSBMA": "BMA0",
+    "NSBVA": "BVA0",
+    "NSBPC": "BPC0",
+}
+
+
+def _carve_magic_bytes(expected_magics: Iterable[str] | None) -> tuple[bytes, ...]:
+    if expected_magics:
+        out: list[bytes] = []
+        seen: set[bytes] = set()
+        for magic in expected_magics:
+            name = _MAGIC_ALIASES.get(str(magic).upper().strip(), str(magic).upper().strip())
+            raw = name.encode("ascii", errors="ignore")
+            if raw in NITRO_MAGICS and raw not in seen and raw != b"\x89PNG":
+                out.append(raw)
+                seen.add(raw)
+        return tuple(out)
+    return tuple(magic for magic in NITRO_MAGICS if magic != b"\x89PNG")
 
 
 def _looks_like_nitro_header_at(data: bytes, pos: int) -> bool:
@@ -448,6 +662,13 @@ def _asset_matches_query(asset: Asset, query: str, search_text_by_id: dict[str, 
             continue
         if term not in searchable:
             return False
+    return True
+
+
+def _append_asset(assets: list[Asset], asset: Asset, budget: ScanBudget | None) -> bool:
+    if budget is not None and not budget.reserve(asset):
+        return False
+    assets.append(asset)
     return True
 
 

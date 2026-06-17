@@ -59,6 +59,43 @@
         "type": "object"
       }
     },
+    "scanHints": {
+      "type": "array",
+      "description": "Optional scan-time hints. These guide discovery only; they do not label assets after they are found.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "integer"
+          },
+          "scanMode": {
+            "type": "string",
+            "enum": ["normal", "carve", "deep", "deep-carve"]
+          },
+          "expectedMagics": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "decompressors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "maxDepth": {
+            "type": "integer"
+          }
+        }
+      }
+    },
     "relationships": {
       "type": "array",
       "items": {

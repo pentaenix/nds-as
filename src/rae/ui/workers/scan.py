@@ -79,16 +79,19 @@ class ScanWorker(QThread):
 
     def run(self) -> None:
         try:
-            self.progress.emit("Fast scan: reading ROM filesystem and known containers only. Mapped tree leaves are skipped during load.")
+            scan_mode = "exhaustive" if self.deep_scan else "guided"
+            if self.deep_scan:
+                self.progress.emit("Exhaustive scan: reading ROM filesystem, known containers, compressed streams, and carved Nitro files.")
+            else:
+                self.progress.emit("Guided scan: reading ROM filesystem and known containers, with bounded mapping-priority carving for likely model/texture archives.")
             assets = scan_nds_path(
                 self.rom_path,
                 progress=self.progress.emit,
                 carve_unknown_blobs=self.deep_scan,
                 expand_audio_archives=False,
+                scan_mode=scan_mode,
             )
-            self.progress.emit(f"Fast scan complete: {len(assets)} detected asset(s). Building visible folders lazily in the UI.")
+            self.progress.emit(f"Scan complete: {len(assets)} detected asset(s). Building visible folders lazily in the UI. Large model previews may still take time; turn off Auto Preview while browsing.")
             self.finished_ok.emit(assets, None)
         except Exception as exc:
             self.failed.emit(str(exc))
-
-

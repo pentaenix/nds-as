@@ -26,6 +26,17 @@ class SearchPreset:
     workflow: tuple[str, ...]
 
 
+@dataclass(slots=True)
+class ScanHint:
+    path: str
+    label: str = ""
+    scan_mode: str = "normal"
+    expected_magics: tuple[str, ...] = ()
+    decompressors: tuple[str, ...] = ("lz10",)
+    max_depth: int = 10
+    priority: int = 0
+
+
 MAPPING_PLATFORM_DIRS = ("nds", "gba", "gbc", "gb", "3ds")
 
 
@@ -41,6 +52,7 @@ class GameMapping:
     ui_groups: list[dict]
     sources: list[dict]
     search_presets: list[SearchPreset]
+    scan_hints: list[ScanHint] = field(default_factory=list)
     usage_profile: str = ""
     usage_archives: dict[str, str] = field(default_factory=dict)
     place_names: dict[str, str] = field(default_factory=dict)
@@ -106,6 +118,17 @@ def _parse_mapping_file(path: Path, *, default_platform: str) -> GameMapping | N
             description=str(preset.get("description", "")),
             workflow=tuple(str(x) for x in preset.get("workflow", [])),
         ))
+    scan_hints = []
+    for hint in raw.get("scanHints", []):
+        scan_hints.append(ScanHint(
+            path=str(hint.get("path", "")),
+            label=str(hint.get("label", "")),
+            scan_mode=str(hint.get("scanMode", "normal")),
+            expected_magics=tuple(str(x).upper() for x in hint.get("expectedMagics", [])),
+            decompressors=tuple(str(x).casefold() for x in hint.get("decompressors", ["lz10"])),
+            max_depth=int(hint.get("maxDepth", 10) or 10),
+            priority=int(hint.get("priority", 0) or 0),
+        ))
     return GameMapping(
         mapping_id=str(raw.get("mappingId", path.stem)),
         platform=platform,
@@ -117,6 +140,7 @@ def _parse_mapping_file(path: Path, *, default_platform: str) -> GameMapping | N
         ui_groups=list(raw.get("uiGroups", [])),
         sources=list(raw.get("sources", [])),
         search_presets=presets,
+        scan_hints=scan_hints,
         usage_profile=str(raw.get("usageProfile", "")),
         usage_archives={
             str(k): str(v) for k, v in (raw.get("usageArchives") or {}).items()
@@ -199,6 +223,88 @@ def apply_mapping_to_assets(assets: list, mapping: GameMapping | None) -> None:
             asset.mapping_category = category_from_magic(asset.magic)
             asset.mapping_label = "Detected by signature"
             asset.mapping_confidence = "format-signature"
+
+
+def scan_hints_for_mapping(mapping: GameMapping | None) -> list[ScanHint]:
+    """Return explicit mapping scan hints plus safe hints inferred from archives.
+
+    Existing mapping files already know which archives are expected to contain
+    BMD0/BTX0/etc. Guided scanning uses that metadata to carve/decompress those
+    high-value archives without running an exhaustive whole-ROM deep scan.
+    """
+    if mapping is None:
+        return []
+    hints: list[ScanHint] = []
+    seen_paths: set[str] = set()
+    for hint in sorted(mapping.scan_hints, key=lambda h: h.priority, reverse=True):
+        if not hint.path:
+            continue
+        hints.append(hint)
+        seen_paths.add(normalize_path(hint.path))
+    for archive in mapping.archives:
+        hint = _inferred_scan_hint_for_archive(archive)
+        if hint is None:
+            continue
+        normalized = normalize_path(hint.path)
+        if normalized in seen_paths:
+            continue
+        hints.append(hint)
+        seen_paths.add(normalized)
+    hints.sort(key=lambda h: h.priority, reverse=True)
+    return hints
+
+
+def _inferred_scan_hint_for_archive(archive: ArchiveMapping) -> ScanHint | None:
+    path = archive.path.strip()
+    if not path or any(ch in path for ch in "*{}"):
+        return None
+    expected = tuple(
+        sorted({magic for magic in (_canonical_magic(t) for t in archive.asset_types) if magic})
+    )
+    if not expected:
+        return None
+    priority = 50
+    if "BMD0" in expected:
+        priority = 90
+    elif "BTX0" in expected:
+        priority = 75
+    elif any(magic in expected for magic in ("BCA0", "BTA0", "BTP0", "BMA0", "BVA0", "BPC0")):
+        priority = 65
+    return ScanHint(
+        path=path,
+        label=archive.label,
+        scan_mode="deep-carve",
+        expected_magics=expected,
+        decompressors=("lz10", "lz11"),
+        max_depth=16,
+        priority=priority,
+    )
+
+
+def _canonical_magic(asset_type: str) -> str:
+    value = str(asset_type).upper().strip().lstrip(".")
+    aliases = {
+        "NSBMD": "BMD0",
+        "NSBTX": "BTX0",
+        "NSBCA": "BCA0",
+        "NSBTA": "BTA0",
+        "NSBTP": "BTP0",
+        "NSBMA": "BMA0",
+        "NSBVA": "BVA0",
+        "NSBPC": "BPC0",
+        "NCGR": "RGCN",
+        "NCLR": "RLCN",
+        "NSCR": "RCSN",
+        "NCER": "RECN",
+        "NANR": "RNAN",
+    }
+    value = aliases.get(value, value)
+    # Guided scan should stay focused on DS 3D model/texture/animation payloads.
+    # 2D graphics and audio archives are still detected normally, but they should
+    # not cause extra carving work during the default guided ROM open.
+    if value in {"BMD0", "BTX0", "BCA0", "BTA0", "BTP0", "BMA0", "BVA0", "BPC0"}:
+        return value
+    return ""
 
 
 def match_asset(asset, mapping: GameMapping) -> ArchiveMapping | None:
