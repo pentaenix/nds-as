@@ -2,6 +2,49 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
+
+if [[ "${1:-}" == "patch" ]]; then
+  PATCH_DIR="${RAE_PATCH_DIR:-$ROOT/../patches}"
+  if [[ ! -d "$PATCH_DIR" ]]; then
+    echo "No patches directory found: $PATCH_DIR" >&2
+    exit 1
+  fi
+
+  PATCH_FILE="$(find "$PATCH_DIR" -maxdepth 1 -type f -iname '*rae*.zip' | sort | head -n 1 || true)"
+  if [[ -z "$PATCH_FILE" ]]; then
+    echo "No RAE patch ZIP found in $PATCH_DIR" >&2
+    echo "Drop a ZIP whose filename contains 'rae' into ../patches, then run: ./rae patch" >&2
+    exit 1
+  fi
+
+  if ! command -v unzip >/dev/null 2>&1; then
+    echo "unzip is required to apply patch bundles." >&2
+    exit 1
+  fi
+
+  TMP_ROOT="${TMPDIR:-/tmp}"
+  TMP_DIR="$(mktemp -d "$TMP_ROOT/rae_patch_XXXXXX")"
+  cleanup() {
+    rm -rf "$TMP_DIR"
+  }
+  trap cleanup EXIT
+
+  echo "Applying RAE patch bundle: $PATCH_FILE"
+  unzip -q "$PATCH_FILE" -d "$TMP_DIR"
+
+  APPLY_SCRIPT="$(find "$TMP_DIR" -type f -name apply_patch.sh | sort | head -n 1 || true)"
+  if [[ -z "$APPLY_SCRIPT" ]]; then
+    echo "Patch bundle does not contain apply_patch.sh: $PATCH_FILE" >&2
+    exit 1
+  fi
+
+  chmod +x "$APPLY_SCRIPT"
+  (cd "$ROOT" && "$APPLY_SCRIPT")
+
+  rm -f "$PATCH_FILE"
+  echo "Applied and deleted patch bundle: $PATCH_FILE"
+  exit 0
+fi
 if [[ "${1:-}" == "install" ]]; then
   exec python3 -m rae "$@"
 fi

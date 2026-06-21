@@ -22,6 +22,7 @@ from ..model_texture_resolver import (
 )
 from ..platforms.nds.exporter import convert_with_apicula, texture_outputs
 from ..platforms.nds.scanner import Asset
+from ..preview_policy import ModelPreviewQuality, model_preview_policy
 from ..texture_library import TextureLibrary
 
 Progress = Callable[[str], None]
@@ -57,6 +58,10 @@ def prepare_model_preview(
         if progress:
             progress(text)
 
+    # EasyFind and shared thumbnail rendering should use the normal browsing policy.
+    # Exhaustive preview remains available from the interactive viewport only.
+    policy = model_preview_policy(ModelPreviewQuality.BALANCED)
+
     library = texture_library
     if library is None:
         log("Building texture dictionary for model preview…")
@@ -67,6 +72,7 @@ def prepare_model_preview(
         all_assets,
         texture_library=library,
         progress=progress,
+        policy=policy,
     )
 
     siblings = [
@@ -93,7 +99,7 @@ def prepare_model_preview(
         out_dir,
         sibling_assets=siblings[:16],
         output_format="glb",
-        more_textures=True,
+        more_textures=policy.full_fidelity if 'policy' in locals() else False,
     )
     if not result.ok or not result.output_files:
         return None
@@ -106,12 +112,29 @@ def prepare_model_preview(
         return None
 
     apicula_pngs = texture_outputs(out_dir)
-    aux = write_resolution_images(resolution, out_dir / "dsm_resolved_textures")
-    all_pngs = merge_texture_paths(apicula_pngs, aux)
-    resolver_map, material_to_texture, bind_order = build_preview_texture_maps(resolution, aux)
-    apicula_map = texture_map_from_paths(apicula_pngs)
+    aux = write_resolution_images(
+        resolution,
+        out_dir / "dsm_resolved_textures",
+        max_images=policy.max_decoded_images,
+    )
+    # Keep EasyFind/thumbnail viewport staging bounded for large map models.
+    # apicula --more-textures can emit thousands of palette variants; RAE's
+    # resolver PNGs are ranked and sufficient for the preview renderer.
+    viewport_texture_cap = policy.max_decoded_images or 512
+    if not policy.full_fidelity:
+        viewport_texture_cap = min(viewport_texture_cap, 128)
+    if aux:
+        viewport_pngs = list(aux[:viewport_texture_cap])
+    else:
+        viewport_pngs = list(apicula_pngs[:viewport_texture_cap])
+    capped_apicula_pngs = list(apicula_pngs[:64])
+    resolver_map, material_to_texture, bind_order = build_preview_texture_maps(
+        resolution,
+        list(aux[:viewport_texture_cap]) if aux else [],
+    )
+    apicula_map = texture_map_from_paths(capped_apicula_pngs)
     texture_by_name = merge_texture_by_name(resolver_map, apicula_map)
-    fallback_paths = tuple(all_pngs)
+    fallback_paths = tuple(viewport_pngs)
 
     parts = parse_glb_mesh_parts(source_glb)
     mesh_labels = tuple(part.label for part in parts)

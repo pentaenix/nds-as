@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Literal
@@ -104,49 +106,82 @@ def _embedded_resolution(
     if policy.geometry_only:
         lines.append(f"- preview quality {policy.label}: embedded texture decode skipped")
         return None
+
     max_images = policy.max_decoded_images or 128
-    if policy.exact_materials_only and manifest.embedded_tex0 is not None:
+
+    # Full Fidelity intentionally keeps the previous exhaustive ordering. Faster
+    # modes first try the material-guided route so Balanced can still show real
+    # textures without walking the broad fallback space first.
+    embedded_images: list[DecodedImage] = []
+    embedded_reason = "embedded TEX0 in NSBMD"
+    guided_first = manifest.embedded_tex0 is not None and not policy.full_fidelity
+
+    if guided_first:
         guided_report = decode_guided_tex0_report(
             model.data,
             texture_requests=_material_texture_requests(manifest),
             max_images=max_images,
         )
         embedded_images = guided_report.images
-        embedded_reason = "embedded TEX0 decoded via exact NSBMD material/dictionary requests"
-        if not embedded_images:
+        if embedded_images:
+            embedded_reason = "embedded TEX0 decoded via exact NSBMD material/dictionary requests"
             lines.append(
-                f"- preview quality {policy.label}: no exact embedded material texture match decoded; broad embedded fallback skipped"
+                f"- preview quality {policy.label}: exact embedded material decode returned {len(embedded_images)} image(s)"
             )
-            return None
+        elif guided_report.failures:
+            lines.append(
+                f"- preview quality {policy.label}: exact embedded material decode found no image"
+            )
+            for failure in guided_report.failures[:8]:
+                lines.extend(f"- {line}" for line in format_decode_failure(failure, source_path=model.virtual_path))
+            for summary in guided_report.candidate_summaries[:3]:
+                lines.append(f"- {summary}")
+
+    if not embedded_images and policy.exact_materials_only:
         lines.append(
-            f"- preview quality {policy.label}: exact embedded material decode returned {len(embedded_images)} image(s)"
+            f"- preview quality {policy.label}: broad embedded fallback skipped after exact material decode failed"
         )
-    else:
+        return None
+
+    if not embedded_images:
         embedded_images = decode_btx_images(model.data, max_images=max_images, mode="resolved")
         embedded_reason = "embedded TEX0 in NSBMD"
-        if not embedded_images and manifest.embedded_tex0 is not None:
+
+    if not embedded_images and manifest.embedded_tex0 is not None:
+        if policy.allow_broad_fallback:
             embedded_images = decode_btx_images(model.data, max_images=max_images, mode="all-palettes")
             if embedded_images:
                 embedded_reason = "embedded TEX0 in NSBMD; palette pairing was not proven, decoded inspectable variants"
-                lines.append("- embedded TEX0 strict material/palette pairing did not decode; using embedded palette variants for preview/export")
-        if not embedded_images and manifest.embedded_tex0 is not None:
-            guided_report = decode_guided_tex0_report(
-                model.data,
-                texture_requests=_material_texture_requests(manifest),
-                max_images=max_images,
-            )
-            if guided_report.images:
-                embedded_images = guided_report.images
-                embedded_reason = "embedded TEX0 decoded via NSBMD material/dictionary requests"
-                lines.append("- generic embedded decode failed; material-guided TEX0 decode succeeded")
-            elif guided_report.failures:
-                lines.append("- embedded TEX0 guided decode diagnostics:")
-                for failure in guided_report.failures[:12]:
-                    lines.extend(f"- {line}" for line in format_decode_failure(failure, source_path=model.virtual_path))
-                for summary in guided_report.candidate_summaries[:4]:
-                    lines.append(f"- {summary}")
+                lines.append(
+                    f"- preview quality {policy.label}: embedded strict pairing did not decode; using capped embedded palette variants for preview/export"
+                )
+        else:
+            lines.append(f"- preview quality {policy.label}: broad embedded palette fallback disabled")
+
+    if not embedded_images and manifest.embedded_tex0 is not None and not guided_first:
+        guided_report = decode_guided_tex0_report(
+            model.data,
+            texture_requests=_material_texture_requests(manifest),
+            max_images=max_images,
+        )
+        if guided_report.images:
+            embedded_images = guided_report.images
+            embedded_reason = "embedded TEX0 decoded via NSBMD material/dictionary requests"
+            lines.append("- generic embedded decode failed; material-guided TEX0 decode succeeded")
+        elif guided_report.failures:
+            lines.append("- embedded TEX0 guided decode diagnostics:")
+            for failure in guided_report.failures[:12]:
+                lines.extend(f"- {line}" for line in format_decode_failure(failure, source_path=model.virtual_path))
+            for summary in guided_report.candidate_summaries[:4]:
+                lines.append(f"- {summary}")
+
     if not embedded_images:
         return None
+
+    if policy.max_decoded_images is not None and len(embedded_images) >= policy.max_decoded_images:
+        lines.append(
+            f"- preview quality {policy.label}: capped embedded texture decode at {policy.max_decoded_images} image(s); switch to Full Fidelity for exhaustive fallback"
+        )
     lines.append(f"- embedded TEX0 decoded {len(embedded_images)} texture image(s)")
     if manifest.embedded_tex0 is not None:
         lines.append("- embedded texture dictionary: " + ", ".join(t.name for t in manifest.embedded_tex0.textures[:32]) + (" ..." if len(manifest.embedded_tex0.textures) > 32 else ""))
@@ -157,6 +192,73 @@ def _embedded_resolution(
     ]
     return ModelTextureResolution("embedded_texture", manifest, bindings, embedded_images, [], [model], "\n".join(lines))
 
+
+
+def _archive_key_from_virtual_path(path: str) -> str:
+    """Return a stable archive/folder key without the leaf file name or carved suffix."""
+    clean = path.split("#", 1)[0].strip("/")
+    parts = [part for part in clean.split("/") if part]
+    if not parts:
+        return ""
+    leaf = parts[-1]
+    if leaf.startswith("file_") or "." in leaf:
+        parts = parts[:-1]
+    return "/".join(parts)
+
+
+def _file_number_from_virtual_path(path: str) -> int | None:
+    """Extract the most useful file number from paths like a/0/0/8/file_0074.bin."""
+    clean = path.split("#", 1)[0]
+    matches = re.findall(r"file[_-]?(\d+)|(?:^|/)(\d+)(?:\.[^/]*)?$", clean, flags=re.IGNORECASE)
+    for explicit, bare in reversed(matches):
+        value = explicit or bare
+        if value:
+            try:
+                return int(value)
+            except ValueError:
+                return None
+    return None
+
+
+def _rank_texture_binding_for_model(
+    model: Asset,
+    binding: TextureBinding,
+    texture_asset: Asset | None,
+) -> tuple[int, int, str]:
+    """Rank exact dictionary matches so likely co-loaded texture archives decode first.
+
+    Exact material names can occur in many map texture archives. The old resolver
+    decoded matches in library order, so Balanced could spend its whole decode cap
+    on unrelated archives. This ranking is intentionally generic: prefer embedded
+    or same-context assets, then same numeric file id, then nearby ids, then broad
+    fallback. It does not make any specific game path mandatory.
+    """
+    model_path = model.virtual_path
+    texture_path = binding.texture_asset_path
+    model_archive = _archive_key_from_virtual_path(model_path)
+    texture_archive = _archive_key_from_virtual_path(texture_path)
+    model_number = _file_number_from_virtual_path(model_path)
+    texture_number = _file_number_from_virtual_path(texture_path)
+    number_delta = abs(model_number - texture_number) if model_number is not None and texture_number is not None else 999_999
+    same_number = model_number is not None and model_number == texture_number
+
+    if binding.texture_asset_id == model.asset_id:
+        context = 0
+    elif texture_asset is not None and model.folder_key and texture_asset.folder_key == model.folder_key:
+        context = 1
+    elif texture_asset is not None and model.container_chain and texture_asset.container_chain and texture_asset.container_chain[: len(model.container_chain)] == model.container_chain:
+        context = 2
+    elif model_archive and texture_archive and model_archive == texture_archive:
+        context = 3
+    elif same_number and texture_asset is not None and texture_asset.mapping_category == "textures":
+        context = 4
+    elif same_number:
+        context = 5
+    elif model_archive and texture_archive and model_archive.split("/")[:2] == texture_archive.split("/")[:2]:
+        context = 6
+    else:
+        context = 9
+    return (context, number_delta, texture_path)
 
 def _resolve_from_library(
     model: Asset,
@@ -176,6 +278,7 @@ def _resolve_from_library(
     lines: list[str] = []
     seen_images: set[tuple[str, str, str | None]] = set()
     seen_asset_ids: set[str] = set()
+    candidate_archive_budget: set[str] = set()
 
     for material in manifest.materials:
         tex_name = material.texture_name or material.material_name
@@ -185,6 +288,31 @@ def _resolve_from_library(
         matches = texture_library.find_exact(tex_name, material.palette_name)
         if asset_filter is not None:
             matches = [m for m in matches if m.texture_asset_id in asset_filter]
+        if matches:
+            matches = sorted(
+                matches,
+                key=lambda binding: _rank_texture_binding_for_model(
+                    model,
+                    binding,
+                    texture_library.assets_by_id.get(binding.texture_asset_id),
+                ),
+            )
+            max_archives = policy.max_candidate_archives
+            if max_archives is not None:
+                kept: list[TextureBinding] = []
+                skipped_asset_ids: set[str] = set()
+                for binding in matches:
+                    if binding.texture_asset_id in candidate_archive_budget or len(candidate_archive_budget) < max_archives:
+                        kept.append(binding)
+                        candidate_archive_budget.add(binding.texture_asset_id)
+                    else:
+                        skipped_asset_ids.add(binding.texture_asset_id)
+                if skipped_asset_ids:
+                    lines.append(
+                        f"- preview quality {policy.label}: ranked exact matches for {tex_name}; "
+                        f"trying {len(candidate_archive_budget)} likely archive(s), skipped {len(skipped_asset_ids)} broad archive(s)"
+                    )
+                matches = kept
         if not matches:
             unresolved.append(material)
             continue

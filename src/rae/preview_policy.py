@@ -102,13 +102,13 @@ def model_preview_policy(value: ModelPreviewPolicy | ModelPreviewQuality | str |
     if isinstance(value, ModelPreviewPolicy):
         return value
     if value is None:
-        return _POLICY_BY_MODE[ModelPreviewQuality.FULL_FIDELITY]
+        return _POLICY_BY_MODE[ModelPreviewQuality.BALANCED]
     if isinstance(value, ModelPreviewQuality):
         return _POLICY_BY_MODE[value]
     try:
         return _POLICY_BY_MODE[ModelPreviewQuality(str(value))]
     except Exception:
-        return _POLICY_BY_MODE[ModelPreviewQuality.FULL_FIDELITY]
+        return _POLICY_BY_MODE[ModelPreviewQuality.BALANCED]
 
 
 def preview_quality_labels() -> Iterable[str]:

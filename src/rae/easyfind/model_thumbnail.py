@@ -112,13 +112,18 @@ def bake_bmd0_thumbnail_bytes(
         out_dir = Path(tmp)
         if progress:
             progress(f"Rendering model thumbnail: {asset.virtual_path}")
-        bundle = prepare_model_preview(
-            asset,
-            all_assets,
-            out_dir,
-            texture_library=texture_library,
-            progress=progress,
-        )
+        try:
+            bundle = prepare_model_preview(
+                asset,
+                all_assets,
+                out_dir,
+                texture_library=texture_library,
+                progress=progress,
+            )
+        except Exception as exc:
+            if progress:
+                progress(f"Model thumbnail skipped: {asset.virtual_path} ({exc})")
+            return None, None, None
         if bundle is None:
             return None, None, None
 
@@ -130,17 +135,27 @@ def bake_bmd0_thumbnail_bytes(
         if web_session:
             if progress:
                 progress(f"Three.js snapshot: {asset.virtual_path}")
-            png = web_snapshot.capture_blocking(
-                bundle.patched_glb,
-                CAPTURE_RENDER_SIZE,
-                CAPTURE_RENDER_SIZE,
-                output_width=width,
-                output_height=height,
-            )
+            try:
+                png = web_snapshot.capture_blocking(
+                    bundle.patched_glb,
+                    CAPTURE_RENDER_SIZE,
+                    CAPTURE_RENDER_SIZE,
+                    output_width=width,
+                    output_height=height,
+                )
+            except Exception as exc:
+                if progress:
+                    progress(f"Three.js snapshot skipped: {asset.virtual_path} ({exc})")
+                return None, None, None
             if png:
                 return png, width, height
             if progress:
                 progress(f"Three.js snapshot failed: {asset.virtual_path}")
             return None, None, None
 
-        return render_model_preview_snapshot(bundle, width=width, height=height)
+        try:
+            return render_model_preview_snapshot(bundle, width=width, height=height)
+        except Exception as exc:
+            if progress:
+                progress(f"Model thumbnail render skipped: {asset.virtual_path} ({exc})")
+            return None, None, None

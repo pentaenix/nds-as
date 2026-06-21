@@ -235,6 +235,9 @@ class DetailsMixin:
             self.export_button.setEnabled(False)
             self.pin_texture_button.setVisible(False)
             self.clear_pin_button.setVisible(False)
+            if hasattr(self, "fetch_full_preview_button"):
+                self.fetch_full_preview_button.setVisible(False)
+                self.fetch_full_preview_button.setEnabled(False)
             if hasattr(self, "_update_preview_inspector_visibility"):
                 self._update_preview_inspector_visibility(None)
             return
@@ -305,6 +308,13 @@ class DetailsMixin:
         self.pin_texture_button.setVisible(asset.magic == "BTX0")
         self.clear_pin_button.setEnabled(pinned_active)
         self.clear_pin_button.setVisible(pinned_active)
+        if hasattr(self, "fetch_full_preview_button"):
+            fetch_full_available = (
+                asset.magic == "BMD0"
+                and getattr(self, "_fetch_full_preview_asset_id", None) == asset.asset_id
+            )
+            self.fetch_full_preview_button.setVisible(fetch_full_available)
+            self.fetch_full_preview_button.setEnabled(fetch_full_available)
         if hasattr(self, "_refresh_texture_assigner"):
             self._refresh_texture_assigner(asset)
         if hasattr(self, "_update_preview_inspector_visibility"):

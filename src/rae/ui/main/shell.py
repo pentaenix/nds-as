@@ -125,8 +125,11 @@ class ShellMixin:
         self._pinned_texture_asset_id: str | None = None
         self._texture_library_store = TextureLibraryStore()
         self._texture_resolution_cache: dict[str, CachedTextureResolution] = {}
+        self._texture_resolution_cache_order: list[str] = []
+        self._texture_resolution_cache_limit = 5
         self._texture_preview_switch_to_details = False
-        self.model_preview_quality = ModelPreviewQuality.FULL_FIDELITY
+        self.model_preview_quality = ModelPreviewQuality.BALANCED
+        self._fetch_full_preview_asset_id: str | None = None
         self._init_texture_assigner_state()
         self._init_texture_animation_state()
         self._init_texture_sheet_state()
@@ -157,7 +160,32 @@ class ShellMixin:
         self._update_status("Open a local .nds ROM to start. Use ./rae run next time to launch this app.")
 
     def _model_preview_policy(self):
-        return model_preview_policy(getattr(self, "model_preview_quality", ModelPreviewQuality.FULL_FIDELITY))
+        return model_preview_policy(getattr(self, "model_preview_quality", ModelPreviewQuality.BALANCED))
+
+    def _set_fetch_full_preview_available(self, asset_id: str | None) -> None:
+        self._fetch_full_preview_asset_id = asset_id
+        button = getattr(self, "fetch_full_preview_button", None)
+        if button is None:
+            return
+        current = self.selected_asset() if hasattr(self, "selected_asset") else None
+        visible = bool(asset_id and current is not None and current.asset_id == asset_id)
+        button.setVisible(visible)
+        button.setEnabled(visible)
+
+    def fetch_full_preview_for_selected(self) -> None:
+        asset = self.selected_asset() if hasattr(self, "selected_asset") else None
+        if asset is None or asset.magic != "BMD0":
+            QMessageBox.information(self, "No model selected", "Select a BMD0/NSBMD model first.")
+            return
+        self._set_fetch_full_preview_available(None)
+        self._update_status(f"Fetching Full Fidelity preview for {asset.virtual_path}...")
+        self._preview_model_with_textures(
+            asset,
+            manual=True,
+            force=True,
+            switch_to_details=False,
+            preview_policy_override=model_preview_policy(ModelPreviewQuality.FULL_FIDELITY),
+        )
 
     def _on_model_preview_quality_changed(self, _index: int) -> None:
         if not hasattr(self, "model_preview_quality_box"):
@@ -169,9 +197,8 @@ class ShellMixin:
             return
         self.model_preview_quality = quality
         policy = self._model_preview_policy()
-        # Texture-resolution preview caches are keyed by asset today, so avoid
-        # accidentally reusing a Full Fidelity GLB after switching to a faster mode.
-        self._texture_resolution_cache.clear()
+        # Texture-resolution preview caches are keyed by quality + asset now, so
+        # keep recent entries while switching modes during model comparison.
         self._preview_status_by_asset_id.clear()
         self._preview_fallback_count_by_asset_id.clear()
         self._update_status(f"Model preview quality changed to {policy.label}: {policy.summary()}.")
@@ -410,6 +437,12 @@ class ShellMixin:
         self.reset_view_button = QPushButton("Reset View")
         self.reset_view_button.setToolTip("Reset the 3D preview camera to the default orbit.")
         self.reset_view_button.clicked.connect(self.preview.reset_view)
+        self.fetch_full_preview_button = QPushButton("Fetch Full Preview")
+        self.fetch_full_preview_button.setToolTip(
+            "Run the slower Full Fidelity resolver for this model after Auto Preview used Balanced."
+        )
+        self.fetch_full_preview_button.clicked.connect(self.fetch_full_preview_for_selected)
+        self.fetch_full_preview_button.setVisible(False)
         self.pin_texture_button = QPushButton("Pin Texture")
         self.pin_texture_button.clicked.connect(self.pin_selected_texture)
         self.clear_pin_button = QPushButton("Clear Pin")
@@ -420,11 +453,15 @@ class ShellMixin:
         self.model_preview_quality_box = QComboBox()
         for quality, label in MODEL_PREVIEW_QUALITY_CHOICES:
             self.model_preview_quality_box.addItem(label, quality)
+        default_quality_index = self.model_preview_quality_box.findData(self.model_preview_quality)
+        if default_quality_index >= 0:
+            self.model_preview_quality_box.setCurrentIndex(default_quality_index)
         self.model_preview_quality_box.setToolTip(
-            "Temporary per-run model preview quality. Resets to Full Fidelity on app restart."
+            "Temporary per-run model preview quality. Defaults to Balanced on app restart."
         )
         self.model_preview_quality_box.currentIndexChanged.connect(self._on_model_preview_quality_changed)
         self.preview.action_layout.addWidget(self.reset_view_button)
+        self.preview.action_layout.addWidget(self.fetch_full_preview_button)
         self.preview.action_layout.addWidget(self.export_button)
         self.preview.action_layout.addWidget(self.model_preview_quality_box)
 

@@ -84,7 +84,7 @@ from ..constants import (
 )
 from ..preview_btx import write_btx_preview_images
 from ..preview_quality import CachedTextureResolution, TextureQuality, best_preview_path, converted_texture_quality
-from ...preview_policy import ModelPreviewQuality
+from ...preview_policy import ModelPreviewQuality, ModelPreviewPolicy, model_preview_policy
 from ..preview_widgets import PreviewWidget, qcolor_rgbf
 from ..workers import (
     FilterWorker,
@@ -111,6 +111,69 @@ class TextureResolveMixin:
             QMessageBox.warning(self, "apicula not found", apicula_help_text())
             return
         self._preview_model_with_textures(asset, manual=True, force=True, switch_to_details=True)
+
+
+    def _texture_resolution_cache_key(self, asset_id: str, policy_key: str | None = None) -> str:
+        key = policy_key or self._model_preview_policy().cache_key
+        return f"{key}:{asset_id}"
+
+    def _get_cached_texture_resolution(self, asset_id: str) -> CachedTextureResolution | None:
+        cache = getattr(self, "_texture_resolution_cache", None)
+        if not cache:
+            return None
+        key = self._texture_resolution_cache_key(asset_id)
+        cached = cache.get(key)
+        if cached is None:
+            # Backward compatibility with older asset-only cache entries.
+            cached = cache.get(asset_id)
+            key = asset_id if cached is not None else key
+        if cached is not None:
+            order = getattr(self, "_texture_resolution_cache_order", None)
+            if isinstance(order, list):
+                if key in order:
+                    order.remove(key)
+                order.append(key)
+            return cached
+        return None
+
+    def _store_texture_resolution_cache(
+        self,
+        asset_id: str,
+        *,
+        report: str,
+        selected_texture_id: str,
+        preview_path: Path,
+        auxiliary_paths: list[Path],
+        texture_by_name: dict[str, Path] | dict[str, str],
+        material_to_texture: dict[str, str],
+        texture_bind_order: list[str],
+        policy_key: str | None = None,
+    ) -> None:
+        key = self._texture_resolution_cache_key(asset_id, policy_key)
+        cache = getattr(self, "_texture_resolution_cache", None)
+        if cache is None:
+            self._texture_resolution_cache = {}
+            cache = self._texture_resolution_cache
+        cache[key] = CachedTextureResolution(
+            report=report,
+            selected_texture_id=selected_texture_id,
+            preview_path=preview_path,
+            auxiliary_paths=list(auxiliary_paths),
+            texture_by_name={name: str(path) for name, path in dict(texture_by_name).items()},
+            material_to_texture=dict(material_to_texture),
+            texture_bind_order=list(texture_bind_order),
+        )
+        order = getattr(self, "_texture_resolution_cache_order", None)
+        if not isinstance(order, list):
+            self._texture_resolution_cache_order = []
+            order = self._texture_resolution_cache_order
+        if key in order:
+            order.remove(key)
+        order.append(key)
+        limit = int(getattr(self, "_texture_resolution_cache_limit", 5) or 5)
+        while len(order) > limit:
+            old_key = order.pop(0)
+            cache.pop(old_key, None)
 
     def _apply_texture_resolution_cache(self, asset: Asset, cached: CachedTextureResolution, *, switch_to_details: bool) -> None:
         self._last_texture_resolve_report[asset.asset_id] = cached.report
@@ -148,8 +211,13 @@ class TextureResolveMixin:
         # an exhaustive resolver job just because the user clicked a row.
         return btx_count >= 1000
 
-    def _start_texture_resolve_worker(self, asset: Asset) -> None:
-        policy = self._model_preview_policy()
+    def _start_texture_resolve_worker(
+        self,
+        asset: Asset,
+        *,
+        preview_policy: ModelPreviewPolicy | None = None,
+    ) -> None:
+        policy = model_preview_policy(preview_policy) if preview_policy is not None else self._model_preview_policy()
         out_dir = self.preview_temp / asset.asset_id / f"texture_resolve_{policy.cache_key}"
         self.texture_resolve_worker = TextureResolveWorker(
             asset,
@@ -172,6 +240,7 @@ class TextureResolveMixin:
         manual: bool,
         force: bool,
         switch_to_details: bool = False,
+        preview_policy_override: ModelPreviewPolicy | None = None,
     ) -> None:
         if asset.magic != "BMD0":
             if manual:
@@ -185,7 +254,11 @@ class TextureResolveMixin:
                 self._update_status("apicula was not found, so RAE can list/export but not preview models yet.")
             return
 
-        policy = self._model_preview_policy()
+        policy = (
+            model_preview_policy(preview_policy_override)
+            if preview_policy_override is not None
+            else self._model_preview_policy()
+        )
         if policy.geometry_only:
             self._last_texture_resolve_report[asset.asset_id] = (
                 "Texture resolution report\n"
@@ -193,25 +266,31 @@ class TextureResolveMixin:
             )
             self._start_geometry_preview(asset, manual=manual)
             return
-        if not manual and self._full_fidelity_auto_preview_is_risky(asset):
+        if (
+            not manual
+            and preview_policy_override is None
+            and self._full_fidelity_auto_preview_is_risky(asset)
+        ):
+            policy = model_preview_policy(ModelPreviewQuality.BALANCED)
+            force = True
+            if hasattr(self, "_set_fetch_full_preview_available"):
+                self._set_fetch_full_preview_available(asset.asset_id)
             self._last_texture_resolve_report[asset.asset_id] = (
                 "Texture resolution report\n"
-                "Preview quality: Full Fidelity\n"
-                "Auto Preview paused: this ROM has many texture archives or the texture index is still warming. "
-                "Use Preview manually for exhaustive matching, or switch Model Preview to Balanced/Fast Textured while browsing."
+                "Preview quality: Balanced fallback\n"
+                "Auto Preview avoided starting an expensive Full Fidelity resolver job and is using "
+                "Balanced for this model. Use Fetch Full Preview for exhaustive matching."
             )
-            self.preview.show_message(
-                f"Full Fidelity Auto Preview paused for this model.\n\n{asset.virtual_path}\n\n"
-                "Use Preview manually to run the exhaustive resolver, or switch Model Preview to Balanced/Fast Textured."
+            self._update_status(
+                f"Auto Preview using Balanced fallback for expensive Full Fidelity model preview: {asset.virtual_path}"
             )
-            self._update_status(f"Auto Preview paused for expensive Full Fidelity model preview: {asset.virtual_path}")
-            self._update_preview_details(asset)
-            return
         if self.texture_resolve_worker is not None and self.texture_resolve_worker.isRunning():
             self._queued_preview_asset_id = asset.asset_id
-            self._update_status(f"Queued textured preview for {asset.virtual_path}...")
+            self._update_status(
+                f"Queued textured preview for {asset.virtual_path}; waiting for the current model preview job to finish."
+            )
             return
-        if not force and policy.full_fidelity:
+        if not force:
             cached = self._get_cached_texture_resolution(asset.asset_id)
             if cached is not None:
                 self._apply_texture_resolution_cache(asset, cached, switch_to_details=switch_to_details)
@@ -235,7 +314,7 @@ class TextureResolveMixin:
             f"{warmup_note}"
         )
         self._update_status(f"Previewing textured model ({policy.label}): {asset.virtual_path}")
-        self._start_texture_resolve_worker(asset)
+        self._start_texture_resolve_worker(asset, preview_policy=policy)
 
     def _finish_texture_preview_queue(self, completed_asset_id: str) -> None:
         queued = self._queued_preview_asset_id
@@ -251,7 +330,7 @@ class TextureResolveMixin:
             tex = self.assets_by_id.get(texture_asset_id)
             if tex and tex.magic == "BTX0":
                 self._update_status(f"Texture resolve selected external texture archive {tex.virtual_path} for future previews/exports.")
-        elif "embedded TEX0" in report:
+        elif "embedded TEX0 decoded" in report or "embedded texture image" in report:
             self._update_status("Texture resolve used embedded NSBMD texture data; no external texture archive was pinned.")
         current = self.assets_by_id.get(asset_id)
         if current:
@@ -262,19 +341,23 @@ class TextureResolveMixin:
             texture_by_name = dict(getattr(result, "texture_by_name", {}) or {})
             material_to_texture = dict(getattr(result, "material_to_texture", {}) or {})
             texture_bind_order = list(getattr(result, "texture_bind_order", []) or [])
-            if getattr(result, "preview_policy_key", "full_fidelity") == ModelPreviewQuality.FULL_FIDELITY.value:
-                self._store_texture_resolution_cache(
-                    asset_id,
-                    report=report,
-                    selected_texture_id=texture_asset_id,
-                    preview_path=first,
-                    auxiliary_paths=fallback_paths,
-                    texture_by_name=texture_by_name,
-                    material_to_texture=material_to_texture,
-                    texture_bind_order=texture_bind_order,
-                )
+            policy_key = getattr(result, "preview_policy_key", self._model_preview_policy().cache_key)
+            self._store_texture_resolution_cache(
+                asset_id,
+                report=report,
+                selected_texture_id=texture_asset_id,
+                preview_path=first,
+                auxiliary_paths=fallback_paths,
+                texture_by_name=texture_by_name,
+                material_to_texture=material_to_texture,
+                texture_bind_order=texture_bind_order,
+                policy_key=policy_key,
+            )
             selected = self.selected_asset()
             if selected is not None and selected.asset_id == asset_id:
+                self._update_status(
+                    f"Loading model preview with {len(fallback_paths)} bounded texture PNG(s): {first}"
+                )
                 self._load_model_preview_glb(
                     first,
                     asset_id=asset_id,

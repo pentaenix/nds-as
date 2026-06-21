@@ -223,12 +223,23 @@ class TextureIndexMixin:
         self._focus_terminal()
         self._update_status(f"Background texture indexing failed: {message}")
 
-    def _texture_resolution_cache_key(self, asset_id: str, pinned_texture_asset_id: str | None) -> str:
+    def _texture_resolution_cache_key(
+        self,
+        asset_id: str,
+        pinned_texture_asset_id: str | None,
+        policy_key: str | None = None,
+    ) -> str:
         count, digest = self._texture_library_store.fingerprint(self.assets)
-        return f"v3:{asset_id}:{pinned_texture_asset_id or ''}:{count}:{digest}"
+        if policy_key is None:
+            try:
+                policy = self._model_preview_policy()
+                policy_key = str(getattr(policy, "cache_key", ""))
+            except Exception:
+                policy_key = ""
+        return f"v4:{policy_key}:{asset_id}:{pinned_texture_asset_id or ''}:{count}:{digest}"
 
-    def _get_cached_texture_resolution(self, asset_id: str) -> CachedTextureResolution | None:
-        key = self._texture_resolution_cache_key(asset_id, self._pinned_texture_asset_id)
+    def _get_cached_texture_resolution(self, asset_id: str, *, policy_key: str | None = None) -> CachedTextureResolution | None:
+        key = self._texture_resolution_cache_key(asset_id, self._pinned_texture_asset_id, policy_key)
         cached = self._texture_resolution_cache.get(key)
         if cached is None:
             return None
@@ -249,7 +260,7 @@ class TextureIndexMixin:
         material_to_texture: dict[str, str] | None = None,
         texture_bind_order: list[str] | None = None,
     ) -> None:
-        key = self._texture_resolution_cache_key(asset_id, self._pinned_texture_asset_id)
+        key = self._texture_resolution_cache_key(asset_id, self._pinned_texture_asset_id, policy_key)
         self._texture_resolution_cache[key] = CachedTextureResolution(
             report=report,
             selected_texture_id=selected_texture_id,

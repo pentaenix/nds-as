@@ -166,7 +166,13 @@ class TextureResolveWorker(QThread):
             if trial_dir.exists():
                 shutil.rmtree(trial_dir, ignore_errors=True)
             self.progress.emit("Set Textures: converting preview with only resolved/manual texture inputs.")
-            result = convert_with_apicula(self.asset, trial_dir, sibling_assets=siblings, output_format="glb", more_textures=True)
+            result = convert_with_apicula(
+                self.asset,
+                trial_dir,
+                sibling_assets=siblings,
+                output_format="glb",
+                more_textures=self.preview_policy.full_fidelity,
+            )
 
             if result.ok and result.output_files:
                 result.preview_policy_key = self.preview_policy.cache_key
@@ -179,17 +185,33 @@ class TextureResolveWorker(QThread):
                     trial_dir / "dsm_resolved_textures",
                     max_images=self.preview_policy.max_decoded_images,
                 )
-                all_pngs = merge_texture_paths(apicula_pngs, aux)
+                # Do not hand thousands of apicula --more-textures PNG variants to
+                # the live viewport. Large Gen 5 map models can otherwise resolve
+                # correctly but stall while the web preview stages every PNG. Prefer
+                # RAE's ranked resolver PNGs, then use a tiny apicula-name map only
+                # as supplemental lookup data. The full apicula output remains on disk.
+                viewport_texture_cap = (self.preview_policy.max_decoded_images or 512)
+                if not self.preview_policy.full_fidelity:
+                    viewport_texture_cap = min(viewport_texture_cap, 128)
+                if aux:
+                    viewport_pngs = list(aux[:viewport_texture_cap])
+                else:
+                    viewport_pngs = list(apicula_pngs[:viewport_texture_cap])
+                capped_apicula_pngs = list(apicula_pngs[:64])
+                all_pngs = viewport_pngs
                 if all_pngs:
                     result.auxiliary_files = all_pngs
-                    resolver_map, material_to_texture, bind_order = build_preview_texture_maps(resolution, aux)
-                    apicula_map = texture_map_from_paths(apicula_pngs)
+                    resolver_map, material_to_texture, bind_order = build_preview_texture_maps(
+                        resolution,
+                        list(aux[:viewport_texture_cap]) if aux else [],
+                    )
+                    apicula_map = texture_map_from_paths(capped_apicula_pngs)
                     result.texture_by_name = merge_texture_by_name(resolver_map, apicula_map)
                     result.material_to_texture = material_to_texture
                     result.texture_bind_order = bind_order
                     report_lines.append(
                         f"RAE preview textures: {len(apicula_pngs)} apicula PNG(s), "
-                        f"{len(aux)} resolver PNG(s)"
+                        f"{len(aux)} resolver PNG(s); viewport handoff capped at {len(all_pngs)} PNG(s)"
                     )
                 quality = converted_texture_quality(result.output_files[0]) if result.output_files else TextureQuality(0,0,0,0,0,0,0,0)
                 report_lines.append(f"Converted preview: {result.output_files[0].name} — {quality.summary()}")
