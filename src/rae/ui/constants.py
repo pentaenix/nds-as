@@ -26,6 +26,10 @@ TYPE_LABELS = {
     "SWAR": "Wave archive",
     "SWAV": "Sample",
     "STRM": "Stream",
+    "HOME": "HOME package",
+    "UNITY": "Unity bundle",
+    "ABA": "Mobile package",
+    "MOBL": "Mobile asset",
 }
 TYPE_FILTER_ORDER = (
     "BMD0",
@@ -50,14 +54,19 @@ TYPE_FILTER_ORDER = (
     "SWAR",
     "SWAV",
     "STRM",
+    "HOME",
+    "UNITY",
+    "ABA",
+    "MOBL",
 )
 TYPE_FILTER_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Models & textures", ("BMD0", "BTX0")),
     ("2D graphics", ("RGCN", "RLCN", "RCSN", "RECN", "RNAN", "NFTR", "PNG")),
     ("Model animation", ("BCA0", "BTA0", "BTP0", "BMA0", "BVA0", "BPC0")),
     ("Audio", ("SDAT", "SSEQ", "SSAR", "SBNK", "SWAR", "SWAV", "STRM")),
+    ("Mobile / Unity", ("HOME", "UNITY", "ABA", "MOBL")),
 )
-DEFAULT_TYPE_FILTER_ON = frozenset({"BMD0", "BTX0"})
+DEFAULT_TYPE_FILTER_ON = frozenset({"BMD0", "BTX0", "HOME", "UNITY", "ABA", "MOBL"})
 FILTER_CHIP_STYLE = (
     "QPushButton { padding: 4px 10px; border: 1px solid #666; border-radius: 6px; "
     "background: #ececec; color: #111; }"

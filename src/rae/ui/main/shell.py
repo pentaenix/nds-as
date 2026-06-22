@@ -157,6 +157,11 @@ class ShellMixin:
         self._init_easyfind_state()
 
         self._build_ui()
+        try:
+            from ..mobile_device_toolkit import install_mobile_device_toolkit
+            install_mobile_device_toolkit(self)
+        except Exception as exc:
+            self._update_status(f"Device Toolkit menu could not be installed: {exc}")
         self._update_status("Open a local .nds ROM to start. Use ./rae run next time to launch this app.")
 
     def _model_preview_policy(self):
@@ -211,6 +216,17 @@ class ShellMixin:
 
     def _build_ui(self) -> None:
         menubar = self.menuBar()
+        # RAE_DEVICE_TOOLKIT_FORCE_MENUBAR_HOOK
+        try:
+            from ..mobile_device_toolkit import install_mobile_device_toolkit
+            install_mobile_device_toolkit(self)
+        except Exception as exc:
+            print(f"Device Toolkit menu could not be installed: {exc}")
+            try:
+                QTimer.singleShot(0, lambda exc=exc: self._update_status(f"Device Toolkit menu could not be installed: {exc}"))
+            except Exception:
+                pass
+
 
         file_menu = menubar.addMenu("&File")
         open_rom_action = QAction("Open ROM…", self)

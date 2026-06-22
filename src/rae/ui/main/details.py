@@ -103,6 +103,16 @@ class DetailsMixin:
         if not asset:
             self.details.clear()
             return
+        try:
+            from ...platforms.home.ui import home_asset_details
+            home_details = home_asset_details(asset)
+        except Exception:
+            home_details = None
+        if home_details is not None:
+            self.details.setPlainText(home_details)
+            self._update_preview_details(asset)
+            return
+
         details = [
             f"Name: {self._asset_display_name(asset)}",
             f"File: {self._asset_file_label(asset)}",
@@ -201,6 +211,32 @@ class DetailsMixin:
                 details.append("Sample/stream audio: Export Readable writes raw original plus WAV when RAE can decode the payload.")
             else:
                 details.append("Sequenced/instrument audio: Export Readable writes the original raw file losslessly. Use VGMTrans/Nitro Studio for MIDI/SF2-style rendering.")
+        elif asset.magic in {"MOBL", "UNITY", "ABA"}:
+            details.append("")
+            details.append("Mobile app ROM asset")
+            try:
+                meta = json.loads(asset.data.decode("utf-8"))
+            except Exception:
+                meta = {}
+            if meta:
+                mobile_rom = meta.get("mobileRom") or meta.get("manifest") or {}
+                if mobile_rom:
+                    details.append(f"Package: {mobile_rom.get('packageId') or mobile_rom.get('package_id') or 'unknown'}")
+                    details.append(f"App: {mobile_rom.get('appName') or mobile_rom.get('app_name') or 'unknown'}")
+                if meta.get("classification"):
+                    details.append(f"Classification: {meta.get('classification')}")
+                if meta.get("magic"):
+                    details.append(f"Detected magic: {meta.get('magic')}")
+                if meta.get("size") is not None:
+                    details.append(f"Source size: {meta.get('size')} bytes")
+                if meta.get("local_path"):
+                    details.append(f"Local path: {meta.get('local_path')}")
+                if meta.get("container"):
+                    details.append(f"Container: {meta.get('container')}")
+            if asset.magic == "UNITY":
+                details.append("Unity bundle candidate. Install UnityPy for object counts; later export adapters will turn readable Mesh/Animator/AnimationClip data into previewable GLB/FBX.")
+            elif asset.magic == "ABA":
+                details.append("Encrypted/packaged mobile asset candidate. RAE detects this but does not decrypt or bypass protected packages.")
         elif asset.magic == "PNG" or asset.data.startswith(b"\x89PNG"):
             details.append("")
             details.append("PNG preview/export supported directly.")

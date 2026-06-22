@@ -57,6 +57,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_decode.add_argument("--limit", type=int, default=0, help="Optional decode limit")
     p_decode.add_argument("--deep-scan", action="store_true", help="Slower fallback: carve known files inside unknown containers")
 
+
+    p_home = sub.add_parser("home", help="Scan Pokémon HOME Android/cache Unity asset sources")
+    home_sub = p_home.add_subparsers(dest="home_cmd")
+    p_home_scan = home_sub.add_parser("scan", help="Build a Pokémon HOME package inventory JSON")
+    p_home_scan.add_argument("source", help="APK/APKM/XAPK/OBB/folder copied from Pokémon HOME Android files/cache")
+    p_home_scan.add_argument("--out", "-o", default="exports/home_inventory.json", help="Output inventory JSON")
+    p_home_scan.add_argument("--no-unity", action="store_true", help="Skip optional UnityPy object inventory")
+    p_home_list = home_sub.add_parser("list", help="Print Pokémon HOME package completeness rows")
+    p_home_list.add_argument("source", help="APK/APKM/XAPK/OBB/folder copied from Pokémon HOME Android files/cache")
+    p_home_list.add_argument("--no-unity", action="store_true", help="Skip optional UnityPy object inventory")
+    p_home_report = home_sub.add_parser("report", help="Summarize a previously written HOME inventory JSON")
+    p_home_report.add_argument("inventory")
+
     p_audio = sub.add_parser(
         "audio",
         help="Export lossless SDAT/SSEQ/SSAR/SBNK/SWAR/SWAV/STRM audio bundles; WAV where RAE can decode samples/streams",

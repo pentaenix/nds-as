@@ -37,7 +37,7 @@ class ScanHint:
     priority: int = 0
 
 
-MAPPING_PLATFORM_DIRS = ("nds", "gba", "gbc", "gb", "3ds")
+MAPPING_PLATFORM_DIRS = ("nds", "gba", "gbc", "gb", "3ds", "mobile", "android", "unity")
 
 
 @dataclass(slots=True)

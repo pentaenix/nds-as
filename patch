@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PATCH_DIR="$(cd "$ROOT/.." && pwd)"
+PY="$ROOT/.venv/bin/python"
+if [[ ! -x "$PY" ]]; then
+  PY="$(command -v python3)"
+fi
+
+shopt -s nullglob
+zips=("$PATCH_DIR"/*.zip)
+if [[ ${#zips[@]} -eq 0 ]]; then
+  echo "No patch zips found in $PATCH_DIR"
+  exit 0
+fi
+
+for zip in "${zips[@]}"; do
+  name="$(basename "$zip" .zip)"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/rae-patch-XXXXXX")"
+  echo "==> Applying $(basename "$zip")"
+  unzip -q "$zip" -d "$work"
+
+  script="$(find "$work" -name apply_patch.sh -type f | head -n 1)"
+  py_script="$(find "$work" -name 'apply_*.py' -type f | head -n 1)"
+
+  if [[ -n "$script" ]]; then
+    chmod +x "$script"
+    (cd "$ROOT" && "$script")
+  elif [[ -n "$py_script" ]]; then
+    (cd "$ROOT" && "$PY" "$py_script" "$ROOT")
+  else
+    echo "No apply_patch.sh or apply_*.py found in $(basename "$zip")" >&2
+    exit 1
+  fi
+
+  echo "==> Verifying $(basename "$zip")"
+  (cd "$ROOT" && "$PY" -m compileall src)
+  (cd "$ROOT" && git diff --check)
+
+  rm -f "$zip"
+  rm -rf "$work"
+  echo "==> Applied and removed ../$(basename "$zip")"
+  echo
+done

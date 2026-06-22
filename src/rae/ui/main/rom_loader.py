@@ -113,15 +113,49 @@ class RomLoaderMixin:
         parts.append("All files (*.*)")
         return ";;".join(parts)
 
-    def open_rom(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
+    def _choose_open_source_path(self) -> str | None:
+        from PySide6.QtWidgets import QInputDialog
+
+        roms_dir = self._roms_directory()
+        mobile_roms = sorted(p for p in roms_dir.glob("*.rom") if p.is_dir())
+        choices = ["Browse ROM file…", "Browse folder/package…"] + [p.name for p in mobile_roms]
+        choice, ok = QInputDialog.getItem(
             self,
             "Open ROM",
-            str(self._roms_directory()),
-            self._rom_open_filter(),
+            "Choose a ROM source. Mobile app ROMs are .rom folders in roms/.",
+            choices,
+            2 if mobile_roms else 0,
+            False,
         )
+        if not ok or not choice:
+            return None
+        if choice == "Browse ROM file…":
+            path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Open ROM",
+                str(roms_dir),
+                self._rom_open_filter(),
+            )
+            return path or None
+        if choice == "Browse folder/package…":
+            path = QFileDialog.getExistingDirectory(
+                self,
+                "Open ROM folder/package",
+                str(roms_dir),
+            )
+            return path or None
+        return str(roms_dir / choice)
+
+    def open_rom_path(self, path: str) -> None:
+        self._open_rom_path(path)
+
+    def open_rom(self) -> None:
+        path = self._choose_open_source_path()
         if not path:
             return
+        self._open_rom_path(path)
+
+    def _open_rom_path(self, path: str) -> None:
         platform = platform_for_path(Path(path))
         if platform is None or platform.status != "active" or platform.scan_rom_path is None:
             QMessageBox.information(

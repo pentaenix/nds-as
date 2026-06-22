@@ -1,9 +1,12 @@
 """ROM scan and filter background workers."""
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import QThread, Signal
 
 from ...scanner import Asset, filter_assets_indexed, scan_nds_path
+from ...platforms import platform_for_path
 from ...texture_library import TextureLibraryStore
 
 class FilterWorker(QThread):
@@ -79,18 +82,24 @@ class ScanWorker(QThread):
 
     def run(self) -> None:
         try:
-            scan_mode = "exhaustive" if self.deep_scan else "guided"
-            if self.deep_scan:
-                self.progress.emit("Exhaustive scan: reading ROM filesystem, known containers, compressed streams, and carved Nitro files.")
+            source_path = Path(self.rom_path)
+            platform = platform_for_path(source_path)
+            if platform is not None and platform.id != "nds" and platform.scan_rom_path is not None:
+                self.progress.emit(f"Scanning {platform.label}: {self.rom_path}")
+                assets = platform.scan_rom_path(self.rom_path, progress=self.progress.emit)
             else:
-                self.progress.emit("Guided scan: reading ROM filesystem and known containers, with bounded mapping-priority carving for likely model/texture archives.")
-            assets = scan_nds_path(
-                self.rom_path,
-                progress=self.progress.emit,
-                carve_unknown_blobs=self.deep_scan,
-                expand_audio_archives=False,
-                scan_mode=scan_mode,
-            )
+                scan_mode = "exhaustive" if self.deep_scan else "guided"
+                if self.deep_scan:
+                    self.progress.emit("Exhaustive scan: reading ROM filesystem, known containers, compressed streams, and carved Nitro files.")
+                else:
+                    self.progress.emit("Guided scan: reading ROM filesystem and known containers, with bounded mapping-priority carving for likely model/texture archives.")
+                assets = scan_nds_path(
+                    self.rom_path,
+                    progress=self.progress.emit,
+                    carve_unknown_blobs=self.deep_scan,
+                    expand_audio_archives=False,
+                    scan_mode=scan_mode,
+                )
             self.progress.emit(f"Scan complete: {len(assets)} detected asset(s). Building visible folders lazily in the UI. Large model previews may still take time; turn off Auto Preview while browsing.")
             self.finished_ok.emit(assets, None)
         except Exception as exc:

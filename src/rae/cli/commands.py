@@ -9,6 +9,7 @@ from ..mapping import choose_mapping, load_mappings, mapping_summary
 from ..nds import NDSRom
 from ..nitro_names import extract_nitro_names
 from ..profiles import detect_profile
+from ..platforms import platform_for_path
 from ..scanner import Asset, filter_assets, scan_nds_path
 from ..util import human_size
 
@@ -32,13 +33,22 @@ def dispatch(cmd: str | None, args) -> int:
         print_rom_info(args.rom)
         return 0
 
+    if cmd == "home":
+        from ..platforms.home.cli import dispatch_home
+
+        return dispatch_home(args)
+
     print(f"Scanning {args.rom}...", file=sys.stderr)
     try:
-        assets = scan_nds_path(
-            args.rom,
-            progress=lambda msg: print(msg, file=sys.stderr),
-            carve_unknown_blobs=getattr(args, "deep_scan", False),
-        )
+        platform = platform_for_path(Path(args.rom))
+        if platform is not None and platform.id != "nds" and platform.scan_rom_path is not None:
+            assets = platform.scan_rom_path(args.rom, progress=lambda msg: print(msg, file=sys.stderr))
+        else:
+            assets = scan_nds_path(
+                args.rom,
+                progress=lambda msg: print(msg, file=sys.stderr),
+                carve_unknown_blobs=getattr(args, "deep_scan", False),
+            )
     except Exception as exc:
         print(f"Scan failed: {exc}", file=sys.stderr)
         return 1

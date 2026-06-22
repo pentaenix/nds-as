@@ -107,6 +107,15 @@ class ModelPreviewMixin:
         self._preview_model_with_textures(asset, manual=manual, force=force, switch_to_details=False)
 
     def _start_geometry_preview(self, asset: Asset, *, manual: bool) -> None:
+        if asset.magic == "HOME":
+            self.preview.show_message(
+                "Pokémon HOME package selected.\n\n"
+                "This first HOME patch inventories model/texture/rig/animation candidates and groups dependencies. "
+                "Install UnityPy and scan readable Unity bundles to expose Mesh/Texture2D/Animator/AnimationClip objects. "
+                "The next adapter patch will export those objects to GLB/FBX for viewport playback."
+            )
+            self._update_status("HOME package inventory loaded; viewport export adapter is the next milestone.")
+            return
         if asset.magic != "BMD0":
             if manual:
                 QMessageBox.information(self, "Not a model", "Preview/conversion works best on BMD0 model assets. Select a BMD0 row.")

@@ -53,6 +53,7 @@ def all_platforms() -> dict[str, Platform]:
     from ..platforms.gbc import GBC_PLATFORM
     from ..platforms.gb import GB_PLATFORM
     from ..platforms.threeds import THREEDS_PLATFORM
+    from ..platforms.mobile import MOBILE_PLATFORM
 
     return {
         p.id: p
@@ -62,6 +63,7 @@ def all_platforms() -> dict[str, Platform]:
             GBC_PLATFORM,
             GB_PLATFORM,
             THREEDS_PLATFORM,
+            MOBILE_PLATFORM,
         )
     }
 

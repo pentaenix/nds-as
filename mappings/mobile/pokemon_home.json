@@ -1,0 +1,53 @@
+{
+  "mappingId": "pokemon_home_android",
+  "platform": "mobile",
+  "gameFamily": "pokemon_home",
+  "coverage": "initial-home-android-cache-and-unity-bundle-map",
+  "notes": [
+    "Pokémon HOME mobile assets are treated as Android/cache + Unity AssetBundle sources, not as a DS ROM.",
+    "Encrypted .aba/.abap packages are detected but not decrypted by RAE. Provide readable cache files or user-configured external exports.",
+    "Pokémon package IDs are recognized from pm####_##_## / pkm_#### style filenames."
+  ],
+  "games": [
+    {
+      "title": "Pokémon HOME Android",
+      "shortTitle": "HOME",
+      "packageIds": ["jp.pokemon.pokemonhome"]
+    }
+  ],
+  "archives": [
+    {
+      "path": "Models/Android/**/pokemons/pm*_**",
+      "label": "Pokémon model/form bundle candidates",
+      "category": "models",
+      "confidence": "path-pattern",
+      "assetTypes": ["UnityFS", "AssetBundle", "Mesh", "SkinnedMeshRenderer", "Animator", "AnimationClip", "Texture2D"],
+      "tags": ["home", "models", "pokemon", "unity"]
+    },
+    {
+      "path": "Models/Android/**/dependencies/**",
+      "label": "Pokémon HOME model dependencies",
+      "category": "textures/materials/rigs/animations",
+      "confidence": "path-pattern",
+      "assetTypes": ["UnityFS", "Texture2D", "Material", "Avatar", "AnimationClip"],
+      "tags": ["home", "dependencies", "unity"]
+    }
+  ],
+  "uiGroups": [
+    {"id": "home_models", "label": "HOME Pokémon Packages", "query": "magic:HOME"},
+    {"id": "home_incomplete", "label": "Incomplete HOME Packages", "query": "missing unknown"}
+  ],
+  "sources": [
+    {"label": "Local Android data/cache", "type": "local-folder", "package": "jp.pokemon.pokemonhome"},
+    {"label": "Readable Unity AssetBundles", "type": "local-files"}
+  ],
+  "searchPresets": [
+    {"id": "home", "label": "HOME packages", "query": "magic:HOME", "description": "Show grouped Pokémon HOME model packages", "workflow": ["home", "models"]},
+    {"id": "home_psyduck", "label": "Psyduck", "query": "Psyduck pkm_54 pm0054", "description": "Find Psyduck HOME candidates", "workflow": ["home", "models"]}
+  ],
+  "speciesNames": {
+    "pkm_54": "Psyduck",
+    "pm0054": "Psyduck",
+    "pm0054_00_00": "Psyduck"
+  }
+}
