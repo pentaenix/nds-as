@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "rae"
 version = "0.26.0"
@@ -23,8 +27,11 @@ rae-ui = "rae.app:main"
 dsas = "rae.cli:main"
 dsas-ui = "rae.app:main"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.setuptools]
+package-dir = {"rae" = "src", "dsm" = "src/dsm"}
 
 [tool.setuptools.package-data]
 "rae.ui.preview" = ["static/**/*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

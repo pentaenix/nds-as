@@ -38,3 +38,4 @@ texture_index/*.texture-index.tmp
 
 # Vendored apicula — source is tracked; Rust build output stays local
 tools/apicula/target/
+/.cache

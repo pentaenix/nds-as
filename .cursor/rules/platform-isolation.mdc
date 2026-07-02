@@ -1,0 +1,17 @@
+---
+description: RAE platform islands — see repo-root rules (canonical)
+globs: rae/src/platforms/**/*
+alwaysApply: false
+---
+
+# Platform isolation (RAE)
+
+**Canonical rules live in the repo root** (not `~/.cursor`):
+
+- `.cursor/rules/rae-platform-isolation.mdc`
+- `.cursor/rules/rae-parallel-agents.mdc`
+- `.cursor/skills/rae-platform-islands/SKILL.md`
+
+Read `rae/AGENTS.md` and `rae/docs/agents/platform-islands.md` before editing this tree.
+
+**Quick rules:** no cross-platform imports; duplicate over share; scaffold new platforms with `scripts/scaffold_platform.py`; run `pytest tests/test_platform_import_isolation.py`.

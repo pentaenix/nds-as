@@ -8,20 +8,23 @@ RAE does **not** download ROMs, bypass copy protection, or ship extracted copyri
 
 | Platform | Folder | ROM extensions | Status |
 |----------|--------|----------------|--------|
-| Nintendo DS | `src/rae/platforms/nds/` | `.nds` | **Active** — scan, preview, export |
-| Game Boy Advance | `src/rae/platforms/gba/` | `.gba` | Planned |
-| Game Boy Color | `src/rae/platforms/gbc/` | `.gbc` | Planned |
-| Game Boy | `src/rae/platforms/gb/` | `.gb` | Planned |
-| Nintendo 3DS | `src/rae/platforms/threeds/` | `.3ds`, `.cci`, `.cxi` | Planned |
+| Nintendo DS | `src/platforms/nds/` | `.nds` | **Active** — scan, preview, export |
+| Game Boy Advance | `src/platforms/gba/` | `.gba` | Planned |
+| Game Boy Color | `src/platforms/gbc/` | `.gbc` | Planned |
+| Game Boy | `src/platforms/gb/` | `.gb` | Planned |
+| Nintendo 3DS | `src/platforms/threeds/` | `.3ds`, `.cci`, `.cxi` | Planned |
 
 ## Project layout
 
 ```text
-src/rae/
-  core/           mappings, platform registry, sessions, install
+src/
   platforms/
     nds/          DS ROM scan, Nitro decoders, audio, model export
+    mobile/       HOME / .rom mobile app support
+    home/         Pokémon HOME implementation (used via mobile)
+    android/      Android device source helpers
     gba/ gbc/ gb/ threeds/   stubs + README (contributions welcome)
+  core/           mappings, platform registry, modules dispatch
   ui/             desktop app (Qt)
   cli/            command-line tools
 mappings/
@@ -81,7 +84,17 @@ RAE looks for apicula on `PATH`, `RAE_APICULA` (legacy: `DSAS_APICULA`, `DSM_API
 
 After apicula converts a model to GLB, RAE runs a shared **material policy** pass (`rae.glb_policy`) that writes `extras.rae.renderClass` on each material (opaque, mask, blend, uniform_decal). Ground shadows are detected from Nitro alpha + texture + geometry — not material names. See `docs/GLB_RENDER_POLICY.md`.
 
-3D preview uses **Qt WebEngine + three.js** (bundled under `src/rae/ui/preview/static/`). Install PySide6 Add-ons if WebEngine is missing. Set `RAE_LEGACY_GL_PREVIEW=1` to fall back to the old pyqtgraph path.
+3D preview uses **Qt WebEngine + three.js** (bundled under `src/ui/preview/static/`). Install PySide6 Add-ons if WebEngine is missing. Set `RAE_LEGACY_GL_PREVIEW=1` to fall back to the old pyqtgraph path.
+
+## Agents and contributors
+
+ROM platforms are **isolated islands** under `src/platforms/<id>/` so NDS, mobile/HOME, and future consoles can be developed in parallel.
+
+- **Agents:** start at [`AGENTS.md`](AGENTS.md) and [`docs/agents/platform-islands.md`](docs/agents/platform-islands.md)
+- **Cursor rules (this repo):** `.cursor/rules/rae-*.mdc` at the monorepo root
+- **Skill:** `.cursor/skills/rae-platform-islands/`
+- **New platform:** `python scripts/scaffold_platform.py <id> "<Label>" --ext .rom [--active]`
+- **CI guard:** `pytest tests/test_platform_import_isolation.py`
 
 ## Development
 

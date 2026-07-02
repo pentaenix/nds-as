@@ -1,12 +1,16 @@
 {
+  "schemaVersion": 1,
   "mappingId": "pokemon_home_android",
   "platform": "mobile",
   "gameFamily": "pokemon_home",
-  "coverage": "initial-home-android-cache-and-unity-bundle-map",
+  "coverage": "home-android-path-naming-and-unity-bundle-map",
   "notes": [
-    "Pokémon HOME mobile assets are treated as Android/cache + Unity AssetBundle sources, not as a DS ROM.",
-    "Encrypted .aba/.abap packages are detected but not decrypted by RAE. Provide readable cache files or user-configured external exports.",
-    "Pokémon package IDs are recognized from pm####_##_## / pkm_#### style filenames."
+    "Pokémon HOME mobile models use predictable filename IDs. Community ripping docs (VG Resource, Xentax/barncastle) and the PogoEevee/PokemonHOMEBundles repo agree on pm####_##_## for species/form.",
+    "Readable decrypted prefabs are often named pm0001_00_00_prefab.unity3d. Cloud bundles live under Models/Android/<Mitake*>/pokemons/pm####_##_##.",
+    "On-device cache downloads land in Android/data/jp.pokemon.pokemonhome/files/tyranitar/ as cap####_f##_s#_128[_r].aba (encrypted) or mt_pv_ev_####_##_##.aba (Mitake preview/evolution).",
+    "cap#### uses the National Dex number (cap0001 = Bulbasaur). f## is a form/skin id; s# is a shader/quality tier.",
+    "Dependencies (rig, materials, extra textures) usually sit beside pokemons under Models/Android/**/dependencies/pm####_##_##.",
+    "Encrypted .aba/.abap packages are detected and labeled but not decrypted by RAE."
   ],
   "games": [
     {
@@ -15,39 +19,208 @@
       "packageIds": ["jp.pokemon.pokemonhome"]
     }
   ],
-  "archives": [
+  "sources": [
     {
-      "path": "Models/Android/**/pokemons/pm*_**",
-      "label": "Pokémon model/form bundle candidates",
-      "category": "models",
-      "confidence": "path-pattern",
-      "assetTypes": ["UnityFS", "AssetBundle", "Mesh", "SkinnedMeshRenderer", "Animator", "AnimationClip", "Texture2D"],
-      "tags": ["home", "models", "pokemon", "unity"]
+      "id": "vg_resource_home",
+      "name": "VG Resource Wiki: Pokémon HOME",
+      "url": "https://wiki.vg-resource.com/Pok%C3%A9mon_HOME",
+      "type": "community_reference"
     },
     {
-      "path": "Models/Android/**/dependencies/**",
-      "label": "Pokémon HOME model dependencies",
+      "id": "pogoeevee_bundles",
+      "name": "PogoEevee PokemonHOMEBundles (pm prefab naming)",
+      "url": "https://github.com/PogoEevee/PokemonHOMEBundles",
+      "type": "community_reference"
+    },
+    {
+      "id": "barncastle_aba",
+      "name": "barncastle ABA decrypt notes + CloudFront Models/Android paths",
+      "url": "https://gist.github.com/barncastle/30e4261dbc956b1eb2404480f2112b4e",
+      "type": "format_reference"
+    },
+    {
+      "id": "vg_resource_rip_thread",
+      "name": "VG Resource ripping thread (tyranitar cache, pm prefabs)",
+      "url": "https://archive.vg-resource.com/post-673264.html",
+      "type": "community_reference"
+    }
+  ],
+  "pathIdRules": [
+    {
+      "id": "pm_form",
+      "pattern": "pm{num:4d}_{formA:2d}_{formB:2d}",
+      "speciesField": "num",
+      "description": "Primary HOME Pokémon model id used in pokemons/ and dependencies/ trees."
+    },
+    {
+      "id": "cap_cache",
+      "pattern": "cap{num:4d}_f{form:2d}_s{shader}",
+      "speciesField": "num",
+      "description": "On-device tyranitar cache encrypted bundles; num is National Dex."
+    },
+    {
+      "id": "mitake_preview",
+      "pattern": "mt_pv_ev_{num:4d}_{formA:2d}_{formB:2d}",
+      "speciesField": "num",
+      "description": "Mitake preview / evolution encrypted bundles."
+    }
+  ],
+  "archives": [
+    {
+      "path": "**/models/android/**/pokemons/pm*",
+      "label": "HOME Pokémon model bundle (Cloud/Mitake pokemons tree)",
+      "category": "models",
+      "confidence": "community-known",
+      "assetTypes": ["UNITY", "UnityFS", "UnityWeb", "UnityRaw", "ABA"],
+      "tags": ["home", "models", "pokemon", "pokemons", "mitake"]
+    },
+    {
+      "path": "**/pokemons/pm*_prefab.unity3d",
+      "label": "HOME decrypted model prefab bundle",
+      "category": "models",
+      "confidence": "community-known",
+      "assetTypes": ["UNITY", "UnityFS", "UnityWeb", "UnityRaw"],
+      "tags": ["home", "models", "prefab"]
+    },
+    {
+      "path": "**/pokemons/pm*",
+      "label": "HOME Pokémon model/form bundle",
+      "category": "models",
+      "confidence": "path-pattern",
+      "assetTypes": ["UNITY", "UnityFS", "UnityWeb", "UnityRaw", "ABA", "ABA"],
+      "tags": ["home", "models", "pokemon"]
+    },
+    {
+      "path": "**/dependencies/pm*",
+      "label": "HOME model dependencies (rig/materials/textures)",
+      "category": "textures/materials/rigs",
+      "confidence": "community-known",
+      "assetTypes": ["UNITY", "UnityFS", "Texture2D", "Material", "Avatar", "Animator"],
+      "tags": ["home", "dependencies"]
+    },
+    {
+      "path": "**/dependencies/**",
+      "label": "HOME dependency bundle folder",
       "category": "textures/materials/rigs/animations",
       "confidence": "path-pattern",
-      "assetTypes": ["UnityFS", "Texture2D", "Material", "Avatar", "AnimationClip"],
-      "tags": ["home", "dependencies", "unity"]
+      "assetTypes": ["UNITY", "UnityFS", "Texture2D", "Material", "AnimationClip"],
+      "tags": ["home", "dependencies"]
+    },
+    {
+      "path": "**/tyranitar/cap*",
+      "label": "HOME on-device cached species bundle (encrypted cap####)",
+      "category": "models",
+      "confidence": "community-known",
+      "assetTypes": ["ABA", "ABAP"],
+      "tags": ["home", "tyranitar", "cache", "cap"]
+    },
+    {
+      "path": "**/tyranitar/mt_pv_ev_*",
+      "label": "HOME Mitake preview/evolution bundle (encrypted)",
+      "category": "models",
+      "confidence": "community-known",
+      "assetTypes": ["ABA", "ABAP"],
+      "tags": ["home", "tyranitar", "mitake", "preview"]
+    },
+    {
+      "path": "**/tyranitar/**",
+      "label": "HOME downloaded asset cache (tyranitar)",
+      "category": "mobile",
+      "confidence": "community-known",
+      "assetTypes": ["ABA", "ABAP", "UNITY"],
+      "tags": ["home", "tyranitar", "cache"]
+    },
+    {
+      "path": "**/assets/ab/cap*",
+      "label": "HOME APK embedded species cap bundle",
+      "category": "models",
+      "confidence": "community-known",
+      "assetTypes": ["ABA"],
+      "tags": ["home", "apk", "cap"]
+    },
+    {
+      "path": "**/assets/ab/mt_pv_ev_*",
+      "label": "HOME APK embedded Mitake preview bundle",
+      "category": "models",
+      "confidence": "community-known",
+      "assetTypes": ["ABA"],
+      "tags": ["home", "apk", "mitake"]
+    },
+    {
+      "path": "**/assets/ab/bgm_mt_*",
+      "label": "HOME background music Mitake bundle",
+      "category": "audio",
+      "confidence": "community-known",
+      "assetTypes": ["ABA"],
+      "tags": ["home", "audio", "bgm"]
+    },
+    {
+      "path": "**/*.aba",
+      "label": "HOME encrypted ABA package (unsupported decrypt)",
+      "category": "packages",
+      "confidence": "format-signature",
+      "assetTypes": ["ABA"],
+      "tags": ["home", "encrypted"]
+    },
+    {
+      "path": "**/*.abap",
+      "label": "HOME encrypted ABAP package container (unsupported decrypt)",
+      "category": "packages",
+      "confidence": "format-signature",
+      "assetTypes": ["ABAP"],
+      "tags": ["home", "encrypted"]
+    }
+  ],
+  "relationships": [
+    {
+      "id": "home_model_to_dependencies",
+      "left": "**/pokemons/pm{num}_{formA}_{formB}*",
+      "right": "**/dependencies/pm{num}_{formA}_{formB}*",
+      "kind": "model-dependencies",
+      "notes": "Matching pm####_##_## ids in pokemons/ and dependencies/ belong to the same form package."
     }
   ],
   "uiGroups": [
     {"id": "home_models", "label": "HOME Pokémon Packages", "query": "magic:HOME"},
+    {"id": "home_mapped", "label": "HOME mapped species files", "query": "mapping:community-known OR mapping:path-pattern"},
+    {"id": "home_encrypted", "label": "HOME encrypted ABA", "query": "magic:ABA cap tyranitar"},
     {"id": "home_incomplete", "label": "Incomplete HOME Packages", "query": "missing unknown"}
   ],
-  "sources": [
-    {"label": "Local Android data/cache", "type": "local-folder", "package": "jp.pokemon.pokemonhome"},
-    {"label": "Readable Unity AssetBundles", "type": "local-files"}
-  ],
   "searchPresets": [
-    {"id": "home", "label": "HOME packages", "query": "magic:HOME", "description": "Show grouped Pokémon HOME model packages", "workflow": ["home", "models"]},
-    {"id": "home_psyduck", "label": "Psyduck", "query": "Psyduck pkm_54 pm0054", "description": "Find Psyduck HOME candidates", "workflow": ["home", "models"]}
-  ],
-  "speciesNames": {
-    "pkm_54": "Psyduck",
-    "pm0054": "Psyduck",
-    "pm0054_00_00": "Psyduck"
-  }
+    {
+      "id": "home",
+      "label": "HOME packages",
+      "query": "magic:HOME",
+      "description": "Grouped Pokémon HOME form packages with model/texture/animation status",
+      "workflow": ["home", "models"]
+    },
+    {
+      "id": "home_models",
+      "label": "HOME model bundles",
+      "query": "pokemons pm prefab tyranitar cap mt_pv_ev",
+      "description": "Model bundle rows from pokemons/, tyranitar cache, and decrypted prefabs",
+      "workflow": ["home", "models"]
+    },
+    {
+      "id": "home_dependencies",
+      "label": "HOME dependencies",
+      "query": "dependencies pm",
+      "description": "Rig/material/texture dependency bundles paired with pm#### ids",
+      "workflow": ["home", "textures"]
+    },
+    {
+      "id": "home_psyduck",
+      "label": "Psyduck (#054)",
+      "query": "Psyduck pm0054 cap0054 mt_pv_ev_0054",
+      "description": "Find Psyduck HOME candidates across naming schemes",
+      "workflow": ["home", "models"]
+    },
+    {
+      "id": "home_sprigatito",
+      "label": "Sprigatito (#906)",
+      "query": "Sprigatito pm0906 cap0906 mt_pv_ev_0906",
+      "description": "Find Sprigatito HOME candidates",
+      "workflow": ["home", "models"]
+    }
+  ]
 }

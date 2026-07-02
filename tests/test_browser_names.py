@@ -24,12 +24,7 @@ def test_asset_browser_name_falls_back_to_filename():
 
 
 def test_asset_browser_name_uses_dictionary_name():
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-
-from test_decoders import make_btx0_4bpp
+    from test_decoders import make_btx0_4bpp
 
     asset = _asset("a/0/3/9/file_0000.bin.nsbtx", "BTX0", make_btx0_4bpp())
     assert asset_browser_name(asset) == "boat_tex"

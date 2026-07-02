@@ -46,9 +46,9 @@ if [[ "${1:-}" == "patch" ]]; then
   exit 0
 fi
 if [[ "${1:-}" == "install" ]]; then
-  exec python3 -m rae "$@"
+  exec python3 -m pip install -e "$ROOT"
 fi
 if [[ -x "$ROOT/.venv/bin/python" ]]; then
-  exec "$ROOT/.venv/bin/python" -m rae "$@"
+  exec "$ROOT/.venv/bin/python" "$ROOT/_launch.py" "$@"
 fi
-exec python3 -m rae "$@"
+exec python3 "$ROOT/_launch.py" "$@"

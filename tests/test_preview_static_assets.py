@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-STATIC = Path(__file__).resolve().parents[1] / "src" / "rae" / "ui" / "preview" / "static"
+STATIC = Path(__file__).resolve().parents[1] / "src" / "ui" / "preview" / "static"
 
 REQUIRED = [
     "glb_viewer.html",

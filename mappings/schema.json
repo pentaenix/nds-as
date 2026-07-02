@@ -20,7 +20,7 @@
     },
     "platform": {
       "type": "string",
-      "enum": ["nds", "gba", "gbc", "gb", "3ds"],
+      "enum": ["nds", "gba", "gbc", "gb", "3ds", "mobile"],
       "description": "Console this mapping applies to. Defaults to the parent folder name."
     },
     "gameFamily": {

@@ -4,3 +4,7 @@ trimesh>=4.0
 pyqtgraph>=0.13
 PyOpenGL>=3.1
 Pillow>=10.0
+# Optional but recommended for Pokémon HOME / Unity mobile model previews:
+# UnityPy>=1.10
+# Optional external tool for Pokémon HOME Unity 6 previews: AssetStudioModCLI_net9_portable
+# Set RAE_ASSETSTUDIO_CLI to the CLI binary or AssetStudioModCLI.dll folder.

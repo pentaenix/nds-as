@@ -24,7 +24,25 @@ def test_fractional_alpha_vertical_stays_blend():
     assert result.render_class == RenderClass.BLEND
 
 
-def test_mask_downgrade_when_texture_opaque():
-    material = {"alphaMode": "MASK"}
+def test_mask_downgrade_when_texture_opaque_and_nitro_opaque():
+    material = {
+        "alphaMode": "BLEND",
+        "extras": {"rae": {"nitro": {"textureAlpha": "opaque"}}},
+    }
     result = classify_material(material, texture_bytes=None, geometry_stats=None)
     assert result.render_class == RenderClass.OPAQUE
+
+
+def test_mask_preserved_for_nitro_transparent():
+    material = {
+        "alphaMode": "MASK",
+        "extras": {"rae": {"nitro": {"textureAlpha": "transparent"}}},
+    }
+    result = classify_material(material, texture_bytes=None, geometry_stats=None)
+    assert result.render_class == RenderClass.MASK
+
+
+def test_mask_preserved_when_apicula_declares_mask():
+    material = {"alphaMode": "MASK"}
+    result = classify_material(material, texture_bytes=None, geometry_stats=None)
+    assert result.render_class == RenderClass.MASK
