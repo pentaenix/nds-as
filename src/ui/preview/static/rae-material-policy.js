@@ -127,8 +127,10 @@ export function applyMaterialPolicy(mat) {
   if (!mat) return;
 
   if (mat.map) {
-    mat.map.wrapS = THREE.RepeatWrapping;
-    mat.map.wrapT = THREE.RepeatWrapping;
+    // Keep MIRRORED_REPEAT from the GLB sampler (3DS models mirror the body
+    // across U); everything else gets the legacy repeat default.
+    if (mat.map.wrapS !== THREE.MirroredRepeatWrapping) mat.map.wrapS = THREE.RepeatWrapping;
+    if (mat.map.wrapT !== THREE.MirroredRepeatWrapping) mat.map.wrapT = THREE.RepeatWrapping;
     mat.map.magFilter = THREE.NearestFilter;
     mat.map.minFilter = THREE.NearestFilter;
     mat.map.generateMipmaps = false;

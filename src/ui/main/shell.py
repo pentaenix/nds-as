@@ -438,6 +438,8 @@ class ShellMixin:
         self.preview_inspector_tabs.setTabVisible(self._inspector_tab_assigner, False)
         self.preview_inspector_tabs.setTabVisible(self._inspector_tab_sheet, False)
         self.preview_inspector_tabs.setTabVisible(self._inspector_tab_animation, False)
+        if hasattr(self, "setup_threeds_inspector_tabs"):
+            self.setup_threeds_inspector_tabs()
         self.preview_inspector_tabs.setCurrentIndex(self._inspector_tab_preview)
         self.preview_inspector_tabs.setMinimumHeight(140)
 

@@ -14,6 +14,7 @@ def all_asset_magics() -> dict[str, str]:
         _gb_magics,
         _gbc_magics,
         _threeds_magics,
+        _switch_magics,
     ):
         for magic, platform_id in loader().items():
             table[magic.upper()] = platform_id
@@ -54,3 +55,9 @@ def _threeds_magics() -> dict[str, str]:
     from ...platforms.threeds.magics import ASSET_MAGICS
 
     return dict(ASSET_MAGICS)
+
+def _switch_magics() -> dict[str, str]:
+    from ...platforms.switch.magics import ASSET_MAGICS
+
+    return dict(ASSET_MAGICS)
+

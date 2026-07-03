@@ -1,8 +1,10 @@
 """On-demand decode services for 3DS descriptor assets (preview + export)."""
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterable
 
 import struct
 
@@ -135,6 +137,120 @@ def _world_textures(descriptor: dict) -> list[GfTexture]:
     return textures
 
 
+# World model textures (field maps, buildings, battle intros) live in shared
+# texture GARCs, not next to the model. These are the USUM GARCs that carry
+# GFTexture sections.
+_WORLD_TEXTURE_GARCS = (
+    "/a/0/8/1",
+    "/a/0/8/2",
+    "/a/0/8/3",
+    "/a/0/9/4",
+    "/a/0/9/5",
+    "/a/0/9/6",
+    "/a/0/9/7",
+    "/a/0/9/8",
+)
+
+
+def _world_texture_index_path(rom: Path) -> Path:
+    from ...install import project_root
+
+    stat = rom.stat()
+    key = hashlib.sha1(
+        f"{rom.resolve()}|{stat.st_size}|{int(stat.st_mtime)}".encode()
+    ).hexdigest()[:16]
+    return project_root() / "texture_index" / f"threeds_world_textures_{key}.json"
+
+
+def _build_world_texture_index(rom: Path, progress: Progress | None = None) -> dict[str, list]:
+    """Map texture name -> [garc_path, slot, byte_offset] across the shared
+    world-texture GARCs. One-time scan, persisted next to other RAE indexes."""
+    from .container import ThreedsImage, parse_garc
+    from .lz11 import maybe_decompress
+
+    index: dict[str, list] = {}
+    with ThreedsImage(rom) as image:
+        files = {f.path: f for f in image.romfs_files()}
+        for garc_path in _WORLD_TEXTURE_GARCS:
+            entry = files.get(garc_path)
+            if entry is None or image.read(entry.offset, 4) != b"CRAG":
+                continue
+            try:
+                subfiles = parse_garc(image, entry.offset)
+            except Exception:
+                continue
+            if progress:
+                progress(f"3DS: indexing world textures in {garc_path} ({len(subfiles)} slots)…")
+            for sub in subfiles:
+                if sub.size == 0:
+                    continue
+                try:
+                    payload = maybe_decompress(image.read(sub.offset, sub.size))
+                except Exception:
+                    continue
+                for offset in _find_magic_offsets(payload, _GFTEXTURE_MAGIC_BYTES):
+                    try:
+                        texture = parse_gf_texture(payload[offset:])
+                    except Exception:
+                        continue
+                    # First hit wins; textures are duplicated across zone slots.
+                    index.setdefault(texture.name, [garc_path, sub.index, offset])
+    return index
+
+
+def _world_texture_index(rom: Path, progress: Progress | None = None) -> dict[str, list]:
+    cache_path = _world_texture_index_path(rom)
+    if cache_path.is_file():
+        try:
+            cached = json.loads(cache_path.read_text())
+            if isinstance(cached, dict):
+                return cached
+        except Exception:
+            pass
+    index = _build_world_texture_index(rom, progress)
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(json.dumps(index))
+    except Exception:
+        pass
+    return index
+
+
+def resolve_world_textures(
+    descriptor: dict,
+    names: Iterable[str],
+    progress: Progress | None = None,
+) -> list[GfTexture]:
+    """Fetch textures by name from the shared world-texture GARCs (used when a
+    world model references sheets that are not stored in its own slot)."""
+    wanted = {n for n in names if n}
+    if not wanted:
+        return []
+    rom = Path(descriptor["rom"])
+    index = _world_texture_index(rom, progress)
+    slot_cache: dict[tuple[str, int], bytes] = {}
+    out: list[GfTexture] = []
+    for name in sorted(wanted):
+        entry = index.get(name)
+        if not entry:
+            continue
+        garc_path, slot, offset = str(entry[0]), int(entry[1]), int(entry[2])
+        key = (garc_path, slot)
+        if key not in slot_cache:
+            try:
+                slot_cache[key] = read_garc_slot(rom, garc_path, slot)
+            except Exception:
+                slot_cache[key] = b""
+        payload = slot_cache[key]
+        if not payload or offset >= len(payload):
+            continue
+        try:
+            out.append(parse_gf_texture(payload[offset:]))
+        except Exception:
+            continue
+    return out
+
+
 def load_textures(descriptor: dict, *, shiny: bool = False) -> list[GfTexture]:
     if descriptor.get("type") in ("world_model", "texture_bank"):
         return _world_textures(descriptor)
@@ -207,6 +323,19 @@ def build_model_glb(
     if progress:
         progress(f"3DS: decoding {'shiny ' if shiny else ''}textures…")
     textures = load_textures(descriptor, shiny=shiny)
+    if descriptor.get("type") == "world_model":
+        have = {t.name for t in textures}
+        need = {
+            name
+            for mat in model.materials
+            for name in mat.texture_names
+            if name and "dummy" not in name.lower()
+        }
+        missing = need - have
+        if missing:
+            if progress:
+                progress(f"3DS: resolving {len(missing)} shared world texture(s)…")
+            textures.extend(resolve_world_textures(descriptor, missing, progress))
     if progress:
         progress("3DS: parsing GFMotion animations…")
     try:

@@ -90,6 +90,12 @@ def _column_major(m: list[list[float]]) -> list[float]:
     return [m[row][col] for col in range(4) for row in range(4)]
 
 
+def _is_incandescent_material(name: str) -> bool:
+    """Game Freak marks emissive overlay layers with an "Inc" suffix
+    (BodyANeolant_Inc, EyeInc, ...)."""
+    return name.lower().endswith("inc")
+
+
 def write_model_glb(
     model: GfModel,
     textures: list[GfTexture],
@@ -197,6 +203,18 @@ def write_model_glb(
             if not texture_is_opaque.get(albedo, True):
                 # Overlay maps (iris/pupil) rely on alpha blending.
                 entry["alphaMode"] = "BLEND"
+            if _is_incandescent_material(mat.name) and mat.specular0 is not None:
+                # "*_Inc" overlay layers are grayscale masks tinted by the
+                # material's specular0 color in the TEV pipeline (e.g. the red
+                # glowing lines on Kyogre). Bake that tint into the base color.
+                red, green, blue = (int(c) for c in mat.specular0[:3])
+                if (red, green, blue) != (0, 0, 0):
+                    entry["pbrMetallicRoughness"]["baseColorFactor"] = [
+                        red / 255.0,
+                        green / 255.0,
+                        blue / 255.0,
+                        1.0,
+                    ]
             if unit is not None:
                 uv_transform_by_material[mat.name] = (
                     unit.scale[0],

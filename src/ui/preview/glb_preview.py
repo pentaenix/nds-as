@@ -355,6 +355,21 @@ class GlbPreviewMixin:
             stage_texture_paths=list(getattr(self, "_fallback_texture_paths", [])),
         )
 
+    def play_glb_animation(self, name: str) -> None:
+        web_view = getattr(self, "_web_view", None)
+        if web_view is not None and web_view.is_available():
+            web_view.play_animation(name)
+
+    def stop_glb_animation(self) -> None:
+        web_view = getattr(self, "_web_view", None)
+        if web_view is not None and web_view.is_available():
+            web_view.stop_animation()
+
+    def set_material_texture_frame(self, material_name: str, offset_u: float, offset_v: float) -> None:
+        web_view = getattr(self, "_web_view", None)
+        if web_view is not None and web_view.is_available():
+            web_view.set_texture_frame(material_name, offset_u, offset_v)
+
     def _reload_web_preview_glb(self) -> None:
         path = getattr(self, "_last_path", None)
         web_view = getattr(self, "_web_view", None)

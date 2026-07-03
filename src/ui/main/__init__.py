@@ -18,6 +18,7 @@ from .session_actions import SessionActionsMixin
 from .shell import ShellMixin
 from .texture_index import TextureIndexMixin
 from .texture_assigner_panel import TextureAssignerPanelMixin
+from .threeds_panel import ThreedsPanelMixin
 from .texture_animation_panel import TextureAnimationPanelMixin
 from .texture_sheet_panel import TextureSheetPanelMixin
 from .texture_resolve import TextureResolveMixin
@@ -34,6 +35,7 @@ class MainWindow(
     SelectionMixin,
     DetailsMixin,
     TextureResolveMixin,
+    ThreedsPanelMixin,
     TextureAssignerPanelMixin,
     TextureAnimationPanelMixin,
     TextureSheetPanelMixin,

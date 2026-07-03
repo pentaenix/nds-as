@@ -111,6 +111,23 @@ class WebGlbPreviewWidget(QWidget):
             return
         self._run_when_api_ready("window.raeGlbPreview.resetView();")
 
+    def play_animation(self, name: str) -> None:
+        if not self._available:
+            return
+        self._run_when_api_ready(f"window.raeGlbPreview.playAnimation({_js_string(name)});")
+
+    def stop_animation(self) -> None:
+        if not self._available:
+            return
+        self._run_when_api_ready("window.raeGlbPreview.stopAnimation();")
+
+    def set_texture_frame(self, material_name: str, offset_u: float, offset_v: float) -> None:
+        if not self._available:
+            return
+        self._run_when_api_ready(
+            f"window.raeGlbPreview.setTextureFrame({_js_string(material_name)}, {float(offset_u)}, {float(offset_v)});"
+        )
+
     def start_flipbook(self, clips_json: str) -> None:
         if not self._available:
             return

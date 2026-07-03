@@ -94,6 +94,11 @@
     let flipbookPlaying = false;
     let flipbookLastTick = 0;
     let snapshotMode = false;
+    let animClips = [];
+    let animModel = null;
+    let animMixer = null;
+    let animLastTick = 0;
+    let animPlayingName = '';
 
     function showError(msg) {
       const el = document.getElementById('error');
@@ -124,6 +129,7 @@
       if (!mat || mat.isMeshBasicMaterial) return mat;
       const basic = new THREE.MeshBasicMaterial({
         map: mat.map,
+        color: mat.color ? mat.color.clone() : 0xffffff,
         transparent: mat.transparent,
         opacity: mat.opacity,
         alphaTest: mat.alphaTest || 0,
@@ -215,8 +221,44 @@
       });
     }
 
+    function stopSkeletalAnimation() {
+      if (animMixer) {
+        animMixer.stopAllAction();
+      }
+      animMixer = null;
+      animLastTick = 0;
+      animPlayingName = '';
+      if (animModel) {
+        animModel.traverse((obj) => {
+          if (obj.isSkinnedMesh) obj.skeleton?.pose();
+        });
+      }
+    }
+
+    function playSkeletalAnimation(name) {
+      if (!animModel || !animClips.length) return false;
+      const clip = animClips.find((c) => c.name === name);
+      if (!clip) return false;
+      if (!animMixer) animMixer = new THREE.AnimationMixer(animModel);
+      animMixer.stopAllAction();
+      animMixer.clipAction(clip).reset().setLoop(THREE.LoopRepeat, Infinity).play();
+      animLastTick = 0;
+      animPlayingName = name;
+      return true;
+    }
+
+    function advanceSkeletalAnimation(now) {
+      if (!animMixer) return;
+      const dt = animLastTick ? (now - animLastTick) / 1000 : 0;
+      animLastTick = now;
+      animMixer.update(dt);
+    }
+
     function clearSceneGraph() {
       if (!pivot) return;
+      stopSkeletalAnimation();
+      animClips = [];
+      animModel = null;
       for (const key of Object.keys(materialsByName)) delete materialsByName[key];
       textureCache.clear();
       while (pivot.children.length) {
@@ -236,9 +278,12 @@
         for (const mat of mats) {
           const assoc = gltf.parser.associations.get(mat);
           const matIndex = assoc?.materials;
-          if (!Number.isInteger(matIndex)) continue;
-          const src = gltf.parser.json.materials?.[matIndex];
-          const name = src?.name || `material_${matIndex}`;
+          let src = Number.isInteger(matIndex) ? gltf.parser.json.materials?.[matIndex] : null;
+          // Promoted unlit materials lose their loader association; fall back
+          // to the glTF material captured in userData or the material name.
+          if (!src) src = mat.userData?.gltfMaterial || null;
+          const name = src?.name || mat.name || (Number.isInteger(matIndex) ? `material_${matIndex}` : '');
+          if (!name) continue;
           if (!mat.userData.raePolicy) captureMaterialPolicy(mat, src || null);
           scheduleMaterialPolicyWhenMapReady(mat);
           materialsByName[name] = mat;
@@ -411,7 +456,9 @@
         if (!snapshotMode && pivot.children.length) {
           fitCamera(window.innerWidth, window.innerHeight);
         }
-        advanceFlipbook(performance.now());
+        const now = performance.now();
+        advanceFlipbook(now);
+        advanceSkeletalAnimation(now);
         if (!snapshotMode) {
           renderer.render(scene, camera);
         }
@@ -599,6 +646,8 @@
       centerModelAtOrigin(model);
       fitCamera(window.innerWidth, window.innerHeight);
       rebuildMaterialIndex(model, gltf);
+      animClips = gltf.animations || [];
+      animModel = model;
     }
 
     window.raeGlbPreview = {
@@ -631,6 +680,28 @@
         if (pivot?.children.length) {
           fitCamera(window.innerWidth, window.innerHeight);
         }
+      },
+      listAnimations() {
+        return JSON.stringify(
+          (animClips || []).map((c) => ({ name: c.name, duration: c.duration })),
+        );
+      },
+      playAnimation(name) {
+        return playSkeletalAnimation(name);
+      },
+      stopAnimation() {
+        stopSkeletalAnimation();
+      },
+      currentAnimation() {
+        return animPlayingName;
+      },
+      setTextureFrame(materialName, offsetU, offsetV) {
+        const mat = findMaterial(materialName);
+        if (!mat || !mat.map) return false;
+        mat.map.offset.set(Number(offsetU) || 0, Number(offsetV) || 0);
+        mat.map.needsUpdate = true;
+        mat.needsUpdate = true;
+        return true;
       },
       startFlipbook(clips) {
         return startFlipbook(clips);

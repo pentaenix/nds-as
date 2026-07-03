@@ -177,6 +177,11 @@ class GfMaterial:
     name: str
     texture_names: list[str] = field(default_factory=list)
     texture_units: list[GfTextureUnit] = field(default_factory=list)
+    # Selected entries of the material's 12-color block (RGBA 0-255).
+    # specular0 carries the tint of incandescent overlay layers (e.g. the red
+    # lines of Kyogre's "*_Inc" materials).
+    emission: tuple[int, int, int, int] | None = None
+    specular0: tuple[int, int, int, int] | None = None
 
 
 @dataclass(slots=True)
@@ -323,7 +328,11 @@ def _parse_material(r: _Reader) -> GfMaterial:
     r.skip(1)      # bump texture
     r.skip(6)      # constant assignments
     r.skip(1)      # padding
-    r.skip(12 * 4)  # 12 RGBA colors
+    # 12 RGBA colors: emission, ambient, diffuse, specular0, specular1,
+    # constant0-5, blend.
+    colors = [tuple(r.bytes(4)) for _ in range(12)]
+    emission = colors[0]
+    specular0 = colors[3]
     r.skip(4 * 4)  # edge type / id-edge / edge id / projection type
     r.skip(4 * 4)  # rim/phong pow+scale
     r.skip(2 * 4)  # id edge offset enable / edge map alpha mask
@@ -360,7 +369,13 @@ def _parse_material(r: _Reader) -> GfMaterial:
 
     # Skip the GPU command block; material section length covers everything.
     r.pos = end
-    return GfMaterial(name=material_name, texture_names=texture_names, texture_units=texture_units)
+    return GfMaterial(
+        name=material_name,
+        texture_names=texture_names,
+        texture_units=texture_units,
+        emission=emission,
+        specular0=specular0,
+    )
 
 
 def _parse_mesh(r: _Reader, mesh_name: str) -> GfMesh:
