@@ -8,7 +8,7 @@ from PySide6.QtCore import QThread, Signal
 
 from ...asset_resolver import MODEL_ANIMATION_MAGICS, folder_sibling_assets
 from ...exporter import convert_texture_with_apicula, convert_with_apicula, texture_outputs
-from ...glb_preview_textures import merge_texture_paths, prefer_resolver_texture_map, texture_map_from_paths
+from ...platforms.nds.gltf.preview_textures import merge_texture_paths, prefer_resolver_texture_map, texture_map_from_paths
 from ...model_texture_resolver import build_preview_texture_maps, resolve_model_textures, write_resolution_images
 from ...preview_policy import ModelPreviewPolicy, model_preview_policy
 from ...nitro_2d import (

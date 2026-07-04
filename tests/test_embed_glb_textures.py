@@ -5,8 +5,8 @@ from pathlib import Path
 
 from PIL import Image
 
-from rae.glb_policy.embed_textures import embed_glb_external_images
-from rae.glb_policy.glb_io import GlbData, read_glb
+from rae.platforms.nds.gltf.embed_textures import embed_glb_external_images
+from rae.platforms.nds.gltf.glb_io import GlbData, read_glb
 
 
 def _write_textured_glb(path: Path, png_name: str) -> None:

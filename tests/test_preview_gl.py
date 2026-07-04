@@ -1,6 +1,6 @@
 from OpenGL import GL
 
-from rae.glb_preview_textures import MaterialPreviewState
+from rae.platforms.nds.gltf.preview_textures import MaterialPreviewState
 from rae.ui.preview.preview_gl import preview_gl_options
 
 

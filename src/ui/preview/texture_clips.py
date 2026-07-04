@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from ...core.texture_sequences import normalize_material_spec, playback_frames_for_spec, resolve_frame_path
-from ...glb_policy.texture_patch import ensure_baked_preview_texture
+from ...platforms.nds.gltf.texture_patch import ensure_baked_preview_texture
 from .preview_server import get_preview_server
 
 

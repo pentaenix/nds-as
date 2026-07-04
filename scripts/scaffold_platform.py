@@ -36,7 +36,7 @@ def _copy_template(src: Path, dest: Path, **subs: str) -> None:
         raise SystemExit(f"Platform folder already exists: {dest}")
     shutil.copytree(src, dest)
     for path in dest.rglob("*"):
-        if path.is_file() and path.suffix in {".py", ".md"}:
+        if path.is_file() and path.suffix in {".py", ".md", ".js"}:
             path.write_text(_substitute(path.read_text(encoding="utf-8"), **subs), encoding="utf-8")
 
 
@@ -127,7 +127,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  Registered PLATFORM_MODULE_BUILDERS['{platform_id}']")
     else:
         print("  Pass --active when scan/export modules are ready to wire the module builder.")
-    print("  Next: implement rom.py scan, fill magics.py, run pytest tests/test_platform_import_isolation.py")
+    print("  Next: implement rom.py, glb_policy.py, preview/material-policy.js,")
+    print("        run pytest tests/test_platform_import_isolation.py")
+    print("        tests/test_platform_isolation_contract.py")
     return 0
 
 

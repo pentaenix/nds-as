@@ -1,4 +1,8 @@
-# GLB render policy (RAE)
+# GLB render policy (RAE) — **Nintendo DS (nds) island**
+
+> **Isolation:** Material classification for DS belongs in `platforms/nds/gltf/`.
+> Each console duplicates its own `gltf/` tree — there is no shared top-level package.
+> See [`docs/agents/platform-isolation-contract.md`](agents/platform-isolation-contract.md).
 
 RAE post-processes apicula GLB exports so every consumer can render DS models
 without game-specific name hacks.
@@ -6,7 +10,7 @@ without game-specific name hacks.
 ## Pipeline
 
 1. **apicula** writes geometry, textures, and `extras.rae.nitro` per material.
-2. **`rae.glb_policy.apply_glb_policy`** rewrites each material with canonical
+2. **`platforms/nds/gltf/apply.apply_glb_policy`** rewrites each material with canonical
    `alphaMode` / `doubleSided` and `extras.rae.renderClass`.
 3. **Consumers** (RAE WebEngine preview, pokemon-resort-page, pokemon-resort C++)
    honor `extras.rae.renderClass`.

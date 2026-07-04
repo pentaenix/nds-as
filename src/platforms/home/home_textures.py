@@ -142,7 +142,7 @@ def align_home_bindings_to_glb(
             for alias in _material_binding_keys(material):
                 material_to_texture[alias.casefold()] = tex_key
     else:
-        from ...glb_policy.preview_textures import parse_glb_mesh_parts
+        from .gltf.preview_textures import parse_glb_mesh_parts
 
         for part in parse_glb_mesh_parts(glb_path):
             label = str(part.label or "").strip()

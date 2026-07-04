@@ -8,7 +8,7 @@ from PySide6.QtOpenGL import QOpenGLBuffer
 from pyqtgraph.opengl.GLGraphicsItem import GLGraphicsItem
 from pyqtgraph.opengl.shaders import FragmentShader, ShaderProgram, VertexShader
 
-from ...glb_preview_textures import MaterialPreviewState
+from ...platforms.nds.gltf.preview_textures import MaterialPreviewState
 from .preview_gl import preview_gl_options
 
 _PIXEL_TEXTURE_VS = """

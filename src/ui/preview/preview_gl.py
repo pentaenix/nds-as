@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from OpenGL import GL
 
-from ...glb_preview_textures import MaterialPreviewState
+from ...platforms.nds.gltf.preview_textures import MaterialPreviewState
 from pyqtgraph.opengl.GLGraphicsItem import GLOptions
 
 # Preview re-orients apicula +Y into +Z via (x, y, z) -> (x, z, y), which flips

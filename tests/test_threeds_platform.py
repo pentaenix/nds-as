@@ -138,6 +138,25 @@ def test_ultra_moon_scan_and_model():
 
 
 @pytest.mark.skipif(not ROM.is_file(), reason="Ultra Moon test ROM not present")
+def test_torkoal_fire_geom_triangle_strip_exports():
+    """Torkoal's fire VFX meshes use PICA triangle strips, not triangle lists."""
+    from rae.platforms.threeds.rom import load_descriptor, scan_threeds_rom_path
+    from rae.platforms.threeds.service import build_model_glb, load_model
+
+    assets = scan_threeds_rom_path(ROM)
+    torkoal = next(a for a in assets if "0324 Torkoal" in a.virtual_path)
+    descriptor = load_descriptor(torkoal)
+    model = load_model(descriptor)
+    fire = next(m for m in model.meshes if "FireGeomASkin" in m.name)
+    indices = fire.submeshes[0].indices
+    assert len(indices) % 3 == 0
+    assert len(indices) > len(fire.submeshes[0].positions)
+
+    glb = build_model_glb(descriptor, ROM.parent / "exports" / "pytest_threeds_torkoal")
+    assert glb.is_file() and glb.stat().st_size > 0
+
+
+@pytest.mark.skipif(not ROM.is_file(), reason="Ultra Moon test ROM not present")
 def test_ultra_moon_world_assets():
     """The scan surfaces non-Pokémon groups and their previews decode."""
     from rae.platforms.threeds.rom import load_descriptor, scan_threeds_rom_path

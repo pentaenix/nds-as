@@ -10,8 +10,10 @@ alwaysApply: false
 
 - `.cursor/rules/rae-platform-isolation.mdc`
 - `.cursor/rules/rae-parallel-agents.mdc`
+- `.cursor/rules/rae-shared-glb-policy.mdc`
+- `.cursor/rules/rae-viewport-isolation.mdc`
 - `.cursor/skills/rae-platform-islands/SKILL.md`
 
-Read `rae/AGENTS.md` and `rae/docs/agents/platform-islands.md` before editing this tree.
+Read `rae/AGENTS.md` and **`rae/docs/agents/platform-isolation-contract.md`** before editing this tree.
 
-**Quick rules:** no cross-platform imports; duplicate over share; scaffold new platforms with `scripts/scaffold_platform.py`; run `pytest tests/test_platform_import_isolation.py`.
+**Quick rules:** no cross-platform imports; duplicate GLB + viewport policy per island; scaffold with `scripts/scaffold_platform.py`; run `pytest -m <id>` + `tests/test_platform_isolation_contract.py`.

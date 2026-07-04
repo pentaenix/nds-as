@@ -1,7 +1,12 @@
+"""NDS island GLB material classification tests."""
 from __future__ import annotations
 
-from rae.glb_policy.classify import RenderClass, classify_material
-from rae.glb_policy.geometry_stats import MaterialGeometryStats
+import pytest
+
+from rae.platforms.nds.gltf.classify import RenderClass, classify_material
+from rae.platforms.nds.gltf.geometry_stats import MaterialGeometryStats
+
+pytestmark = pytest.mark.nds
 
 
 def test_fractional_alpha_horizontal_becomes_uniform_decal():
@@ -42,21 +47,16 @@ def test_mask_preserved_for_nitro_transparent():
     assert result.render_class == RenderClass.MASK
 
 
-def test_alpha_variation_without_invisible_texels_is_opaque():
-    from rae.platforms.threeds.pica import rgba_to_png
-
-    # ETC1A4-style: alpha varies but nothing is fully transparent.
-    rgba = bytearray()
-    for i in range(64 * 64):
-        v = 34 + (i % 200)
-        rgba.extend((v, v, v, v))
-    png = rgba_to_png(bytes(rgba), 64, 64)
-    material = {"alphaMode": "BLEND"}
-    result = classify_material(material, texture_bytes=png, geometry_stats=None)
-    assert result.render_class == RenderClass.OPAQUE
-
-
 def test_mask_preserved_when_apicula_declares_mask():
     material = {"alphaMode": "MASK"}
     result = classify_material(material, texture_bytes=None, geometry_stats=None)
     assert result.render_class == RenderClass.MASK
+
+
+def test_nds_classify_sets_platform_tag():
+    material = {"alphaMode": "MASK"}
+    from rae.platforms.nds.gltf.classify import apply_render_class_to_material
+
+    result = classify_material(material, texture_bytes=None, geometry_stats=None)
+    apply_render_class_to_material(material, result)
+    assert material["extras"]["rae"]["platform"] == "nds"

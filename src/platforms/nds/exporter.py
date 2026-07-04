@@ -13,7 +13,7 @@ Progress = Callable[[str], None]
 
 from .scanner import Asset
 from ...core.util import sanitize_virtual_path
-from ...glb_policy import apply_glb_policy
+from .gltf.apply import apply_glb_policy as apply_platform_glb_policy
 
 
 @dataclass(slots=True)
@@ -250,7 +250,7 @@ def convert_with_apicula(
         if output_format.lower() == "glb":
             for path in outputs:
                 if path.suffix.lower() == ".glb" and path.is_file():
-                    apply_glb_policy(path)
+                    apply_platform_glb_policy(path)
         return ConvertResult(True, "Converted successfully", outputs, cmd)
 
 

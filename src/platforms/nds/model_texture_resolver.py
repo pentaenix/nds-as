@@ -4,7 +4,6 @@ import re
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from pathlib import Path
 from typing import Iterable, Literal
 
 from .scanner import Asset
@@ -78,6 +77,46 @@ def _material_texture_requests(manifest: NsbmdManifest) -> list[tuple[str, str |
             seen.add(key)
             requests.append((tex.name, None))
     return requests
+
+
+_MATERIAL_FAMILY_RE = re.compile(r"^([a-z]+)", re.IGNORECASE)
+
+
+def _material_name_family(name: str) -> str:
+    match = _MATERIAL_FAMILY_RE.match(str(name or "").casefold())
+    return match.group(1) if match else str(name or "").casefold()
+
+
+def _resolve_preview_texture_key(
+    tex: str,
+    *,
+    texture_by_name: dict[str, Path],
+    decoded_names: list[str],
+) -> str:
+    """Map an NSBMD material/texture name to a decoded PNG key available for preview."""
+    key = str(tex or "").casefold().strip()
+    if not key:
+        return key
+    if key in texture_by_name:
+        return key
+    for name in decoded_names:
+        decoded = name.casefold()
+        if decoded == key or key.startswith(decoded) or decoded.startswith(key):
+            return decoded
+    family = _material_name_family(key)
+    if family:
+        for name in decoded_names:
+            decoded = name.casefold()
+            if decoded.startswith(family) or family.startswith(_material_name_family(decoded)):
+                return decoded
+    unique_files = {
+        str(path.resolve())
+        for path in texture_by_name.values()
+        if Path(path).is_file()
+    }
+    if len(unique_files) == 1 and decoded_names:
+        return decoded_names[0].casefold()
+    return key
 
 
 def _sibling_btx0_assets(model: Asset, assets: Iterable[Asset]) -> list[Asset]:
@@ -664,6 +703,7 @@ def build_preview_texture_maps(
 ) -> tuple[dict[str, Path], dict[str, str], list[str]]:
     """Map NSBMD material/texture names to decoded PNG paths for GL preview."""
     texture_by_name: dict[str, Path] = {}
+    decoded_names = [image.name for image in resolution.decoded_images]
     for path, image in zip(paths, resolution.decoded_images):
         tex_key = image.name.casefold()
         texture_by_name[tex_key] = path
@@ -677,7 +717,12 @@ def build_preview_texture_maps(
     manifest = resolution.model_manifest
     if manifest is not None:
         for material in manifest.materials:
-            tex = (material.texture_name or material.material_name or "").casefold()
+            raw_tex = (material.texture_name or material.material_name or "").casefold()
+            tex = _resolve_preview_texture_key(
+                raw_tex,
+                texture_by_name=texture_by_name,
+                decoded_names=decoded_names,
+            )
             if tex and tex not in seen_tex:
                 seen_tex.add(tex)
                 bind_order.append(tex)
@@ -693,18 +738,30 @@ def build_preview_texture_maps(
     if manifest is not None:
         for material in manifest.materials:
             mat = material.material_name.casefold()
-            tex = (material.texture_name or material.material_name or "").casefold()
-            if mat and tex:
-                material_to_texture[mat] = tex
-                path = texture_by_name.get(tex)
-                if path is not None:
-                    texture_by_name.setdefault(mat, path)
-    for binding in resolution.bindings:
-        mat = (binding.material_name or "").casefold()
-        tex = (binding.texture_name or "").casefold()
-        if mat and tex:
+            raw_tex = (material.texture_name or material.material_name or "").casefold()
+            if not mat or not raw_tex:
+                continue
+            tex = _resolve_preview_texture_key(
+                raw_tex,
+                texture_by_name=texture_by_name,
+                decoded_names=decoded_names,
+            )
             material_to_texture[mat] = tex
             path = texture_by_name.get(tex)
             if path is not None:
-                texture_by_name.setdefault(mat, path)
+                texture_by_name[mat] = path
+    for binding in resolution.bindings:
+        mat = (binding.material_name or "").casefold()
+        raw_tex = (binding.texture_name or "").casefold()
+        if not mat or not raw_tex:
+            continue
+        tex = _resolve_preview_texture_key(
+            raw_tex,
+            texture_by_name=texture_by_name,
+            decoded_names=decoded_names,
+        )
+        material_to_texture[mat] = tex
+        path = texture_by_name.get(tex)
+        if path is not None:
+            texture_by_name[mat] = path
     return texture_by_name, material_to_texture, bind_order

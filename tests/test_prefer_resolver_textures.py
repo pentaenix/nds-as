@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from rae.glb_policy.preview_textures import prefer_resolver_texture_map
+from rae.platforms.nds.gltf.preview_textures import prefer_resolver_texture_map
 from rae.model_texture_resolver import ModelTextureResolution
 from rae.platforms.nds.model_module.preview_pipeline import _conversion_siblings
 from rae.scanner import Asset

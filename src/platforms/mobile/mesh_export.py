@@ -367,7 +367,7 @@ def _strip_trimesh_placeholder_textures(out_path: Path, mesh_name: str) -> None:
     try:
         import copy
 
-        from ...glb_policy.glb_io import GlbData, read_glb
+        from .gltf.glb_io import GlbData, read_glb
 
         glb = read_glb(out_path)
         images = glb.json.get("images") or []

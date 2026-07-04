@@ -7,8 +7,8 @@ import struct
 from pathlib import Path
 
 from .gf import GfBone, GfMaterial, GfMesh, GfModel, GfTexture, GfTextureUnit
-from ...glb_policy.apply import apply_glb_policy
-from ...glb_policy.texture_alpha import (
+from .gltf.apply import apply_glb_policy
+from .gltf.texture_alpha import (
     png_has_meaningful_transparency,
     texture_has_partial_alpha_channel,
 )

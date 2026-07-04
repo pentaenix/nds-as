@@ -23,9 +23,9 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ...glb_policy.embed_textures import embed_glb_external_images
-from ...glb_policy.glb_io import read_glb
-from ...glb_policy.texture_patch import write_patched_preview_glb
+from .gltf.embed_textures import embed_glb_external_images
+from .gltf.glb_io import read_glb
+from .gltf.texture_patch import write_patched_preview_glb
 from .assetstudio_preview import (
     _run_assetstudio,
     assetstudio_available,
@@ -224,7 +224,7 @@ def _merge_texture_sets(*, base: list[Path], override: list[Path]) -> list[Path]
 
 def _build_textured_glb(source_glb: Path, out_glb: Path, textures: list[Path]) -> None:
     """Bind per-material textures then embed them into a portable single-file GLB."""
-    from ...glb_policy.preview_textures import parse_glb_mesh_part_labels
+    from .gltf.preview_textures import parse_glb_mesh_part_labels
 
     from .home_textures import align_home_bindings_to_glb, build_home_texture_bindings
 

@@ -65,14 +65,18 @@
     import * as THREE from 'three';
     import { GLTFLoader } from './vendor/three/addons/loaders/GLTFLoader.js';
     import { RoomEnvironment } from './vendor/three/addons/environments/RoomEnvironment.js';
-    import {
-      applyRaeMaterialPolicy,
-      applyMaterialPolicy,
-      applyEyeExpressionFrame,
-      captureMaterialPolicy,
-      installGfEyeSheetTransform,
-      scheduleMaterialPolicyWhenMapReady,
-    } from './rae-material-policy.js';
+
+    const policyUrl = new URLSearchParams(location.search).get('policy');
+    if (!policyUrl) {
+      throw new Error('GLB viewer requires ?policy=<platform material-policy.js URL>');
+    }
+    const policy = await import(policyUrl);
+    const applyRaeMaterialPolicy = policy.applyRaeMaterialPolicy;
+    const applyMaterialPolicy = policy.applyMaterialPolicy;
+    const captureMaterialPolicy = policy.captureMaterialPolicy;
+    const scheduleMaterialPolicyWhenMapReady = policy.scheduleMaterialPolicyWhenMapReady;
+    const applyEyeExpressionFrame = policy.applyEyeExpressionFrame || (() => false);
+    const installGfEyeSheetTransform = policy.installGfEyeSheetTransform || (() => {});
 
     const BG = {
       Checkered: null,
@@ -88,6 +92,7 @@
     let cam = { yaw: 35, pitch: 28, zoomFactor: 1 };
     let animId = 0;
     let currentUrl = '';
+    let activeLoadToken = 0;
     let currentBg = 'Checkered';
     let orbitExtent = 1;
     const materialsByName = {};
@@ -296,7 +301,11 @@
       if (!animModel || !animClips.length) return false;
       const clip = animClips.find((c) => c.name === name);
       if (!clip) return false;
-      if (!animMixer) animMixer = new THREE.AnimationMixer(animModel);
+      const mixerRoot = animMixer?.getRoot?.();
+      if (!animMixer || mixerRoot !== animModel) {
+        if (animMixer) animMixer.stopAllAction();
+        animMixer = new THREE.AnimationMixer(animModel);
+      }
       animMixer.stopAllAction();
       animMixer.clipAction(clip).reset().setLoop(THREE.LoopRepeat, Infinity).play();
       animLastTick = 0;
@@ -467,7 +476,7 @@
 
     function ensureRenderer() {
       if (renderer) return;
-      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, stencil: true });
       renderer.setClearColor(0x000000, 0);
       renderer.sortObjects = true;
       renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -681,11 +690,28 @@
       clearError();
       ensureRenderer();
       if (currentUrl === url && pivot.children.length) return;
+
+      const loadToken = ++activeLoadToken;
       pauseFlipbook();
       clearSceneGraph();
       currentUrl = url;
+
       const loader = new GLTFLoader();
-      const gltf = await loader.loadAsync(url);
+      let gltf;
+      try {
+        gltf = await loader.loadAsync(url);
+      } catch (err) {
+        if (loadToken === activeLoadToken) {
+          currentUrl = '';
+        }
+        throw err;
+      }
+
+      if (loadToken !== activeLoadToken) {
+        disposeModel(gltf.scene);
+        return;
+      }
+
       const model = gltf.scene;
       model.traverse((obj) => {
         if (!obj.isMesh || !obj.material) return;
@@ -713,6 +739,11 @@
       centerModelAtOrigin(model);
       fitCamera(window.innerWidth, window.innerHeight);
       await rebuildMaterialIndex(model, gltf);
+      if (loadToken !== activeLoadToken) {
+        pivot.remove(model);
+        disposeModel(model);
+        return;
+      }
       buildMeshVisibilityTables(gltf);
       applyDefaultMeshVisibility();
       animClips = gltf.animations || [];

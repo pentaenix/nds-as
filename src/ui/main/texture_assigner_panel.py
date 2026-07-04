@@ -7,10 +7,10 @@ from ...core.texture_assignments import (
     build_best_path_index,
     estimate_assignments_from_paths,
     image_pixel_area,
-    relevant_assigner_texture_paths,
     resolve_assignment_paths,
     texture_key_for_path,
 )
+from ...platforms.nds.texture_assigner import relevant_assigner_texture_paths
 from ...core.modules import PlatformDispatch
 from ...scanner import Asset
 from ..preview.texture_assigner import TextureAssignerWidget, TextureOption
@@ -274,6 +274,7 @@ class TextureAssignerPanelMixin:
             material_to_texture=material_to_texture,
             texture_bind_order=texture_bind_order,
             mesh_texture_overrides={},
+            preview_platform_id=getattr(self, "_rom_platform_id", None),
         )
         mesh_labels = list(getattr(self.preview, "_last_mesh_labels", []))
         if self._should_refresh_texture_assignments(

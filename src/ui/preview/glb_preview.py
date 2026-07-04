@@ -7,7 +7,7 @@ from PySide6.QtGui import QBrush
 
 from ...exporter import apicula_available, apicula_help_text
 from ...model_preview.scene_snapshot import texture_baked_display_geometry as _shared_texture_baked_display_geometry
-from ...glb_preview_textures import (
+from ...platforms.nds.gltf.preview_textures import (
     MaterialPreviewState,
     apply_material_preview_alpha,
     attach_preview_textures,
@@ -43,6 +43,7 @@ class GlbPreviewMixin:
         material_to_texture: dict[str, str] | None = None,
         texture_bind_order: list[str] | None = None,
         mesh_texture_overrides: dict[str, Path] | None = None,
+        preview_platform_id: str | None = None,
     ) -> None:
         self._last_path = path
         if fallback_textures is not None:
@@ -75,6 +76,7 @@ class GlbPreviewMixin:
             web_view.show()
             web_view.set_background_name(getattr(self, "_background_name", "Checkered"))
             web_view.set_wireframe(getattr(self, "_wireframe", False))
+            web_view.stop_animation()
             colocated = discover_colocated_textures(path)
             glb_material_map = parse_glb_material_texture_map(path)
             self._material_preview_states = parse_glb_material_preview_states(path)
@@ -100,7 +102,8 @@ class GlbPreviewMixin:
                 mesh_texture_overrides=self._mesh_texture_overrides,
             )
             patched = self._build_web_preview_glb(path)
-            web_view.load_glb(patched or path)
+            preview_pid = preview_platform_id or getattr(self, "_rom_platform_id", None) or "nds"
+            web_view.load_glb(patched or path, preview_platform_id=preview_pid)
             self.set_banner("")
             return
         if not self._available or self._view is None:

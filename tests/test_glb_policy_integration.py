@@ -6,9 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from rae.glb_policy.apply import apply_glb_policy
-from rae.glb_policy.classify import RenderClass
-from rae.glb_policy.glb_io import read_glb_json
+from rae.platforms.nds.gltf.apply import apply_glb_policy
+from rae.platforms.nds.gltf.classify import RenderClass
+from rae.platforms.nds.gltf.glb_io import read_glb_json
+
+pytestmark = pytest.mark.nds
 
 EN_PC = Path(__file__).resolve().parents[1] / "exports" / "dsm_model_07420f11bbe02f78_glb" / "en_pc.glb"
 

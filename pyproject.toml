@@ -35,3 +35,11 @@ package-dir = {"rae" = "src", "dsm" = "src/dsm"}
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+markers = [
+    "nds: Nintendo DS island tests only",
+    "threeds: Nintendo 3DS island tests only",
+    "gba: Game Boy Advance island tests only",
+    "switch: Nintendo Switch island tests only",
+    "mobile: Mobile/HOME island tests only",
+    "core_shared: Shared core / contract tests (run when touching dispatch or glb_policy classify)",
+]

@@ -11,9 +11,12 @@ import secrets
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import quote, unquote, urlparse
+
+from ...core.modules.platform_boundaries import platform_package_dir
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
+_PLATFORMS_DIR = Path(__file__).resolve().parents[2] / "platforms"
 
 
 class _PreviewHttpServer:
@@ -34,8 +37,20 @@ class _PreviewHttpServer:
     def base_url(self) -> str:
         return f"http://127.0.0.1:{self._port}"
 
-    def viewer_url(self) -> str:
-        return f"{self.base_url}/glb_viewer.html"
+    def viewer_url(self, *, platform_id: str = "nds") -> str:
+        policy = self.material_policy_url(platform_id)
+        return f"{self.base_url}/glb_viewer.html?policy={quote(policy, safe='')}"
+
+    def material_policy_url(self, platform_id: str) -> str:
+        folder = platform_package_dir(platform_id)
+        preview_dir = (_PLATFORMS_DIR / folder / "preview").resolve()
+        if not preview_dir.is_dir():
+            raise FileNotFoundError(
+                f"Missing preview folder for platform {platform_id!r} "
+                f"(expected platforms/{folder}/preview): {preview_dir}"
+            )
+        mount_id = self.mount_directory(preview_dir)
+        return f"{self.base_url}/m/{mount_id}/material-policy.js"
 
     def mount_directory(self, directory: Path) -> str:
         directory = directory.resolve()

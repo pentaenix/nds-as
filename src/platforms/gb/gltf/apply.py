@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..glb_policy.preview_textures import parse_glb_material_texture_map
+from .preview_textures import parse_glb_material_texture_map
 from .classify import ClassificationResult, apply_render_class_to_material, classify_material
 from .geometry_stats import compute_material_geometry_stats
 from .glb_io import GlbData, read_glb, material_texture_bytes

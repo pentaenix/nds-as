@@ -14,8 +14,8 @@ from rae.core.texture_sequences import (
     normalize_material_spec,
     resolve_frame_path,
 )
-from rae.glb_policy.glb_io import read_glb
-from rae.glb_policy.texture_patch import write_patched_preview_glb
+from rae.platforms.nds.gltf.glb_io import read_glb
+from rae.platforms.nds.gltf.texture_patch import write_patched_preview_glb
 
 EXPORT_DIR = Path(__file__).resolve().parents[1] / "exports" / "dsm_model_a101f488dd048245_glb"
 

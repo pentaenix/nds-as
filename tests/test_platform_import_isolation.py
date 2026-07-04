@@ -15,7 +15,7 @@ def test_no_forbidden_cross_platform_imports():
         raise AssertionError(
             "Cross-platform imports detected. Each platform must stay in its island.\n"
             f"{joined}\n\n"
-            "Fix: move shared code to core/ or glb_policy/, or duplicate the helper "
+            "Fix: move shared code to core/, or duplicate the helper "
             "under platforms/<your-platform>/."
         )
 

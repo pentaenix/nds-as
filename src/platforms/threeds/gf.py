@@ -385,6 +385,57 @@ def _parse_material(r: _Reader) -> GfMaterial:
     )
 
 
+def _primitive_indices_to_triangles(
+    indices: list[int],
+    primitive_mode: int,
+    *,
+    vertex_count: int,
+    vertex_draw_count: int,
+) -> list[int]:
+    """Expand PICA triangle strips/fans into a GL triangle list."""
+    if primitive_mode == 0:
+        if len(indices) % 3 == 0:
+            return indices
+        # Some GF meshes store strip-ordered vertices with a sequential index table.
+        if indices and indices == list(range(len(indices))):
+            primitive_mode = 1
+        else:
+            return indices
+
+    strip = indices
+    if not strip and vertex_draw_count > 2:
+        strip = list(range(vertex_draw_count))
+    elif (
+        primitive_mode == 1
+        and strip
+        and strip == list(range(len(strip)))
+        and vertex_draw_count > 2
+    ):
+        strip = list(range(vertex_draw_count))
+
+    if primitive_mode == 1:
+        if len(strip) < 3:
+            return []
+        out: list[int] = []
+        for i in range(len(strip) - 2):
+            a, b, c = strip[i], strip[i + 1], strip[i + 2]
+            if i % 2 == 1:
+                b, a = a, b
+            out.extend((a, b, c))
+        return out
+
+    if primitive_mode == 2:
+        if len(strip) < 3:
+            return []
+        center = strip[0]
+        out = []
+        for i in range(1, len(strip) - 1):
+            out.extend((center, strip[i], strip[i + 1]))
+        return out
+
+    return indices
+
+
 def _parse_mesh(r: _Reader, mesh_name: str) -> GfMesh:
     _magic, length = r.section()
     start = r.pos
@@ -428,7 +479,7 @@ def _parse_mesh(r: _Reader, mesh_name: str) -> GfMesh:
     for sub_index in range(submesh_count):
         enable_cmds = command_blocks[sub_index * 3 + 0]
         index_cmds = command_blocks[sub_index * 3 + 2]
-        vertices_count, _indices_count, vertices_length, indices_length = sizes[sub_index]
+        vertices_count, indices_count, vertices_length, indices_length = sizes[sub_index]
 
         buffer_formats = 0
         buffer_attributes = 0
@@ -468,22 +519,35 @@ def _parse_mesh(r: _Reader, mesh_name: str) -> GfMesh:
             offset += _ATTR_SIZES[fmt] * elements
 
         index_is_16bit = False
-        index_count = 0
+        vertex_draw_count = 0
+        primitive_mode = 0  # 0=triangles, 1=triangle strip, 2=triangle fan
         for register, param in read_pica_commands(index_cmds):
             if register == GPUREG_INDEXBUFFER_CONFIG:
                 index_is_16bit = (param >> 31) != 0
             elif register == GPUREG_NUMVERTICES:
-                index_count = param
+                vertex_draw_count = param
             elif register == GPUREG_PRIMITIVE_CONFIG:
-                pass  # triangles for all Pokémon meshes
+                primitive_mode = (param >> 8) & 0x3
 
         raw_vertices = r.bytes(vertices_length)
         index_pos = r.pos
+        index_elem_size = 2 if index_is_16bit else 1
+        max_index_count = indices_length // index_elem_size
+        index_count = indices_count if indices_count > 0 else vertex_draw_count
+        if index_count <= 0:
+            index_count = max_index_count
+        index_count = min(index_count, max_index_count)
         if index_is_16bit:
             indices = list(struct.unpack_from(f"<{index_count}H", r.data, index_pos))
         else:
             indices = list(r.data[index_pos : index_pos + index_count])
         r.pos = index_pos + indices_length
+        indices = _primitive_indices_to_triangles(
+            indices,
+            primitive_mode,
+            vertex_count=vertices_count,
+            vertex_draw_count=vertex_draw_count,
+        )
 
         sub = GfSubMesh(
             material_name=names[sub_index],

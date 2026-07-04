@@ -58,7 +58,7 @@ def render_glb_orthographic_thumbnail(
 ) -> tuple[bytes | None, int | None, int | None]:
     """Render a patched preview GLB using the shared viewport snapshot path."""
     from ..model_preview.pipeline import ModelPreviewBundle
-    from ..glb_preview_textures import parse_glb_mesh_parts, build_mesh_texture_paths_for_glb_parts
+    from ..platforms.nds.gltf.preview_textures import parse_glb_mesh_parts, build_mesh_texture_paths_for_glb_parts
 
     parts = parse_glb_mesh_parts(glb_path)
     mesh_labels = tuple(part.label for part in parts)

@@ -8,13 +8,13 @@ from typing import Callable
 
 from ....core.assets import Asset
 from ....core.util import sanitize_virtual_path
-from ....glb_policy.preview_textures import (
+from ..gltf.preview_textures import (
     build_mesh_texture_paths_for_glb_parts,
     parse_glb_mesh_parts,
     prefer_resolver_texture_map,
     texture_map_from_paths,
 )
-from ....glb_policy.texture_patch import write_patched_preview_glb
+from ..gltf.texture_patch import write_patched_preview_glb
 from ....preview_policy import ModelPreviewPolicy, ModelPreviewQuality, model_preview_policy
 from ..asset_resolver import MODEL_ANIMATION_MAGICS, folder_sibling_assets
 from ..exporter import convert_with_apicula, texture_outputs
@@ -258,10 +258,10 @@ def finalize_textured_glb_export(
 ) -> list[Path]:
     """Write one self-contained GLB with embedded textures (animations preserved)."""
     from ....core.util import sanitize_virtual_path
-    from ....glb_policy.embed_textures import embed_glb_external_images
-    from ....glb_policy.glb_io import read_glb
-    from ....glb_policy.merge_animations import merge_glb_animations
-    from ....glb_policy.platform_animation import freeze_horizontal_platform_joints
+    from ..gltf.embed_textures import embed_glb_external_images
+    from ..gltf.glb_io import read_glb
+    from ..gltf.merge_animations import merge_glb_animations
+    from ..gltf.platform_animation import freeze_horizontal_platform_joints
 
     out_dir.mkdir(parents=True, exist_ok=True)
     final_glb = out_dir / glb_filename

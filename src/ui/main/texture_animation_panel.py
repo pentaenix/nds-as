@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ...core.texture_assignments import relevant_assigner_texture_paths, texture_key_for_path
+from ...core.texture_assignments import texture_key_for_path
+from ...platforms.nds.texture_assigner import relevant_assigner_texture_paths
 from ...core.texture_sequences import (
     detect_material_sequences,
     list_playback_options,

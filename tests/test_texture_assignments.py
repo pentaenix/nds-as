@@ -2,7 +2,7 @@ import json
 import struct
 from pathlib import Path
 
-from rae.core.texture_assignments import relevant_assigner_texture_paths, relevant_texture_keys_for_mesh_part
+from rae.platforms.nds.texture_assigner import relevant_assigner_texture_paths, relevant_texture_keys_for_mesh_part
 
 
 def _write_minimal_glb(path: Path, gltf: dict) -> None:

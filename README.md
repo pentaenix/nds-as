@@ -82,19 +82,21 @@ Vendored Rust tool under `tools/apicula/`. `./rae install` builds it when Cargo 
 
 RAE looks for apicula on `PATH`, `RAE_APICULA` (legacy: `DSAS_APICULA`, `DSM_APICULA`), and `tools/apicula/target/release/apicula`.
 
-After apicula converts a model to GLB, RAE runs a shared **material policy** pass (`rae.glb_policy`) that writes `extras.rae.renderClass` on each material (opaque, mask, blend, uniform_decal). Ground shadows are detected from Nitro alpha + texture + geometry — not material names. See `docs/GLB_RENDER_POLICY.md`.
+After apicula converts a model to GLB, RAE runs a **NDS-owned** material policy pass (`platforms/nds/gltf/apply.py`) that writes `extras.rae.renderClass` on each material. See `docs/GLB_RENDER_POLICY.md` and `docs/agents/platform-isolation-contract.md`.
 
-3D preview uses **Qt WebEngine + three.js** (bundled under `src/ui/preview/static/`). Install PySide6 Add-ons if WebEngine is missing. Set `RAE_LEGACY_GL_PREVIEW=1` to fall back to the old pyqtgraph path.
+3D preview uses **Qt WebEngine + three.js**. Each platform uses its own `platforms/<id>/preview/material-policy.js` (loaded via `?policy=` in the viewer URL). Install PySide6 Add-ons if WebEngine is missing. Set `RAE_LEGACY_GL_PREVIEW=1` to fall back to the old pyqtgraph path.
 
 ## Agents and contributors
 
-ROM platforms are **isolated islands** under `src/platforms/<id>/` so NDS, mobile/HOME, and future consoles can be developed in parallel.
+ROM platforms are **isolated islands** under `src/platforms/<id>/` — each owns GLB policy and viewport policy.
 
-- **Agents:** start at [`AGENTS.md`](AGENTS.md) and [`docs/agents/platform-islands.md`](docs/agents/platform-islands.md)
+- **Hard contract:** [`docs/agents/platform-isolation-contract.md`](docs/agents/platform-isolation-contract.md)
+- **Agents:** [`AGENTS.md`](AGENTS.md) and [`docs/agents/platform-islands.md`](docs/agents/platform-islands.md)
 - **Cursor rules (this repo):** `.cursor/rules/rae-*.mdc` at the monorepo root
 - **Skill:** `.cursor/skills/rae-platform-islands/`
 - **New platform:** `python scripts/scaffold_platform.py <id> "<Label>" --ext .rom [--active]`
-- **CI guard:** `pytest tests/test_platform_import_isolation.py`
+- **CI guards:** `pytest tests/test_platform_import_isolation.py tests/test_platform_isolation_contract.py`
+- **Day-to-day:** `pytest -m <your-platform-id>` only
 
 ## Development
 

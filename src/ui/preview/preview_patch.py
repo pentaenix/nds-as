@@ -1,16 +1,13 @@
-"""Build patched preview GLBs for the WebEngine viewer."""
+"""Build patched preview GLBs for the WebEngine viewer (via PlatformDispatch)."""
 from __future__ import annotations
 
 from pathlib import Path
 
-from ...glb_policy.texture_patch import write_flipbook_preview_glbs, write_patched_preview_glb
+from ...core.modules.dispatch import PlatformDispatch
 
 
 class PreviewGlbPatcher:
-    """Keeps patched preview GLBs beside the apicula output folder."""
-
-    def __init__(self) -> None:
-        self._preview_counter = 0
+    """UI-facing wrapper; NDS island patcher runs behind PlatformDispatch."""
 
     def build_preview_glb(
         self,
@@ -22,20 +19,18 @@ class PreviewGlbPatcher:
         material_to_texture: dict[str, str] | None = None,
         stage_texture_paths: list[Path] | None = None,
     ) -> Path:
-        source_glb = source_glb.resolve()
-        preview_dir = source_glb.parent / ".rae_preview"
-        preview_dir.mkdir(parents=True, exist_ok=True)
-        self._preview_counter += 1
-        out_path = preview_dir / f"textured_{self._preview_counter:05d}.glb"
-        return write_patched_preview_glb(
+        result = PlatformDispatch.build_web_preview_glb(
             source_glb,
-            out_path,
+            rom_platform_id="nds",
             mesh_labels=mesh_labels,
             mesh_texture_paths=mesh_texture_paths,
             texture_by_name=texture_by_name,
             material_to_texture=material_to_texture,
             stage_texture_paths=stage_texture_paths,
         )
+        if result is None:
+            return source_glb.resolve()
+        return result
 
     def build_flipbook_glbs(
         self,
@@ -46,13 +41,11 @@ class PreviewGlbPatcher:
         mesh_labels: list[str],
         base_mesh_paths: list[Path | None],
     ) -> list[Path]:
-        source_glb = source_glb.resolve()
-        preview_dir = source_glb.parent / ".rae_preview" / "flipbook" / material_name.casefold()
-        return write_flipbook_preview_glbs(
+        return PlatformDispatch.build_flipbook_preview_glbs(
             source_glb,
-            preview_dir,
+            rom_platform_id="nds",
             material_name=material_name,
             frame_paths=frame_paths,
-            base_mesh_paths=base_mesh_paths,
             mesh_labels=mesh_labels,
+            base_mesh_paths=base_mesh_paths,
         )

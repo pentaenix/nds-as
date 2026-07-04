@@ -138,6 +138,66 @@ class PlatformDispatch:
         modules = modules_for_asset(asset, rom_platform_id=rom_platform_id)
         return modules.export.export_blender_bundle(host, asset, out_dir)
 
+    @staticmethod
+    def preview_platform_id(rom_platform_id: str | None) -> str:
+        return rom_platform_id or "nds"
+
+    @staticmethod
+    def material_policy_platform_id(rom_platform_id: str | None, *, asset_magic: str | None = None) -> str:
+        if asset_magic == "GFMD":
+            return "3ds"
+        return PlatformDispatch.preview_platform_id(rom_platform_id)
+
+    @staticmethod
+    def build_web_preview_glb(
+        source_glb: Path,
+        *,
+        rom_platform_id: str | None,
+        mesh_labels: list[str],
+        mesh_texture_paths: list,
+        texture_by_name: dict[str, Path] | None = None,
+        material_to_texture: dict[str, str] | None = None,
+        stage_texture_paths: list[Path] | None = None,
+        patcher: object | None = None,
+    ) -> Path | None:
+        pid = PlatformDispatch.preview_platform_id(rom_platform_id)
+        if pid != "nds":
+            return None
+        from ...platforms.nds.preview.glb_patcher import PreviewGlbPatcher, build_web_preview_glb
+
+        return build_web_preview_glb(
+            source_glb,
+            mesh_labels=mesh_labels,
+            mesh_texture_paths=mesh_texture_paths,
+            texture_by_name=texture_by_name,
+            material_to_texture=material_to_texture,
+            stage_texture_paths=stage_texture_paths,
+            patcher=patcher if isinstance(patcher, PreviewGlbPatcher) else None,
+        )
+
+    @staticmethod
+    def build_flipbook_preview_glbs(
+        source_glb: Path,
+        *,
+        rom_platform_id: str | None,
+        material_name: str,
+        frame_paths: list[Path],
+        mesh_labels: list[str],
+        base_mesh_paths: list,
+    ) -> list[Path]:
+        pid = PlatformDispatch.preview_platform_id(rom_platform_id)
+        if pid != "nds":
+            return []
+        from ...platforms.nds.preview.glb_patcher import PreviewGlbPatcher
+
+        return PreviewGlbPatcher().build_flipbook_glbs(
+            source_glb,
+            material_name=material_name,
+            frame_paths=frame_paths,
+            mesh_labels=mesh_labels,
+            base_mesh_paths=base_mesh_paths,
+        )
+
 
 def dispatch_for_path(path: str | Path) -> PlatformDispatch:
     return PlatformDispatch()

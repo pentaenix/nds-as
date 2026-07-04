@@ -2,7 +2,8 @@
 
 Each ROM platform is an *island*: scan, decode, preview, export, and format hacks live
 under ``platforms/<id>/``.  Shared code is limited to contracts (this package), the
-ROM registry, and format-neutral GLB helpers (``glb_policy/``).
+ROM registry, and ``core/`` contracts. GLB I/O and material policy live under
+``platforms/<id>/gltf/`` (duplicated per island).
 
 Duplicating helpers per platform is preferred over cross-platform imports.
 """
@@ -26,6 +27,18 @@ PLATFORM_MODULE_BUILDERS: dict[str, str] = {
 
 # ROM platforms that may install Device Toolkit menus when active.
 TOOLKIT_PLATFORM_IDS: tuple[str, ...] = ("mobile", "nds")
+
+# Registry platform id → on-disk package folder under ``platforms/``.
+# Most ids match the folder name; ``3ds`` is stored as ``threeds`` (Python identifier).
+PLATFORM_PACKAGE_DIRS: dict[str, str] = {
+    "3ds": "threeds",
+}
+
+
+def platform_package_dir(platform_id: str | None) -> str:
+    """Return ``platforms/<folder>/`` name for a registry platform id."""
+    pid = (platform_id or "nds").strip() or "nds"
+    return PLATFORM_PACKAGE_DIRS.get(pid, pid)
 
 
 @dataclass(frozen=True, slots=True)

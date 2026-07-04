@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ..glb_preview_textures import (
+from ..platforms.nds.gltf.preview_textures import (
     MaterialPreviewState,
     apply_material_preview_alpha,
     attach_preview_textures,

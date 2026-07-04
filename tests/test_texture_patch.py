@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rae.glb_policy.glb_io import GlbData, read_glb
-from rae.glb_policy.texture_patch import (
+from rae.platforms.nds.gltf.glb_io import GlbData, read_glb
+from rae.platforms.nds.gltf.texture_patch import (
     patch_glb_material_textures,
     write_flipbook_preview_glbs,
     write_patched_preview_glb,

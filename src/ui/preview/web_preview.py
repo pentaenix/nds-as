@@ -49,6 +49,7 @@ class WebGlbPreviewWidget(QWidget):
         super().__init__(parent)
         self._background_name = "Checkered"
         self._last_glb_path: Path | None = None
+        self._preview_platform_id = "nds"
         self._available = webengine_preview_available()
         self._page_ready = False
         self._api_ready = False
@@ -66,7 +67,7 @@ class WebGlbPreviewWidget(QWidget):
             self._view.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
             _configure_web_settings(self._view.page())
             self._view.page().loadFinished.connect(self._on_page_load_finished)
-            self._view.load(QUrl(self._server.viewer_url()))
+            self._view.load(QUrl(self._server.viewer_url(platform_id=self._preview_platform_id)))
             layout.addWidget(self._view)
             self._health = QLabel(self)
             self._health.setStyleSheet(
@@ -84,9 +85,21 @@ class WebGlbPreviewWidget(QWidget):
     def is_available(self) -> bool:
         return self._available
 
-    def load_glb(self, path: Path) -> None:
+    def set_preview_platform(self, platform_id: str) -> None:
+        platform_id = (platform_id or "nds").strip() or "nds"
+        if platform_id == self._preview_platform_id and self._page_ready and self._api_ready:
+            return
+        self._preview_platform_id = platform_id
+        self._page_ready = False
+        self._api_ready = False
+        self._pending_js.clear()
+        self._view.load(QUrl(self._server.viewer_url(platform_id=platform_id)))
+
+    def load_glb(self, path: Path, *, preview_platform_id: str | None = None) -> None:
         if not self._available or self._server is None:
             return
+        if preview_platform_id:
+            self.set_preview_platform(preview_platform_id)
         self._last_glb_path = path.resolve()
         url = self._server.model_url(self._last_glb_path)
         self._run_when_api_ready(

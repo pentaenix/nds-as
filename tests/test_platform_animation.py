@@ -5,8 +5,8 @@ import struct
 
 import numpy as np
 
-from rae.glb_policy.glb_io import GlbData
-from rae.glb_policy.platform_animation import freeze_horizontal_platform_joints
+from rae.platforms.nds.gltf.glb_io import GlbData
+from rae.platforms.nds.gltf.platform_animation import freeze_horizontal_platform_joints
 
 
 def _pack_f32(values: list[float]) -> bytes:

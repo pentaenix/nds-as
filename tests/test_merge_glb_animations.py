@@ -1,8 +1,8 @@
 """Tests for merging multiple glTF animations into one clip."""
 from __future__ import annotations
 
-from rae.glb_policy.glb_io import GlbData
-from rae.glb_policy.merge_animations import merge_glb_animations
+from rae.platforms.nds.gltf.glb_io import GlbData
+from rae.platforms.nds.gltf.merge_animations import merge_glb_animations
 
 
 def test_merge_glb_animations_combines_disjoint_channels() -> None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import struct
 import zlib
 
-from rae.glb_policy.texture_alpha import (
+from rae.platforms.nds.gltf.texture_alpha import (
     png_buffer_has_alpha_channel,
     png_has_meaningful_transparency,
 )

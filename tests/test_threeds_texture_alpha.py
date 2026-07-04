@@ -3,9 +3,13 @@ from __future__ import annotations
 
 import struct
 
-from rae.glb_policy.glb_io import material_texture_bytes, read_glb
-from rae.glb_policy.texture_alpha import texture_has_partial_alpha_channel
+import pytest
+
+from rae.platforms.threeds.gltf.glb_io import material_texture_bytes, read_glb
+from rae.platforms.threeds.gltf.texture_alpha import texture_has_partial_alpha_channel
 from rae.platforms.threeds.pica import PICA_FORMATS, decode_pica_texture, rgba_to_png
+
+pytestmark = pytest.mark.threeds
 
 
 def test_la8_decodes_luminance_then_alpha():

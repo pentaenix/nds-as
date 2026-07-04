@@ -60,7 +60,7 @@ def converted_texture_quality(path: Path) -> TextureQuality:
         import numpy as np
         import trimesh
 
-        from ..glb_preview_textures import attach_preview_textures, build_mesh_texture_paths, discover_colocated_textures
+        from ..platforms.nds.gltf.preview_textures import attach_preview_textures, build_mesh_texture_paths, discover_colocated_textures
 
         loaded = trimesh.load(path, force="scene")
         meshes = loaded.dump() if isinstance(loaded, trimesh.Scene) else [loaded]

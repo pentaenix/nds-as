@@ -6,12 +6,7 @@ from enum import Enum
 from typing import Any
 
 from .geometry_stats import MaterialGeometryStats, is_predominantly_horizontal
-from .texture_alpha import (
-    texture_has_fully_transparent_pixels,
-    texture_has_meaningful_alpha,
-    texture_has_partial_alpha_channel,
-    texture_has_soft_edge_alpha_only,
-)
+from .texture_alpha import texture_has_meaningful_alpha, texture_has_partial_alpha_channel
 
 SCHEMA_VERSION = 1
 ALPHA_CUTOFF = 0.5
@@ -22,7 +17,6 @@ class RenderClass(str, Enum):
     MASK = "mask"
     BLEND = "blend"
     UNIFORM_DECAL = "uniform_decal"
-    ADDITIVE = "additive"
 
 
 @dataclass(frozen=True)
@@ -76,12 +70,6 @@ def _nitro_texture_alpha_kind(material: dict) -> str:
     return str(nitro.get("textureAlpha") or "opaque").lower()
 
 
-def _nitro_blend_mode(material: dict) -> str:
-    extras = material.get("extras") or {}
-    nitro = (extras.get("rae") or {}).get("nitro") or {}
-    return str(nitro.get("blendMode") or "").lower()
-
-
 def _nitro_translucent_texture(material: dict) -> bool:
     """True when apicula marked BLEND from texture format (not material alpha alone)."""
     extras = material.get("extras") or {}
@@ -106,14 +94,6 @@ def classify_material(
     declared_mode = _declared_alpha_mode(material)
     nitro_tex_alpha = _nitro_texture_alpha_kind(material)
 
-    if _nitro_blend_mode(material) == "additive":
-        return ClassificationResult(
-            render_class=RenderClass.ADDITIVE,
-            texture_meaningful_alpha=meaningful_alpha,
-            horizontal_face_fraction=horizontal_fraction,
-            nitro_alpha=nitro_alpha,
-        )
-
     if nitro_alpha <= 0.0:
         return ClassificationResult(
             render_class=RenderClass.MASK,
@@ -123,22 +103,7 @@ def classify_material(
         )
 
     if meaningful_alpha:
-        if not texture_has_fully_transparent_pixels(texture_bytes):
-            # ETC1A4 often varies alpha without any invisible texels — render solid.
-            return ClassificationResult(
-                render_class=RenderClass.OPAQUE,
-                texture_meaningful_alpha=False,
-                horizontal_face_fraction=horizontal_fraction,
-                nitro_alpha=nitro_alpha,
-            )
         if texture_has_partial_alpha_channel(texture_bytes):
-            if texture_has_soft_edge_alpha_only(texture_bytes):
-                return ClassificationResult(
-                    render_class=RenderClass.MASK,
-                    texture_meaningful_alpha=True,
-                    horizontal_face_fraction=horizontal_fraction,
-                    nitro_alpha=nitro_alpha,
-                )
             return ClassificationResult(
                 render_class=RenderClass.BLEND,
                 texture_meaningful_alpha=True,
@@ -229,14 +194,11 @@ def apply_render_class_to_material(
         material["alphaMode"] = "BLEND"
         material.pop("alphaCutoff", None)
         material["doubleSided"] = True
-    elif render_class == RenderClass.ADDITIVE:
-        material["alphaMode"] = "BLEND"
-        material.pop("alphaCutoff", None)
-        material["doubleSided"] = True
 
     extras: dict[str, Any] = dict(material.get("extras") or {})
     rae: dict[str, Any] = dict(extras.get("rae") or {})
     rae["schemaVersion"] = SCHEMA_VERSION
+    rae["platform"] = "gb"
     rae["renderClass"] = render_class.value
     rae["signals"] = {
         "textureMeaningfulAlpha": result.texture_meaningful_alpha,
