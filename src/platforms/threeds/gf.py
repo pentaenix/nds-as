@@ -180,8 +180,11 @@ class GfMaterial:
     # Selected entries of the material's 12-color block (RGBA 0-255).
     # specular0 carries the tint of incandescent overlay layers (e.g. the red
     # lines of Kyogre's "*_Inc" materials).
+    # blend/diffuse alpha drive GF alpha blending (water, glass, decals).
     emission: tuple[int, int, int, int] | None = None
+    diffuse: tuple[int, int, int, int] | None = None
     specular0: tuple[int, int, int, int] | None = None
+    blend: tuple[int, int, int, int] | None = None
 
 
 @dataclass(slots=True)
@@ -332,7 +335,9 @@ def _parse_material(r: _Reader) -> GfMaterial:
     # constant0-5, blend.
     colors = [tuple(r.bytes(4)) for _ in range(12)]
     emission = colors[0]
+    diffuse = colors[2]
     specular0 = colors[3]
+    blend = colors[11]
     r.skip(4 * 4)  # edge type / id-edge / edge id / projection type
     r.skip(4 * 4)  # rim/phong pow+scale
     r.skip(2 * 4)  # id edge offset enable / edge map alpha mask
@@ -374,7 +379,9 @@ def _parse_material(r: _Reader) -> GfMaterial:
         texture_names=texture_names,
         texture_units=texture_units,
         emission=emission,
+        diffuse=diffuse,
         specular0=specular0,
+        blend=blend,
     )
 
 

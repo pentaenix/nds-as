@@ -26,11 +26,19 @@ from __future__ import annotations
 import math
 import struct
 from dataclasses import dataclass, field
+from typing import Iterable
 
 GFMOTION_MAGIC = 0x00060000
 
 _SECT_SUBHEADER = 0
 _SECT_SKELETAL = 1
+_SECT_MATERIAL = 3
+_SECT_MATERIAL_ALT = 5
+_SECT_VISIBILITY = 6
+
+# GF Pokémon eye/iris expression sheets are 2 columns × 4 rows.
+EYE_SHEET_COLS = 2
+EYE_SHEET_ROWS = 4
 
 # Pokémon 3DS motions play at 30 frames per second.
 FRAME_RATE = 30.0
@@ -68,11 +76,43 @@ class GfMotBoneTrack:
 
 
 @dataclass(slots=True)
+class GfMotUVTrack:
+    """One GF texture-unit UV animation block (SPICA GFMotUVTransform)."""
+
+    name: str
+    unit_index: int
+    # 5 channels: SX SY Rot TX TY; empty list = bind pose.
+    channels: list[list[GfMotKey]] = field(default_factory=lambda: [[] for _ in range(5)])
+
+    @property
+    def has_scale(self) -> bool:
+        return any(self.channels[i] for i in range(0, 2))
+
+    @property
+    def has_rotation(self) -> bool:
+        return bool(self.channels[2])
+
+    @property
+    def has_translation(self) -> bool:
+        return any(self.channels[i] for i in range(3, 5))
+
+
+@dataclass(slots=True)
+class GfMotVisibilityTrack:
+    """Per-mesh on/off flags packed one bit per frame (SPICA GFVisibilityMot)."""
+
+    name: str
+    values: list[bool] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class GfMotion:
     name: str
     frames_count: int
     is_looping: bool
     bones: list[GfMotBoneTrack] = field(default_factory=list)
+    material_tracks: list[GfMotUVTrack] = field(default_factory=list)
+    visibility_tracks: list[GfMotVisibilityTrack] = field(default_factory=list)
 
     @property
     def duration(self) -> float:
@@ -130,6 +170,239 @@ def _decode_keyframes(
     return keys, pos
 
 
+def _parse_material_section(data: bytes, address: int, frames_count: int) -> list[GfMotUVTrack]:
+    """Parse GFMotion section kind 3 (GFMaterialMot)."""
+    names_count, names_length = struct.unpack_from("<iI", data, address)
+    if names_count < 0 or names_count > 0x400:
+        raise GfMotionError(f"implausible material count {names_count}")
+    pos = address + 8
+    units = list(struct.unpack_from(f"<{names_count}I", data, pos))
+    pos += 4 * names_count
+    names_start = pos
+    names: list[str] = []
+    for _ in range(names_count):
+        size = data[pos]
+        pos += 1
+        names.append(data[pos : pos + size].decode("ascii", "replace"))
+        pos += size
+    pos = names_start + names_length
+    tracks: list[GfMotUVTrack] = []
+    for mat_name, unit_count in zip(names, units):
+        for _ in range(unit_count):
+            unit_index, flags, _length = struct.unpack_from("<3I", data, pos)
+            pos += 12
+            track = GfMotUVTrack(name=mat_name, unit_index=unit_index)
+            code_bits = flags
+            for channel in range(5):
+                keys, pos = _decode_keyframes(data, pos, code_bits & 7, frames_count)
+                track.channels[channel] = keys
+                code_bits >>= 3
+            tracks.append(track)
+    return tracks
+
+
+def _parse_visibility_section(
+    data: bytes, address: int, frames_count: int
+) -> list[GfMotVisibilityTrack]:
+    """Parse GFMotion section kind 6 (GFVisibilityMot)."""
+    names_count, names_length = struct.unpack_from("<iI", data, address)
+    if names_count < 0 or names_count > 0x400:
+        raise GfMotionError(f"implausible visibility mesh count {names_count}")
+    pos = address + 8
+    names_start = pos
+    names: list[str] = []
+    for _ in range(names_count):
+        size = data[pos]
+        pos += 1
+        names.append(data[pos : pos + size].decode("ascii", "replace"))
+        pos += size
+    pos = names_start + names_length
+    sample_count = frames_count + 1
+    tracks: list[GfMotVisibilityTrack] = []
+    for name in names:
+        bytes_needed = (sample_count + 7) // 8
+        chunk = data[pos : pos + bytes_needed]
+        pos += bytes_needed
+        values = [
+            bool(chunk[i >> 3] & (1 << (i & 7))) for i in range(sample_count)
+        ]
+        tracks.append(GfMotVisibilityTrack(name=name, values=values))
+    return tracks
+
+
+def _is_eye_material_name(name: str) -> bool:
+    lowered = name.casefold()
+    return lowered == "eye" or "iris" in lowered or lowered in {"leye", "reye"}
+
+
+def _is_sclera_material_name(name: str) -> bool:
+    return name in ("Eye", "LEye", "REye", "Mouth")
+
+
+def _is_iris_material_name(name: str) -> bool:
+    return "iris" in name.casefold()
+
+
+def _eye_sheet_dims(scale_x: float, scale_y: float) -> tuple[int, int]:
+    """Infer expression-sheet grid from GF albedo scale (not always 2×4)."""
+    cols = max(1, int(round(abs(scale_x)))) if abs(scale_x) >= 1.0 else EYE_SHEET_COLS
+    if abs(scale_y - 1.0) < 1e-6:
+        rows = EYE_SHEET_ROWS
+    else:
+        rows = max(1, int(round(abs(scale_y))))
+    return cols, rows
+
+
+def gf_uv_to_map_offset(
+    scale_x: float,
+    scale_y: float,
+    tx: float,
+    ty: float,
+    bind_tx: float,
+    bind_ty: float,
+    *,
+    cols: int = EYE_SHEET_COLS,
+    rows: int = EYE_SHEET_ROWS,
+) -> tuple[float, float]:
+    """Map-offset delta from bind when albedo UVs are baked at bind pose."""
+    _ = (scale_x, scale_y, cols, rows)
+    return (tx - bind_tx, bind_ty - ty)
+
+
+def frame_index_to_map_offset(
+    frame: int,
+    scale_x: float,
+    scale_y: float,
+    bind_tx: float,
+    bind_ty: float,
+    *,
+    cols: int = EYE_SHEET_COLS,
+    rows: int = EYE_SHEET_ROWS,
+) -> tuple[float, float]:
+    """Map a sheet frame index to three.js ``map.offset`` from bind-pose bake."""
+    tx, ty = frame_index_to_gf_translation(
+        frame, bind_tx, bind_ty, cols=cols, rows=rows
+    )
+    return gf_uv_to_map_offset(
+        scale_x, scale_y, tx, ty, bind_tx, bind_ty, cols=cols, rows=rows
+    )
+
+
+def gf_frame_to_texture_offset(
+    frame: int,
+    scale_x: float,
+    bind_tx: float,
+    bind_ty: float,
+    *,
+    cols: int = EYE_SHEET_COLS,
+    rows: int = EYE_SHEET_ROWS,
+) -> tuple[float, float]:
+    """three.js ``map.offset`` for raw-U eyes with mirror wrap.
+
+  ``offset.x`` selects the sheet column in tile space (``col * scale/cols``) so
+  both eyes sample the same expression and mirror— not adjacent columns.
+    """
+    col = frame % cols
+    _tx, ty = frame_index_to_gf_translation(
+        frame, bind_tx, bind_ty, cols=cols, rows=rows
+    )
+    ox = col * abs(scale_x) / cols
+    oy = ty - bind_ty
+    return ox, oy
+
+
+def gf_translation_to_texture_offset(
+    tx: float,
+    ty: float,
+    bind_tx: float,
+    bind_ty: float,
+    *,
+    scale_x: float = 2.0,
+    cols: int = EYE_SHEET_COLS,
+) -> tuple[float, float]:
+    """Legacy helper; prefer ``gf_frame_to_texture_offset`` per frame index."""
+    col = _gf_tx_to_sheet_col(tx, bind_tx, cols)
+    ox = col * abs(scale_x) / cols
+    oy = ty - bind_ty
+    return ox, oy
+
+
+def _gf_tx_to_sheet_col(tx: float, bind_tx: float, cols: int) -> int:
+    """Map GF albedo TX to 0-based sheet column for 2-wide eye sheets."""
+    if cols <= 1:
+        return 0
+    if abs(bind_tx - 1.0) < 0.01:
+        return 0 if abs(tx - 1.0) < 0.01 else 1
+    if abs(bind_tx - 0.5) < 0.01:
+        return 0 if abs(tx - 0.5) < 0.01 else 1
+    step = 0.5
+    return max(0, min(cols - 1, int(round((bind_tx - tx) / step))))
+
+
+def eye_expression_frame_translations(
+    scale_x: float,
+    scale_y: float,
+    bind_tx: float,
+    bind_ty: float,
+    *,
+    cols: int = EYE_SHEET_COLS,
+    rows: int = EYE_SHEET_ROWS,
+) -> list[list[float]]:
+    """GF ``TX``/``TY`` per expression frame for GLB ``eyeExpression``."""
+    _ = (scale_x, scale_y)
+    return [
+        list(
+            frame_index_to_gf_translation(
+                frame, bind_tx, bind_ty, cols=cols, rows=rows
+            )
+        )
+        for frame in range(cols * rows)
+    ]
+
+
+def eye_expression_frame_offsets(
+    scale_x: float,
+    scale_y: float,
+    bind_tx: float,
+    bind_ty: float,
+    *,
+    cols: int = EYE_SHEET_COLS,
+    rows: int = EYE_SHEET_ROWS,
+) -> list[list[float]]:
+    """Precompute per-frame ``map.offset`` for raw-U eye meshes (repeat = sheet scale)."""
+    return [
+        list(
+            gf_frame_to_texture_offset(
+                frame, scale_x, bind_tx, bind_ty, cols=cols, rows=rows
+            )
+        )
+        for frame in range(cols * rows)
+    ]
+
+
+def frame_index_to_gf_translation(
+    frame: int,
+    bind_tx: float,
+    bind_ty: float,
+    *,
+    cols: int = EYE_SHEET_COLS,
+    rows: int = EYE_SHEET_ROWS,
+) -> tuple[float, float]:
+    """Map a 2×4 sheet frame index to GF translation values."""
+    col = frame % cols
+    row = frame // cols
+    # Ultra Moon Eye bind uses TX=1 for column 0; the mirrored column is TX=0.5.
+    if abs(bind_tx - 1.0) < 0.01:
+        tx = 1.0 if col == 0 else 0.5
+    elif abs(bind_tx - 0.5) < 0.01:
+        tx = 0.5 if col == 0 else 1.0
+    else:
+        step = 0.5
+        tx = bind_tx - col * step
+    ty = bind_ty + row / rows
+    return tx, ty
+
+
 def parse_gf_motion(data: bytes, name: str = "motion") -> GfMotion:
     if not is_gf_motion(data):
         raise GfMotionError("not a GFMotion (bad magic)")
@@ -152,31 +425,71 @@ def parse_gf_motion(data: bytes, name: str = "motion") -> GfMotion:
         raise GfMotionError(f"implausible frame count {frames_count}")
 
     for kind, _length, address in sections[1:]:
-        if kind != _SECT_SKELETAL:
-            continue  # material / visibility animations are not exported
-        names_count, names_length = struct.unpack_from("<iI", data, address)
-        if names_count < 0 or names_count > 0x400:
-            raise GfMotionError(f"implausible bone count {names_count}")
-        pos = address + 8
-        names: list[str] = []
-        blob_end = pos + names_length
-        for _ in range(names_count):
-            size = data[pos]
-            pos += 1
-            names.append(data[pos : pos + size].decode("ascii", "replace"))
-            pos += size
-        pos = blob_end
-        for bone_name in names:
-            flags, _length = struct.unpack_from("<2I", data, pos)
-            pos += 8
-            track = GfMotBoneTrack(name=bone_name, is_axis_angle=(flags >> 31) == 0)
-            code_bits = flags
-            for channel in range(9):
-                keys, pos = _decode_keyframes(data, pos, code_bits & 7, frames_count)
-                track.channels[channel] = keys
-                code_bits >>= 3
-            motion.bones.append(track)
+        if kind == _SECT_SKELETAL:
+            names_count, names_length = struct.unpack_from("<iI", data, address)
+            if names_count < 0 or names_count > 0x400:
+                raise GfMotionError(f"implausible bone count {names_count}")
+            pos = address + 8
+            names: list[str] = []
+            blob_end = pos + names_length
+            for _ in range(names_count):
+                size = data[pos]
+                pos += 1
+                names.append(data[pos : pos + size].decode("ascii", "replace"))
+                pos += size
+            pos = blob_end
+            for bone_name in names:
+                flags, _length = struct.unpack_from("<2I", data, pos)
+                pos += 8
+                track = GfMotBoneTrack(name=bone_name, is_axis_angle=(flags >> 31) == 0)
+                code_bits = flags
+                for channel in range(9):
+                    keys, pos = _decode_keyframes(data, pos, code_bits & 7, frames_count)
+                    track.channels[channel] = keys
+                    code_bits >>= 3
+                motion.bones.append(track)
+        elif kind in (_SECT_MATERIAL, _SECT_MATERIAL_ALT):
+            motion.material_tracks.extend(_parse_material_section(data, address, frames_count))
+        elif kind == _SECT_VISIBILITY:
+            motion.visibility_tracks.extend(
+                _parse_visibility_section(data, address, frames_count)
+            )
     return motion
+
+
+def mesh_bind_visibility(
+    mesh_names: Iterable[str],
+    motions: Iterable[GfMotion],
+    *,
+    opt_mesh_materials: dict[str, list[str]] | None = None,
+) -> dict[str, bool]:
+    """Bind-pose mesh visibility from the first idle-like clip (``*_00``) or any clip."""
+    names = list(mesh_names)
+    defaults = {name: True for name in names}
+    motion_list = list(motions)
+    ref = next((m for m in motion_list if m.name.endswith("_00")), None)
+    if ref is None:
+        ref = next((m for m in motion_list if m.visibility_tracks), None)
+    tracked: set[str] = set()
+    if ref is not None:
+        for track in ref.visibility_tracks:
+            if track.name in defaults and track.values:
+                defaults[track.name] = track.values[0]
+                tracked.add(track.name)
+    materials = opt_mesh_materials or {}
+    for mesh_name in names:
+        if mesh_name in tracked:
+            continue
+        if not mesh_name.endswith("_OptMesh"):
+            continue
+        mat_names = materials.get(mesh_name, [])
+        if any("Vco" in m or m.endswith("Ef1") for m in mat_names):
+            defaults[mesh_name] = False
+    return defaults
+
+
+def visibility_track_export(track: GfMotVisibilityTrack) -> list[bool]:
+    return list(track.values)
 
 
 # -- evaluation ---------------------------------------------------------------
@@ -311,3 +624,75 @@ def bake_motion(
                 )
         baked.append(anim)
     return times, baked
+
+
+@dataclass(slots=True)
+class BakedMaterialOffset:
+    material: str
+    translations: list[tuple[float, float]]
+
+
+def _motion_uv_track(
+    motion: GfMotion, material_name: str, unit_index: int = 0
+) -> GfMotUVTrack | None:
+    for track in motion.material_tracks:
+        if track.name == material_name and track.unit_index == unit_index:
+            return track
+    return None
+
+
+def bake_material_motion(
+    motion: GfMotion,
+    rest_uv: dict[str, tuple[float, float, float, float]],
+    *,
+    cols: int = EYE_SHEET_COLS,
+    rows: int = EYE_SHEET_ROWS,
+) -> list[BakedMaterialOffset]:
+    """Sample Eye sclera GF UV translation per frame (albedo unit 0).
+
+    Iris materials are single-frame; they are included only when unit 0 has
+    its own keys (rare). Eye expression frames are not propagated to iris.
+    """
+    frame_indices = list(range(motion.frames_count + 1))
+    if "Eye" not in rest_uv:
+        return []
+
+    driver = _motion_uv_track(motion, "Eye", 0)
+    if driver is None or not (driver.has_translation or driver.has_scale):
+        driver = next(
+            (
+                t
+                for t in motion.material_tracks
+                if t.unit_index == 0
+                and _is_sclera_material_name(t.name)
+                and (t.has_translation or t.has_scale)
+            ),
+            None,
+        )
+
+    targets: list[str] = ["Eye"]
+    for mat_name in rest_uv:
+        if not _is_iris_material_name(mat_name):
+            continue
+        own = _motion_uv_track(motion, mat_name, 0)
+        if own is not None and (own.has_translation or own.has_scale):
+            targets.append(mat_name)
+
+    baked: list[BakedMaterialOffset] = []
+    for mat_name in targets:
+        bind_tx, bind_ty = rest_uv[mat_name][2], rest_uv[mat_name][3]
+        own = _motion_uv_track(motion, mat_name, 0)
+        if mat_name == "Eye":
+            track = own if own is not None and (own.has_translation or own.has_scale) else driver
+        else:
+            track = own
+        anim = BakedMaterialOffset(material=mat_name, translations=[])
+        for frame in frame_indices:
+            if track is not None:
+                tx = sample_track(track.channels[3], frame, bind_tx)
+                ty = sample_track(track.channels[4], frame, bind_ty)
+            else:
+                tx, ty = bind_tx, bind_ty
+            anim.translations.append((tx, ty))
+        baked.append(anim)
+    return baked

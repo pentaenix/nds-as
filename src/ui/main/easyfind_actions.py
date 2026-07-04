@@ -237,13 +237,22 @@ class EasyFindActionsMixin:
         return self.easyfind_workspace.canvas_view.restore_view_state(state)
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        from ...core.qthread import stop_qthread
+
         for attr in (
             "easyfind_worker",
             "easyfind_load_worker",
             "easyfind_populate_worker",
             "easyfind_preview_worker",
+            "_threeds_preview_worker",
+            "_switch_preview_worker",
+            "_mobile_preview_worker",
         ):
-            self._stop_easyfind_worker(getattr(self, attr, None))
+            worker = getattr(self, attr, None)
+            if attr.startswith("easyfind_"):
+                self._stop_easyfind_worker(worker)
+            else:
+                stop_qthread(worker)
         super().closeEvent(event)
 
     def _easyfind_log(self, message: str) -> None:

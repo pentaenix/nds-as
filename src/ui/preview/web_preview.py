@@ -121,11 +121,19 @@ class WebGlbPreviewWidget(QWidget):
             return
         self._run_when_api_ready("window.raeGlbPreview.stopAnimation();")
 
-    def set_texture_frame(self, material_name: str, offset_u: float, offset_v: float) -> None:
+    def set_eye_expression_frame(self, material_name: str, frame_index: int) -> None:
         if not self._available:
             return
         self._run_when_api_ready(
-            f"window.raeGlbPreview.setTextureFrame({_js_string(material_name)}, {float(offset_u)}, {float(offset_v)});"
+            f"window.raeGlbPreview.setEyeExpressionFrame({_js_string(material_name)}, {int(frame_index)});"
+        )
+
+    def set_texture_frame(self, material_name: str, offset_u: float, offset_v: float) -> None:
+        """Deprecated: use set_eye_expression_frame with a 0-based frame index."""
+        if not self._available:
+            return
+        self._run_when_api_ready(
+            f"window.raeGlbPreview.setEyeExpressionFrame({_js_string(material_name)}, {int(offset_u)});"
         )
 
     def start_flipbook(self, clips_json: str) -> None:

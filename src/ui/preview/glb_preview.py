@@ -365,10 +365,14 @@ class GlbPreviewMixin:
         if web_view is not None and web_view.is_available():
             web_view.stop_animation()
 
-    def set_material_texture_frame(self, material_name: str, offset_u: float, offset_v: float) -> None:
+    def set_eye_expression_frame(self, material_name: str, frame_index: int) -> None:
         web_view = getattr(self, "_web_view", None)
         if web_view is not None and web_view.is_available():
-            web_view.set_texture_frame(material_name, offset_u, offset_v)
+            web_view.set_eye_expression_frame(material_name, frame_index)
+
+    def set_material_texture_frame(self, material_name: str, offset_u: float, offset_v: float) -> None:
+        """Deprecated: use set_eye_expression_frame."""
+        self.set_eye_expression_frame(material_name, int(offset_u))
 
     def _reload_web_preview_glb(self) -> None:
         path = getattr(self, "_last_path", None)

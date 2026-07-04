@@ -208,3 +208,47 @@ def test_psyduck_glb_has_skin_and_animations(tmp_path):
     for channel in first["channels"]:
         assert channel["target"]["node"] < len(skin["joints"])  # bones come first
         assert channel["target"]["path"] in ("translation", "rotation", "scale")
+
+
+@pytest.mark.skipif(not ROM.is_file(), reason="Ultra Moon test ROM not present")
+def test_bulbasaur_glb_eye_extras_and_material_channels(tmp_path):
+    from rae.platforms.threeds.rom import MODEL_GROUP_STRIDE, parse_model_header_table, read_garc_slot
+    from rae.platforms.threeds.service import build_model_glb
+
+    header = read_garc_slot(ROM, "/a/0/9/4", 0)
+    base_group, _count, _flags = parse_model_header_table(header)[0]
+    descriptor = {
+        "rom": str(ROM),
+        "garc": "/a/0/9/4",
+        "group": base_group,
+        "base_slot": 1 + base_group * MODEL_GROUP_STRIDE,
+        "species": 1,
+        "form": 0,
+        "name": "Bulbasaur (#0001, form 00)",
+        "type": "model",
+    }
+    glb_path = build_model_glb(descriptor, tmp_path)
+    gltf = _read_glb_json(glb_path)
+
+    by_name = {m["name"]: m for m in gltf["materials"]}
+    assert by_name["Eye"]["extras"]["rae"]["materialRole"] == "eye_sclera"
+    assert by_name["LIris"]["extras"]["rae"]["materialRole"] == "eye_iris"
+    assert "eyeSheet" not in by_name["LIris"]["extras"]["rae"]
+    assert by_name["RIris"]["extras"]["rae"]["materialRole"] == "eye_iris"
+    eye_sheet = by_name["Eye"]["extras"]["rae"]["eyeSheet"]
+    assert eye_sheet["cols"] == 2 and eye_sheet["rows"] == 4
+    assert eye_sheet["scale"] == [2.0, 1.0]
+    eye_expr = by_name["Eye"]["extras"]["rae"]["eyeExpression"]
+    assert eye_expr["frameCount"] == 8
+    assert eye_expr["defaultFrame"] == 0
+    assert len(eye_expr["frameOffsets"]) == 8
+    assert eye_expr["frameOffsets"][0] == pytest.approx([0.0, 0.0])
+    assert eye_expr["frameOffsets"][1] == pytest.approx([1.0, 0.0])
+
+    with_channels = [
+        a
+        for a in gltf.get("animations", [])
+        if a.get("extras", {}).get("rae", {}).get("materialChannels")
+    ]
+    assert not with_channels, "eye UV is driven via eyeExpression, not animation channels"
+

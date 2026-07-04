@@ -68,7 +68,9 @@
     import {
       applyRaeMaterialPolicy,
       applyMaterialPolicy,
+      applyEyeExpressionFrame,
       captureMaterialPolicy,
+      installGfEyeSheetTransform,
       scheduleMaterialPolicyWhenMapReady,
     } from './rae-material-policy.js';
 
@@ -99,6 +101,52 @@
     let animMixer = null;
     let animLastTick = 0;
     let animPlayingName = '';
+    let loadedGltfParser = null;
+    let defaultMeshVisibility = {};
+    let animMeshVisibilityByName = {};
+    const MESH_VIS_FPS = 30;
+
+    function applyMeshVisibilityMap(visMap) {
+      if (!animModel || !visMap) return;
+      animModel.traverse((obj) => {
+        if (!obj.isMesh || !obj.name) return;
+        if (Object.prototype.hasOwnProperty.call(visMap, obj.name)) {
+          obj.visible = !!visMap[obj.name];
+        }
+      });
+    }
+
+    function applyDefaultMeshVisibility() {
+      applyMeshVisibilityMap(defaultMeshVisibility);
+    }
+
+    function buildMeshVisibilityTables(gltf) {
+      defaultMeshVisibility = {};
+      animMeshVisibilityByName = {};
+      const nodes = gltf.parser?.json?.nodes || [];
+      for (const node of nodes) {
+        if (node.mesh === undefined || !node.name) continue;
+        const vis = node.extras?.rae?.defaultVisible;
+        if (vis !== undefined) defaultMeshVisibility[node.name] = !!vis;
+      }
+      for (const anim of gltf.parser?.json?.animations || []) {
+        const tracks = anim.extras?.rae?.meshVisibility;
+        if (tracks && anim.name) animMeshVisibilityByName[anim.name] = tracks;
+      }
+    }
+
+    function sampleAnimMeshVisibility(clipName, timeSec) {
+      const tracks = animMeshVisibilityByName[clipName];
+      if (!tracks || !animModel) return;
+      const frame = Math.max(0, Math.floor(timeSec * MESH_VIS_FPS));
+      animModel.traverse((obj) => {
+        if (!obj.isMesh || !obj.name) return;
+        const values = tracks[obj.name];
+        if (!values?.length) return;
+        const idx = Math.min(frame, values.length - 1);
+        obj.visible = !!values[idx];
+      });
+    }
 
     function showError(msg) {
       const el = document.getElementById('error');
@@ -133,9 +181,12 @@
         transparent: mat.transparent,
         opacity: mat.opacity,
         alphaTest: mat.alphaTest || 0,
-        side: mat.side,
         depthWrite: mat.depthWrite,
-        depthTest: mat.depthTest !== false,
+        blending: mat.blending,
+        side: mat.side,
+        polygonOffset: mat.polygonOffset,
+        polygonOffsetFactor: mat.polygonOffsetFactor,
+        polygonOffsetUnits: mat.polygonOffsetUnits,
       });
       basic.userData = { ...mat.userData };
       return basic;
@@ -232,7 +283,13 @@
         animModel.traverse((obj) => {
           if (obj.isSkinnedMesh) obj.skeleton?.pose();
         });
+        applyDefaultMeshVisibility();
       }
+    }
+
+    function applyEyeExpressionFrameByName(materialName, frameIndex) {
+      const mat = findMaterial(materialName);
+      return applyEyeExpressionFrame(mat, frameIndex);
     }
 
     function playSkeletalAnimation(name) {
@@ -244,6 +301,7 @@
       animMixer.clipAction(clip).reset().setLoop(THREE.LoopRepeat, Infinity).play();
       animLastTick = 0;
       animPlayingName = name;
+      sampleAnimMeshVisibility(name, 0);
       return true;
     }
 
@@ -252,6 +310,11 @@
       const dt = animLastTick ? (now - animLastTick) / 1000 : 0;
       animLastTick = now;
       animMixer.update(dt);
+      if (animPlayingName) {
+        const action = animMixer._actions.find((a) => a.isRunning());
+        const timeSec = action ? action.time : 0;
+        sampleAnimMeshVisibility(animPlayingName, timeSec);
+      }
     }
 
     function clearSceneGraph() {
@@ -259,6 +322,9 @@
       stopSkeletalAnimation();
       animClips = [];
       animModel = null;
+      loadedGltfParser = null;
+      defaultMeshVisibility = {};
+      animMeshVisibilityByName = {};
       for (const key of Object.keys(materialsByName)) delete materialsByName[key];
       textureCache.clear();
       while (pivot.children.length) {
@@ -270,7 +336,7 @@
       orbitExtent = 1;
     }
 
-    function rebuildMaterialIndex(model, gltf) {
+    async function rebuildMaterialIndex(model, gltf) {
       for (const key of Object.keys(materialsByName)) delete materialsByName[key];
       model.traverse((obj) => {
         if (!obj.isMesh || !obj.material) return;
@@ -285,6 +351,7 @@
           const name = src?.name || mat.name || (Number.isInteger(matIndex) ? `material_${matIndex}` : '');
           if (!name) continue;
           if (!mat.userData.raePolicy) captureMaterialPolicy(mat, src || null);
+          installGfEyeSheetTransform(mat, src || null);
           scheduleMaterialPolicyWhenMapReady(mat);
           materialsByName[name] = mat;
           materialsByName[String(name).toLowerCase()] = mat;
@@ -645,9 +712,12 @@
       pivot.add(model);
       centerModelAtOrigin(model);
       fitCamera(window.innerWidth, window.innerHeight);
-      rebuildMaterialIndex(model, gltf);
+      await rebuildMaterialIndex(model, gltf);
+      buildMeshVisibilityTables(gltf);
+      applyDefaultMeshVisibility();
       animClips = gltf.animations || [];
       animModel = model;
+      loadedGltfParser = gltf.parser;
     }
 
     window.raeGlbPreview = {
@@ -695,13 +765,17 @@
       currentAnimation() {
         return animPlayingName;
       },
-      setTextureFrame(materialName, offsetU, offsetV) {
+      setEyeExpressionFrame(materialName, frameIndex) {
+        return applyEyeExpressionFrameByName(materialName, frameIndex);
+      },
+      getEyeExpressionFrame(materialName) {
         const mat = findMaterial(materialName);
-        if (!mat || !mat.map) return false;
-        mat.map.offset.set(Number(offsetU) || 0, Number(offsetV) || 0);
-        mat.map.needsUpdate = true;
-        mat.needsUpdate = true;
-        return true;
+        return mat?.userData?.raeEyeSheet?.activeFrame ?? 0;
+      },
+      listEyeExpressionFrames(materialName) {
+        const mat = findMaterial(materialName);
+        const expr = mat?.userData?.gltfMaterial?.extras?.rae?.eyeExpression;
+        return JSON.stringify(expr || null);
       },
       startFlipbook(clips) {
         return startFlipbook(clips);

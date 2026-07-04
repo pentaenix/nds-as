@@ -42,6 +42,20 @@ def test_mask_preserved_for_nitro_transparent():
     assert result.render_class == RenderClass.MASK
 
 
+def test_alpha_variation_without_invisible_texels_is_opaque():
+    from rae.platforms.threeds.pica import rgba_to_png
+
+    # ETC1A4-style: alpha varies but nothing is fully transparent.
+    rgba = bytearray()
+    for i in range(64 * 64):
+        v = 34 + (i % 200)
+        rgba.extend((v, v, v, v))
+    png = rgba_to_png(bytes(rgba), 64, 64)
+    material = {"alphaMode": "BLEND"}
+    result = classify_material(material, texture_bytes=png, geometry_stats=None)
+    assert result.render_class == RenderClass.OPAQUE
+
+
 def test_mask_preserved_when_apicula_declares_mask():
     material = {"alphaMode": "MASK"}
     result = classify_material(material, texture_bytes=None, geometry_stats=None)

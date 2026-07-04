@@ -145,3 +145,36 @@ def texture_has_partial_alpha_channel(texture_bytes: bytes | None) -> bool:
     if decoded is None or decoded.alpha is None:
         return False
     return any(8 < value < 247 for value in decoded.alpha)
+
+
+def texture_has_fully_transparent_pixels(
+    texture_bytes: bytes | None,
+    *,
+    cutoff: int = 8,
+) -> bool:
+    """True when any texel is fully or nearly invisible (real holes/cutouts)."""
+    if not texture_bytes or not is_png(texture_bytes):
+        return False
+    decoded = decode_png_alpha(texture_bytes)
+    if decoded is None or decoded.alpha is None:
+        return decoded.trns_present if decoded else False
+    return any(value <= cutoff for value in decoded.alpha)
+
+
+def texture_has_soft_edge_alpha_only(
+    texture_bytes: bytes | None,
+    *,
+    max_edge_fraction: float = 0.12,
+) -> bool:
+    """True when partial-alpha texels are only a thin anti-alias fringe (cutout decals)."""
+    if not texture_bytes or not is_png(texture_bytes):
+        return False
+    decoded = decode_png_alpha(texture_bytes)
+    if decoded is None or decoded.alpha is None:
+        return False
+    alphas = decoded.alpha
+    total = len(alphas) or 1
+    partial = sum(1 for value in alphas if 8 < value < 247)
+    if partial == 0:
+        return False
+    return (partial / total) <= max_edge_fraction

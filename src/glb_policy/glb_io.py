@@ -70,3 +70,48 @@ def read_glb(path: Path) -> GlbData:
 
 def read_glb_json(path: Path) -> dict:
     return read_glb(path).json
+
+
+def embedded_image_bytes(glb: GlbData, image_index: int) -> bytes | None:
+    """Read PNG (or other) bytes for a bufferView-backed glTF image."""
+    images = glb.json.get("images") or []
+    if image_index < 0 or image_index >= len(images):
+        return None
+    image = images[image_index]
+    if image.get("uri"):
+        return None
+    buffer_views = glb.json.get("bufferViews") or []
+    try:
+        bv_idx = image["bufferView"]
+        bv = buffer_views[int(bv_idx)]
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None
+    offset = int(bv.get("byteOffset") or 0)
+    length = int(bv.get("byteLength") or 0)
+    if length <= 0:
+        return None
+    return glb.bin_chunk[offset : offset + length]
+
+
+def material_texture_bytes(glb: GlbData, mat_index: int) -> bytes | None:
+    """PNG bytes for a material's base-color texture (embedded GLB images only)."""
+    materials = glb.json.get("materials") or []
+    if mat_index < 0 or mat_index >= len(materials):
+        return None
+    material = materials[mat_index]
+    if not isinstance(material, dict):
+        return None
+    pbr = material.get("pbrMetallicRoughness") or {}
+    tex_info = pbr.get("baseColorTexture") or {}
+    tex_idx = tex_info.get("index")
+    if tex_idx is None:
+        return None
+    textures = glb.json.get("textures") or []
+    images = glb.json.get("images") or []
+    try:
+        image_idx = textures[int(tex_idx)].get("source")
+        if image_idx is None:
+            return None
+        return embedded_image_bytes(glb, int(image_idx))
+    except (IndexError, TypeError, ValueError):
+        return None

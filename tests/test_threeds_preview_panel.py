@@ -6,7 +6,8 @@ import struct
 from pathlib import Path
 
 from rae.platforms.threeds.glb import _is_incandescent_material
-from rae.ui.main.threeds_panel import _EYE_FRAME_COLS, _EYE_FRAME_ROWS, _parse_glb_summary
+from rae.platforms.threeds.motion import EYE_SHEET_COLS, EYE_SHEET_ROWS
+from rae.ui.main.threeds_panel import _parse_glb_summary
 
 
 def _minimal_glb(tmp_path: Path) -> Path:
@@ -63,8 +64,11 @@ def test_incandescent_material_detection():
     assert _is_incandescent_material("BodyANeolant_Inc")
     assert _is_incandescent_material("EyeInc")
     assert not _is_incandescent_material("BodyA")
-    assert not _is_incandescent_material("Include")  # only a suffix marker
+    assert not _is_incandescent_material("Include")
+    assert not _is_incandescent_material("BodyBSpcInc")
+    assert not _is_incandescent_material("BodyBInc01")
+    assert not _is_incandescent_material("BodyAInc")
 
 
 def test_eye_frame_grid_constants():
-    assert _EYE_FRAME_COLS * _EYE_FRAME_ROWS == 8
+    assert EYE_SHEET_COLS * EYE_SHEET_ROWS == 8

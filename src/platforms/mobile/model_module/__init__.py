@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QMessageBox
 
 from ....core.modules.protocols import ModelModule
 from ....core.modules.types import PreviewContext, PreviewRoute
+from ....core.qthread import launch_qthread
 from ....install import project_root
 from ...home.assetstudio_preview import assetstudio_available
 from ..mesh_export import unitypy_available
@@ -49,7 +50,7 @@ class MobileModelModule:
             return True
         output_dir = default_output_dir()
         worker = MobilePreviewWorker(asset, output_dir)
-        window._mobile_preview_worker = worker
+        launch_qthread(window, "_mobile_preview_worker", worker)
         if hasattr(window, "_focus_terminal"):
             window._focus_terminal(
                 banner=(

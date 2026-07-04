@@ -22,11 +22,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-# GF eye/iris sheets are 2 columns x 4 rows of expression frames; selecting a
-# frame shifts the texture transform by half/quarter steps.
-_EYE_FRAME_COLS = 2
-_EYE_FRAME_ROWS = 4
-
 
 def _parse_glb_summary(glb_path: Path) -> dict:
     """Extract animation names, image thumbnails and material->texture links
@@ -59,9 +54,14 @@ def _parse_glb_summary(glb_path: Path) -> dict:
                 source = textures[base["index"]].get("source")
                 if source is not None and source < len(out["images"]):
                     texture_name = out["images"][source]["name"]
-            out["materials"].append(
-                {"name": str(material.get("name") or ""), "texture": texture_name}
-            )
+            eye_sheet = (material.get("extras") or {}).get("rae", {}).get("eyeSheet")
+            eye_expression = (material.get("extras") or {}).get("rae", {}).get("eyeExpression")
+            entry = {"name": str(material.get("name") or ""), "texture": texture_name}
+            if eye_sheet:
+                entry["eyeSheet"] = eye_sheet
+            if eye_expression:
+                entry["eyeExpression"] = eye_expression
+            out["materials"].append(entry)
     except Exception:
         pass
     return out
@@ -112,7 +112,7 @@ class ThreedsAnimationsWidget(QWidget):
 
 
 class ThreedsTexturesWidget(QWidget):
-    eye_frame_changed = Signal(str, float, float)  # material, offset_u, offset_v
+    eye_frame_changed = Signal(str, int)  # material, frame index (0-based)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -127,6 +127,7 @@ class ThreedsTexturesWidget(QWidget):
         self._layout = QVBoxLayout(self._content)
         self._layout.setContentsMargins(6, 6, 6, 6)
         self._layout.setSpacing(8)
+        self._eye_expressions: dict[str, dict] = {}
 
     def set_context(self, images: list[dict], materials: list[dict]) -> None:
         while self._layout.count():
@@ -138,9 +139,12 @@ class ThreedsTexturesWidget(QWidget):
         eye_materials = [
             mat
             for mat in materials
-            if mat["name"]
-            and any(token in (mat["texture"] or mat["name"]).lower() for token in ("eye", "iris"))
+            if mat.get("eyeExpression")
         ]
+        self._eye_expressions = {
+            mat["name"]: mat["eyeExpression"]
+            for mat in eye_materials
+        }
         if eye_materials:
             eye_box = QWidget()
             eye_layout = QGridLayout(eye_box)
@@ -149,12 +153,17 @@ class ThreedsTexturesWidget(QWidget):
             title.setStyleSheet("font-weight: bold;")
             eye_layout.addWidget(title, 0, 0, 1, 2)
             for row, mat in enumerate(eye_materials, start=1):
+                expr = mat["eyeExpression"]
+                frame_count = int(expr.get("frameCount") or 0)
                 eye_layout.addWidget(QLabel(mat["name"]), row, 0)
                 combo = QComboBox()
-                for frame in range(_EYE_FRAME_COLS * _EYE_FRAME_ROWS):
-                    combo.addItem(f"Frame {frame + 1}", frame)
+                combo.blockSignals(True)
+                for frame in range(frame_count):
+                    combo.addItem(f"Frame {frame}", frame)
+                combo.setCurrentIndex(0)
+                combo.blockSignals(False)
                 combo.setToolTip(
-                    "GF eye sheets hold 8 expression frames (2×4 grid); pick which frame the preview samples."
+                    "Eye expression frame (0-based). Sclera only; iris unchanged."
                 )
                 combo.currentIndexChanged.connect(
                     lambda index, name=mat["name"], c=combo: self._emit_eye_frame(name, c)
@@ -196,10 +205,10 @@ class ThreedsTexturesWidget(QWidget):
         self._layout.addStretch()
 
     def _emit_eye_frame(self, material_name: str, combo: QComboBox) -> None:
-        frame = int(combo.currentData() or 0)
-        column = frame % _EYE_FRAME_COLS
-        row = frame // _EYE_FRAME_COLS
-        self.eye_frame_changed.emit(material_name, column / _EYE_FRAME_COLS, row / _EYE_FRAME_ROWS)
+        frame = int(combo.currentData() if combo.currentData() is not None else 0)
+        if material_name not in self._eye_expressions:
+            return
+        self.eye_frame_changed.emit(material_name, frame)
 
 
 class ThreedsPanelMixin:
@@ -265,7 +274,7 @@ class ThreedsPanelMixin:
         if preview is not None and hasattr(preview, "stop_glb_animation"):
             preview.stop_glb_animation()
 
-    def _on_threeds_eye_frame(self, material_name: str, offset_u: float, offset_v: float) -> None:
+    def _on_threeds_eye_frame(self, material_name: str, frame_index: int) -> None:
         preview = getattr(self, "preview", None)
-        if preview is not None and hasattr(preview, "set_material_texture_frame"):
-            preview.set_material_texture_frame(material_name, offset_u, offset_v)
+        if preview is not None and hasattr(preview, "set_eye_expression_frame"):
+            preview.set_eye_expression_frame(material_name, frame_index)

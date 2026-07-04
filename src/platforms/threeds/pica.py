@@ -247,8 +247,8 @@ def decode_pica_texture(data: bytes, width: int, height: int, fmt: int) -> bytes
             b = ((v >> 4) & 0xF) * 17
             a = (v & 0xF) * 17
             put(x, y, r, g, b, a)
-        elif fmt == 5:  # LA8
-            a, lum = data[o], data[o + 1]
+        elif fmt == 5:  # LA8 — luminance then alpha per texel
+            lum, a = data[o], data[o + 1]
             put(x, y, lum, lum, lum, a)
         elif fmt == 6:  # HILO8 (normal map RG)
             g, r = data[o], data[o + 1]

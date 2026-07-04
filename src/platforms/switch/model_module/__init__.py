@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QMessageBox
 
 from ....core.assets import Asset
 from ....core.modules.types import PreviewContext, PreviewRoute
+from ....core.qthread import launch_qthread
 from ....install import project_root
 from ..service import build_model_glb
 
@@ -54,7 +55,7 @@ class SwitchModelModule:
         output_dir = project_root() / "exports" / "switch_model_previews" / asset.asset_id
         output_dir.mkdir(parents=True, exist_ok=True)
         worker = SwitchModelPreviewWorker(descriptor, output_dir)
-        window._switch_preview_worker = worker
+        launch_qthread(window, "_switch_preview_worker", worker)
         if hasattr(window, "_update_status"):
             worker.progress.connect(window._update_status)
         worker.finished_ok.connect(lambda glb: self._show(window, asset, glb))
