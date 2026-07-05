@@ -19,14 +19,17 @@ from .gf import (
     parse_gf_model,
     parse_gf_texture,
 )
-from .glb import write_model_glb
+from .glb import FormVariantExport, write_model_glb
 from .motion import GfMotion, is_gf_motion, parse_gf_motion
 from .rom import (
     ANIMATION_SLOTS,
+    MODEL_GROUP_STRIDE,
+    POKEMON_MODEL_GARC,
     SLOT_MODEL,
     SLOT_TEXTURES_EXTRA,
     SLOT_TEXTURES_NORMAL,
     SLOT_TEXTURES_SHINY,
+    parse_model_header_table,
     read_garc_slot,
     read_pack_entries,
 )
@@ -307,6 +310,50 @@ def load_motions(descriptor: dict) -> list[GfMotion]:
     return motions
 
 
+def _pokemon_species_form_descriptors(descriptor: dict) -> list[dict]:
+    species = int(descriptor.get("species") or 0)
+    if not species or descriptor.get("garc") != POKEMON_MODEL_GARC:
+        return [descriptor]
+    try:
+        header = read_garc_slot(descriptor["rom"], descriptor["garc"], 0)
+        table = parse_model_header_table(header)
+    except Exception:
+        return [descriptor]
+    if species < 1 or species > len(table):
+        return [descriptor]
+    base_group, form_count, _flags = table[species - 1]
+    if form_count <= 1:
+        return [descriptor]
+    clean_name = str(descriptor.get("name") or "").split(" (")[0]
+    forms: list[dict] = []
+    for form in range(form_count):
+        group = int(base_group) + form
+        forms.append(
+            {
+                **descriptor,
+                "type": "model",
+                "group": group,
+                "base_slot": 1 + group * MODEL_GROUP_STRIDE,
+                "form": form,
+                "name": clean_name or descriptor.get("name") or f"species {species}",
+            }
+        )
+    return forms
+
+
+def _model_geometry_fingerprint(model: GfModel) -> str:
+    digest = hashlib.sha1()
+    for mesh in sorted(model.meshes, key=lambda m: m.name):
+        digest.update(mesh.name.encode("utf-8", "replace"))
+        for sub in sorted(mesh.submeshes, key=lambda s: s.material_name):
+            digest.update(sub.material_name.encode("utf-8", "replace"))
+            digest.update(struct.pack("<II", len(sub.positions), len(sub.indices)))
+            for pos in sub.positions:
+                digest.update(struct.pack("<3f", *pos))
+            digest.update(struct.pack(f"<{len(sub.indices)}I", *sub.indices) if sub.indices else b"")
+    return digest.hexdigest()
+
+
 def build_model_glb(
     descriptor: dict,
     out_dir: str | Path,
@@ -314,16 +361,67 @@ def build_model_glb(
     shiny: bool = False,
     progress: Progress | None = None,
 ) -> Path:
+    """Write one GLB with normal textures; Pokémon rows also embed a shiny set."""
     out_dir = Path(out_dir)
-    stem = _safe_stem(descriptor)
-    suffix = "_shiny" if shiny else ""
+    form_descriptors = _pokemon_species_form_descriptors(descriptor)
+    selected_form = int(descriptor.get("form") or 0)
+    base_descriptor = next(
+        (item for item in form_descriptors if int(item.get("form") or 0) == selected_form),
+        form_descriptors[0],
+    )
+    stem = _safe_stem(base_descriptor)
     if progress:
         progress(f"3DS: parsing GFModel for {stem}…")
-    model = load_model(descriptor)
+    model = load_model(base_descriptor)
     if progress:
-        progress(f"3DS: decoding {'shiny ' if shiny else ''}textures…")
-    textures = load_textures(descriptor, shiny=shiny)
-    if descriptor.get("type") == "world_model":
+        progress("3DS: decoding textures…")
+    textures = load_textures(base_descriptor, shiny=False)
+    shiny_textures: list[GfTexture] | None = None
+    if base_descriptor.get("type") not in ("world_model", "texture_bank") and base_descriptor.get("species"):
+        try:
+            shiny_textures = load_textures(base_descriptor, shiny=True)
+        except Exception:
+            shiny_textures = None
+    form_exports: list[FormVariantExport] = []
+    if len(form_descriptors) > 1:
+        base_fingerprint = _model_geometry_fingerprint(model)
+        for form_descriptor in form_descriptors:
+            form_id = f"{int(form_descriptor.get('form') or 0):02d}"
+            if int(form_descriptor.get("form") or 0) == selected_form:
+                continue
+            try:
+                form_model = load_model(form_descriptor)
+                form_textures = load_textures(form_descriptor, shiny=False)
+            except Exception:
+                if progress:
+                    progress(f"3DS: skipping form {form_id}; model or textures failed to decode")
+                continue
+            try:
+                form_shiny = load_textures(form_descriptor, shiny=True)
+            except Exception:
+                form_shiny = None
+            geometry = (
+                "texture_only"
+                if _model_geometry_fingerprint(form_model) == base_fingerprint
+                else "full_geometry"
+            )
+            form_exports.append(
+                FormVariantExport(
+                    id=form_id,
+                    label=f"Form {form_id}",
+                    model=form_model,
+                    textures=form_textures,
+                    shiny_textures=form_shiny,
+                    geometry=geometry,
+                )
+            )
+        if progress and form_exports:
+            texture_only = sum(1 for form in form_exports if form.geometry == "texture_only")
+            progress(
+                f"3DS: bundling {len(form_exports) + 1} form(s) "
+                f"({texture_only} texture-only, {len(form_exports) - texture_only} geometry)"
+            )
+    if base_descriptor.get("type") == "world_model":
         have = {t.name for t in textures}
         need = {
             name
@@ -335,17 +433,26 @@ def build_model_glb(
         if missing:
             if progress:
                 progress(f"3DS: resolving {len(missing)} shared world texture(s)…")
-            textures.extend(resolve_world_textures(descriptor, missing, progress))
+            textures.extend(resolve_world_textures(base_descriptor, missing, progress))
     if progress:
         progress("3DS: parsing GFMotion animations…")
     try:
-        motions = load_motions(descriptor)
+        motions = load_motions(base_descriptor)
     except Exception:
         motions = []
-    out_path = out_dir / f"{stem}{suffix}.glb"
+    out_path = out_dir / f"{stem}.glb"
     if progress:
         progress(f"3DS: writing GLB {out_path.name} ({len(motions)} animation(s))…")
-    return write_model_glb(model, textures, out_path, animations=motions)
+    return write_model_glb(
+        model,
+        textures,
+        out_path,
+        animations=motions,
+        shiny_textures=shiny_textures,
+        default_texture_variant="shiny" if shiny else "normal",
+        default_form_variant=f"{selected_form:02d}",
+        form_variants=form_exports,
+    )
 
 
 def export_texture_pngs(

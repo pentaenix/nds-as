@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import math
 import struct
+from dataclasses import dataclass
 from pathlib import Path
 
 from .gf import GfBone, GfMaterial, GfMesh, GfModel, GfTexture, GfTextureUnit
@@ -23,6 +24,16 @@ from .motion import (
     mesh_bind_visibility,
     visibility_track_export,
 )
+
+
+@dataclass(slots=True)
+class FormVariantExport:
+    id: str
+    label: str
+    model: GfModel
+    textures: list[GfTexture]
+    shiny_textures: list[GfTexture] | None = None
+    geometry: str = "texture_only"
 
 
 def _quat_from_euler_xyz(x: float, y: float, z: float) -> tuple[float, float, float, float]:
@@ -333,6 +344,10 @@ def write_model_glb(
     *,
     scene_name: str | None = None,
     animations: list[GfMotion] | None = None,
+    shiny_textures: list[GfTexture] | None = None,
+    default_texture_variant: str = "normal",
+    default_form_variant: str | None = None,
+    form_variants: list[FormVariantExport] | None = None,
 ) -> Path:
     """Write *model* as a GLB with PNG textures embedded in the binary chunk.
 
@@ -385,12 +400,14 @@ def write_model_glb(
         return sampler_index_by_wrap[key]
 
     texture_index_by_name: dict[str, int] = {}
+    texture_key_suffix = ""
+    active_material_model = model
 
-    def image_for(mat: GfMaterial, tex_name: str) -> int | None:
-        key = _material_texture_key(mat, tex_name)
+    def image_for(mat: GfMaterial, tex_name: str, texture_objects: dict[str, GfTexture]) -> int | None:
+        key = _material_texture_key(mat, tex_name) + texture_key_suffix
         if key in png_by_key:
             return png_by_key[key]
-        tex = tex_objects.get(tex_name)
+        tex = texture_objects.get(tex_name)
         if tex is None:
             return None
         try:
@@ -406,11 +423,17 @@ def write_model_glb(
         texture_alpha_kind[key] = _texture_alpha_kind(png)
         return png_by_key[key]
 
-    def texture_for(mat: GfMaterial, name: str, wrap_u: int, wrap_v: int) -> int | None:
-        source = image_for(mat, name)
+    def texture_for(
+        mat: GfMaterial,
+        name: str,
+        wrap_u: int,
+        wrap_v: int,
+        texture_objects: dict[str, GfTexture],
+    ) -> int | None:
+        source = image_for(mat, name, texture_objects)
         if source is None:
             return None
-        key = f"{mat.name}|{name}|{wrap_u}|{wrap_v}"
+        key = f"{mat.name}|{name}|{wrap_u}|{wrap_v}{texture_key_suffix}"
         if key not in texture_index_by_name:
             gltf_textures.append(
                 {"sampler": sampler_for(wrap_u, wrap_v), "source": source, "name": name}
@@ -421,77 +444,148 @@ def write_model_glb(
     # -- materials -------------------------------------------------------------
     material_index_by_name: dict[str, int] = {}
     uv_transform_by_material: dict[str, tuple[float, float, float, float]] = {}
-    for mat in model.materials:
-        entry: dict = {
-            "name": mat.name,
-            "pbrMetallicRoughness": {
-                "metallicFactor": 0.0,
-                "roughnessFactor": 0.9,
-            },
-            "doubleSided": True,
-        }
-        albedo = next(
-            (name for name in mat.texture_names if name in tex_objects),
-            None,
-        )
-        tex_key = _material_texture_key(mat, albedo) if albedo else ""
-        nitro_alpha = _material_nitro_alpha(mat)
-        albedo_rgba: bytes | None = None
-        if albedo is not None and albedo in tex_objects:
-            try:
-                albedo_rgba = tex_objects[albedo].decode_rgba()
-            except Exception:
-                albedo_rgba = None
-        additive = _uses_additive_blend(mat, albedo_rgba)
-        unit = None
-        if albedo is not None:
-            unit = next((u for u in mat.texture_units if u.name == albedo), None)
-            wrap_u, wrap_v = (unit.wrap_u, unit.wrap_v) if unit else (2, 2)
-            tex_index = texture_for(mat, albedo, wrap_u, wrap_v)
-            tex_kind = texture_alpha_kind.get(tex_key, "opaque")
-            if tex_index is not None:
-                entry["pbrMetallicRoughness"]["baseColorTexture"] = {"index": tex_index}
-            if additive or tex_kind in ("translucent", "transparent") or nitro_alpha < 0.999:
+
+    def _append_materials(
+        tex_objects: dict[str, GfTexture],
+        *,
+        material_model: GfModel | None = None,
+        material_name_suffix: str = "",
+    ) -> dict[str, int]:
+        nonlocal active_material_model
+        material_source = material_model or model
+        active_material_model = material_source
+        index_by_name: dict[str, int] = {}
+        for mat in material_source.materials:
+            unit = None
+            entry: dict = {
+                "name": f"{mat.name}{material_name_suffix}",
+                "pbrMetallicRoughness": {
+                    "metallicFactor": 0.0,
+                    "roughnessFactor": 0.9,
+                },
+                "doubleSided": True,
+            }
+            albedo = next(
+                (name for name in mat.texture_names if name in tex_objects),
+                None,
+            )
+            tex_key = _material_texture_key(mat, albedo) + texture_key_suffix if albedo else ""
+            nitro_alpha = _material_nitro_alpha(mat)
+            albedo_rgba: bytes | None = None
+            if albedo is not None and albedo in tex_objects:
+                try:
+                    albedo_rgba = tex_objects[albedo].decode_rgba()
+                except Exception:
+                    albedo_rgba = None
+            additive = _uses_additive_blend(mat, albedo_rgba)
+            unit = None
+            if albedo is not None:
+                unit = next((u for u in mat.texture_units if u.name == albedo), None)
+                wrap_u, wrap_v = (unit.wrap_u, unit.wrap_v) if unit else (2, 2)
+                tex_index = texture_for(mat, albedo, wrap_u, wrap_v, tex_objects)
+                tex_kind = texture_alpha_kind.get(tex_key, "opaque")
+                if tex_index is not None:
+                    entry["pbrMetallicRoughness"]["baseColorTexture"] = {"index": tex_index}
+                if additive or tex_kind in ("translucent", "transparent") or nitro_alpha < 0.999:
+                    entry["alphaMode"] = "BLEND"
+                if nitro_alpha < 0.999:
+                    entry["pbrMetallicRoughness"]["baseColorFactor"] = [1.0, 1.0, 1.0, nitro_alpha]
+                if _is_incandescent_material(mat.name) and mat.specular0 is not None:
+                    red, green, blue = (int(c) for c in mat.specular0[:3])
+                    if (red, green, blue) != (0, 0, 0):
+                        entry["pbrMetallicRoughness"]["baseColorFactor"] = [
+                            red / 255.0,
+                            green / 255.0,
+                            blue / 255.0,
+                            1.0,
+                        ]
+                if unit is not None and mat.name not in uv_transform_by_material:
+                    uv_transform_by_material[mat.name] = (
+                        unit.scale[0],
+                        unit.scale[1],
+                        unit.translation[0],
+                        unit.translation[1],
+                    )
+            elif nitro_alpha < 0.999:
                 entry["alphaMode"] = "BLEND"
-            if nitro_alpha < 0.999:
                 entry["pbrMetallicRoughness"]["baseColorFactor"] = [1.0, 1.0, 1.0, nitro_alpha]
-            if _is_incandescent_material(mat.name) and mat.specular0 is not None:
-                # "*_Inc" overlay layers are grayscale masks tinted by the
-                # material's specular0 color in the TEV pipeline (e.g. the red
-                # glowing lines on Kyogre). Bake that tint into the base color.
-                red, green, blue = (int(c) for c in mat.specular0[:3])
-                if (red, green, blue) != (0, 0, 0):
-                    entry["pbrMetallicRoughness"]["baseColorFactor"] = [
-                        red / 255.0,
-                        green / 255.0,
-                        blue / 255.0,
-                        1.0,
-                    ]
-            if unit is not None:
-                uv_transform_by_material[mat.name] = (
-                    unit.scale[0],
-                    unit.scale[1],
-                    unit.translation[0],
-                    unit.translation[1],
-                )
-        elif nitro_alpha < 0.999:
-            entry["alphaMode"] = "BLEND"
-            entry["pbrMetallicRoughness"]["baseColorFactor"] = [1.0, 1.0, 1.0, nitro_alpha]
-            tex_kind = "opaque"
-        else:
-            tex_kind = "opaque"
-        uv_unit = uv_transform_by_material.get(mat.name)
-        wrap_pair = (unit.wrap_u, unit.wrap_v) if albedo is not None and unit is not None else None
-        _attach_material_extras(
-            entry,
-            mat,
-            tex_kind,
-            additive=additive,
-            uv_unit=uv_unit,
-            wrap_uv=wrap_pair,
+                tex_kind = "opaque"
+            else:
+                tex_kind = "opaque"
+            uv_unit = uv_transform_by_material.get(mat.name)
+            wrap_pair = (unit.wrap_u, unit.wrap_v) if albedo is not None and unit is not None else None
+            _attach_material_extras(
+                entry,
+                mat,
+                tex_kind,
+                additive=additive,
+                uv_unit=uv_unit,
+                wrap_uv=wrap_pair,
+            )
+            index_by_name[mat.name] = len(materials)
+            materials.append(entry)
+        return index_by_name
+
+    texture_key_suffix = ""
+    material_index_by_name = _append_materials(tex_objects)
+    shiny_material_index_by_name: dict[str, int] = {}
+    if shiny_textures:
+        shiny_objects = {tex.name: tex for tex in shiny_textures}
+        texture_key_suffix = "|shiny"
+        shiny_material_index_by_name = _append_materials(shiny_objects)
+        for mat_name, normal_index in material_index_by_name.items():
+            shiny_index = shiny_material_index_by_name.get(mat_name)
+            if shiny_index is None:
+                continue
+            materials[normal_index].setdefault("extras", {}).setdefault("rae", {})[
+                "shinyMaterialIndex"
+            ] = shiny_index
+    form_material_index_by_id: dict[str, dict[str, int]] = {}
+    form_shiny_material_index_by_id: dict[str, dict[str, int]] = {}
+    active_form_variants = form_variants or []
+    for form in active_form_variants:
+        form_objects = {tex.name: tex for tex in form.textures}
+        texture_key_suffix = f"|form:{form.id}"
+        form_materials = _append_materials(
+            form_objects,
+            material_model=form.model,
+            material_name_suffix=f"__form_{form.id}",
         )
-        material_index_by_name[mat.name] = len(materials)
-        materials.append(entry)
+        form_material_index_by_id[form.id] = form_materials
+        if form.shiny_textures:
+            shiny_objects = {tex.name: tex for tex in form.shiny_textures}
+            texture_key_suffix = f"|form:{form.id}|shiny"
+            shiny_materials = _append_materials(
+                shiny_objects,
+                material_model=form.model,
+                material_name_suffix=f"__form_{form.id}_shiny",
+            )
+            form_shiny_material_index_by_id[form.id] = shiny_materials
+            for mat_name, normal_index in form_materials.items():
+                shiny_index = shiny_materials.get(mat_name)
+                if shiny_index is None:
+                    continue
+                materials[normal_index].setdefault("extras", {}).setdefault("rae", {})[
+                    "shinyMaterialIndex"
+                ] = shiny_index
+    texture_key_suffix = ""
+    active_material_model = model
+    texture_only_forms = [
+        form for form in active_form_variants if form.geometry == "texture_only"
+    ]
+    geometry_forms = [
+        form for form in active_form_variants if form.geometry != "texture_only"
+    ]
+    for mat_name, normal_index in material_index_by_name.items():
+        form_indices: dict[str, int] = {}
+        for form in texture_only_forms:
+            index = form_material_index_by_id.get(form.id, {}).get(mat_name)
+            if index is not None:
+                form_indices[form.id] = index
+        if form_indices:
+            materials[normal_index].setdefault("extras", {}).setdefault("rae", {})[
+                "formMaterialIndices"
+            ] = form_indices
 
     # -- skeleton --------------------------------------------------------------
     # Bone nodes occupy indices 0..len(bones)-1 so mesh nodes come after them.
@@ -556,6 +650,9 @@ def write_model_glb(
         animations or [],
         opt_mesh_materials=mesh_materials,
     )
+
+    default_form_id = default_form_variant or "00"
+    base_geometry_forms = [default_form_id] + [form.id for form in texture_only_forms]
 
     for mesh in sorted(model.meshes, key=_mesh_draw_priority):
         primitives = []
@@ -680,9 +777,114 @@ def write_model_glb(
             mesh_extras["defaultVisible"] = bind_visibility[mesh.name]
         if draw_priority >= 2:
             mesh_extras["renderOrder"] = draw_priority
+        if geometry_forms:
+            mesh_extras["visibleForForms"] = base_geometry_forms
         if has_skinning and any("JOINTS_0" in p["attributes"] for p in primitives):
             mesh_node["skin"] = 0
         nodes.append(mesh_node)
+
+    for form in geometry_forms:
+        material_map = form_material_index_by_id.get(form.id, {})
+        for mesh in sorted(form.model.meshes, key=_mesh_draw_priority):
+            primitives = []
+            for sub in mesh.submeshes:
+                if not sub.positions or not sub.indices:
+                    continue
+                count = len(sub.positions)
+                pos_data = b"".join(struct.pack("<3f", *p) for p in sub.positions)
+                mins = [min(p[i] for p in sub.positions) for i in range(3)]
+                maxs = [max(p[i] for p in sub.positions) for i in range(3)]
+                pos_view = add_view(pos_data, target=34962)
+                accessors.append(
+                    {
+                        "bufferView": pos_view,
+                        "componentType": 5126,
+                        "count": count,
+                        "type": "VEC3",
+                        "min": mins,
+                        "max": maxs,
+                    }
+                )
+                attributes = {"POSITION": len(accessors) - 1}
+
+                if len(sub.normals) == count:
+                    normals = []
+                    for n in sub.normals:
+                        length = (n[0] ** 2 + n[1] ** 2 + n[2] ** 2) ** 0.5
+                        normals.append(
+                            (n[0] / length, n[1] / length, n[2] / length)
+                            if length > 1e-6
+                            else (0.0, 1.0, 0.0)
+                        )
+                    nrm_view = add_view(
+                        b"".join(struct.pack("<3f", *n) for n in normals),
+                        target=34962,
+                    )
+                    accessors.append(
+                        {
+                            "bufferView": nrm_view,
+                            "componentType": 5126,
+                            "count": count,
+                            "type": "VEC3",
+                        }
+                    )
+                    attributes["NORMAL"] = len(accessors) - 1
+
+                if len(sub.uvs) == count:
+                    mat_role = _material_role(sub.material_name)
+                    sx, sy, tx, ty = uv_transform_by_material.get(
+                        sub.material_name, (1.0, 1.0, 0.0, 0.0)
+                    )
+                    if mat_role == "eye_sclera":
+                        uv_data = b"".join(
+                            struct.pack("<2f", *_bake_eye_sclera_uv(u, v, sy))
+                            for u, v in sub.uvs
+                        )
+                    else:
+                        uv_data = b"".join(
+                            struct.pack("<2f", *_bake_mesh_uv(u, v, sx, sy, tx, ty))
+                            for u, v in sub.uvs
+                        )
+                    uv_view = add_view(uv_data, target=34962)
+                    accessors.append(
+                        {
+                            "bufferView": uv_view,
+                            "componentType": 5126,
+                            "count": count,
+                            "type": "VEC2",
+                        }
+                    )
+                    attributes["TEXCOORD_0"] = len(accessors) - 1
+
+                idx_data = b"".join(struct.pack("<H", i) for i in sub.indices)
+                idx_view = add_view(idx_data, target=34963)
+                accessors.append(
+                    {
+                        "bufferView": idx_view,
+                        "componentType": 5123,
+                        "count": len(sub.indices),
+                        "type": "SCALAR",
+                    }
+                )
+                primitive = {"attributes": attributes, "indices": len(accessors) - 1, "mode": 4}
+                mat_index = material_map.get(sub.material_name)
+                if mat_index is not None:
+                    primitive["material"] = mat_index
+                primitives.append(primitive)
+            if not primitives:
+                continue
+            meshes.append({"name": f"{mesh.name}__form_{form.id}", "primitives": primitives})
+            mesh_node = {
+                "mesh": len(meshes) - 1,
+                "name": f"{mesh.name}__form_{form.id}",
+            }
+            draw_priority, _ = _mesh_draw_priority(mesh)
+            mesh_extras = mesh_node.setdefault("extras", {}).setdefault("rae", {})
+            mesh_extras["defaultVisible"] = form.id == default_form_id
+            mesh_extras["visibleForForms"] = [form.id]
+            if draw_priority >= 2:
+                mesh_extras["renderOrder"] = draw_priority
+            nodes.append(mesh_node)
 
     # -- animations --------------------------------------------------------------
     gltf_animations: list[dict] = []
@@ -777,6 +979,53 @@ def write_model_glb(
         gltf["samplers"] = samplers
         gltf["images"] = images
         gltf["textures"] = gltf_textures
+    has_texture_variants = bool(shiny_material_index_by_name) or any(
+        form.id in form_shiny_material_index_by_id for form in active_form_variants
+    )
+    if has_texture_variants or active_form_variants:
+        default_id = "shiny" if default_texture_variant == "shiny" else "normal"
+        rae_root = gltf.setdefault("extras", {}).setdefault("rae", {})
+        texture_variants = {
+            "default": default_id,
+            "options": [
+                {"id": "normal", "label": "Normal"},
+                {"id": "shiny", "label": "Shiny"},
+            ],
+        }
+        if has_texture_variants:
+            rae_root["textureVariants"] = texture_variants
+        appearance_default: dict = {"texture": default_id}
+        axes: list[dict] = []
+        if active_form_variants:
+            form_options = [{"id": default_form_id, "label": f"Form {default_form_id}"}] + [
+                {"id": form.id, "label": form.label} for form in active_form_variants
+            ]
+            appearance_default["form"] = default_form_id
+            axes.append(
+                {
+                    "id": "form",
+                    "label": "Form",
+                    "default": default_form_id,
+                    "options": form_options,
+                }
+            )
+            rae_root["speciesVariants"] = {
+                "default": {"form": default_form_id, "shiny": default_id == "shiny"},
+                "forms": form_options,
+            }
+        if has_texture_variants:
+            axes.append(
+                {
+                    "id": "texture",
+                    "label": "Color",
+                    "default": default_id,
+                    "options": texture_variants["options"],
+                }
+            )
+        rae_root["appearanceVariants"] = {
+            "default": appearance_default,
+            "axes": axes,
+        }
 
     json_blob = json.dumps(gltf, separators=(",", ":")).encode("utf-8")
     while len(json_blob) % 4:

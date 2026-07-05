@@ -16,12 +16,33 @@ Verified against a legal *Pokémon Ultra Moon* cartridge dump (NoCrypto `.cci`).
 - `bflim.py` — BFLIM sprite decode (menu icons, handles rotated storage).
 - `glb.py` — self-contained GLB writer: embedded PNG textures, per-material
   UV-frame transforms baked into TEXCOORD_0, mirror/repeat samplers, alpha
-  blending for overlay maps (iris/pupil).
+  blending for overlay maps (iris/pupil), and one-file normal/shiny texture
+  variants for Pokémon rows.
 - `rom.py` — scan: emits lightweight JSON descriptor rows (species/forms from
   the model GARC header table, sprites from the icon GARC). Nothing large is
   held in memory; payloads are re-read on demand.
 - `service.py` — preview/export services: GLB (normal + shiny), texture PNGs
   (normal + shiny), raw GFMotion packs, sprite PNGs.
+
+## Pokémon appearance variants
+
+3DS Pokémon GLBs should keep alternate appearance state in `extras.rae` instead
+of requiring sibling GLBs. Current single-form exports embed normal materials plus
+parallel shiny material siblings:
+
+- root `extras.rae.textureVariants` remains the compatibility surface for
+  consumers that only know normal/shiny
+- root `extras.rae.appearanceVariants` exposes the same data as a generic
+  `texture` axis so downstream tools can add `form`, `pattern`, or other axes
+  without hard-coding shiny behavior
+- each normal material that has a shiny sibling stores
+  `extras.rae.shinyMaterialIndex`
+
+Future species-bundle exports should add a `form` axis under
+`appearanceVariants`. Texture-only forms should use per-material
+`extras.rae.formMaterialIndices`; geometry forms should use node
+`extras.rae.visibleForForms`. Consumers should resolve form/material visibility
+first, then apply the active texture variant such as normal or shiny.
 
 ## Pokémon Ultra Moon GARC map
 

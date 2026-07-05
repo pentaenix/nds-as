@@ -286,6 +286,54 @@ export function installGfEyeSheetTransform(mat, gltfMat) {
   mat.userData.setEyeExpressionFrame = (frameIndex) => applyEyeExpressionFrame(mat, frameIndex);
 }
 
+export async function installTextureVariants(mat, gltfMat, parser) {
+  const shinyIndex = gltfMat?.extras?.rae?.shinyMaterialIndex;
+  if (!Number.isInteger(shinyIndex) || !parser || !mat) return;
+  const shinyGltf = parser.json?.materials?.[shinyIndex];
+  const texInfo = shinyGltf?.pbrMetallicRoughness?.baseColorTexture;
+  if (!texInfo || texInfo.index == null) return;
+  try {
+    const shinyTex = await parser.getDependency('texture', texInfo.index);
+    if (!shinyTex) return;
+    mat.userData.raeTextureVariants = {
+      normal: mat.map || null,
+      shiny: shinyTex,
+      active: 'normal',
+    };
+  } catch (_err) {
+    // Shiny sibling missing or unloadable — leave normal-only.
+  }
+}
+
+export function applyTextureVariant(mat, variantId) {
+  const variants = mat?.userData?.raeTextureVariants;
+  if (!variants) return false;
+  const nextId = variantId === 'shiny' ? 'shiny' : 'normal';
+  const nextMap = variants[nextId];
+  if (!nextMap) return false;
+  mat.map = nextMap;
+  variants.active = nextId;
+  const eyeSheet = mat.userData?.raeEyeSheet;
+  if (eyeSheet?.isSheet) {
+    applyEyeExpressionFrame(mat, eyeSheet.activeFrame ?? 0);
+  }
+  applyMaterialPolicy(mat);
+  return true;
+}
+
+export function applyTextureVariantToRoot(root, variantId) {
+  if (!root) return 0;
+  let count = 0;
+  root.traverse((obj) => {
+    if (!obj.isMesh || !obj.material) return;
+    const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+    for (const mat of mats) {
+      if (applyTextureVariant(mat, variantId)) count += 1;
+    }
+  });
+  return count;
+}
+
 export function scheduleMaterialPolicyWhenMapReady(mat) {
   if (!mat) return;
   const apply = () => applyMaterialPolicy(mat);

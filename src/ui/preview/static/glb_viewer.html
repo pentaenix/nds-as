@@ -77,6 +77,8 @@
     const scheduleMaterialPolicyWhenMapReady = policy.scheduleMaterialPolicyWhenMapReady;
     const applyEyeExpressionFrame = policy.applyEyeExpressionFrame || (() => false);
     const installGfEyeSheetTransform = policy.installGfEyeSheetTransform || (() => {});
+    const installTextureVariants = policy.installTextureVariants || (async () => {});
+    const applyTextureVariantToRoot = policy.applyTextureVariantToRoot || (() => 0);
 
     const BG = {
       Checkered: null,
@@ -109,6 +111,7 @@
     let loadedGltfParser = null;
     let defaultMeshVisibility = {};
     let animMeshVisibilityByName = {};
+    let activeTextureVariant = 'normal';
     const MESH_VIS_FPS = 30;
 
     function applyMeshVisibilityMap(visMap) {
@@ -347,6 +350,7 @@
 
     async function rebuildMaterialIndex(model, gltf) {
       for (const key of Object.keys(materialsByName)) delete materialsByName[key];
+      const installJobs = [];
       model.traverse((obj) => {
         if (!obj.isMesh || !obj.material) return;
         const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
@@ -362,10 +366,27 @@
           if (!mat.userData.raePolicy) captureMaterialPolicy(mat, src || null);
           installGfEyeSheetTransform(mat, src || null);
           scheduleMaterialPolicyWhenMapReady(mat);
+          if (src) mat.userData.gltfMaterial = src;
+          installJobs.push(installTextureVariants(mat, src, gltf.parser));
           materialsByName[name] = mat;
           materialsByName[String(name).toLowerCase()] = mat;
         }
       });
+      await Promise.all(installJobs);
+      const defaultVariant = gltf.parser?.json?.extras?.rae?.textureVariants?.default;
+      if (defaultVariant === 'shiny' || defaultVariant === 'normal') {
+        activeTextureVariant = defaultVariant;
+      } else {
+        activeTextureVariant = 'normal';
+      }
+      applyTextureVariantToRoot(model, activeTextureVariant);
+    }
+
+    function setTextureVariant(variantId) {
+      const next = variantId === 'shiny' ? 'shiny' : 'normal';
+      activeTextureVariant = next;
+      if (!pivot?.children?.length) return 0;
+      return applyTextureVariantToRoot(pivot.children[0], next);
     }
 
     function findMaterial(name) {
@@ -798,6 +819,12 @@
       },
       setEyeExpressionFrame(materialName, frameIndex) {
         return applyEyeExpressionFrameByName(materialName, frameIndex);
+      },
+      setTextureVariant(variantId) {
+        return setTextureVariant(variantId);
+      },
+      getTextureVariant() {
+        return activeTextureVariant;
       },
       getEyeExpressionFrame(materialName) {
         const mat = findMaterial(materialName);

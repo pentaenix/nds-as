@@ -45,6 +45,7 @@ class ThreedsModelModule:
         if not descriptor:
             return False
         output_dir = project_root() / "exports" / "threeds_model_previews"
+        self._remember_preview_context(window, asset, descriptor)
         worker = ThreedsModelPreviewWorker(descriptor, output_dir)
         launch_qthread(window, "_threeds_preview_worker", worker)
         if hasattr(window, "_update_status"):
@@ -55,6 +56,29 @@ class ThreedsModelModule:
         )
         worker.start()
         return True
+
+    def set_preview_shiny(self, window, *, shiny: bool) -> bool:
+        """Swap embedded normal/shiny texture variants in the viewport."""
+        if getattr(window, "_threeds_preview_asset", None) is None:
+            return False
+        preview = getattr(window, "preview", None)
+        if preview is None or not hasattr(preview, "set_texture_variant"):
+            return False
+        variant = "shiny" if shiny else "normal"
+        preview.set_texture_variant(variant)
+        window._threeds_preview_shiny = shiny
+        if hasattr(window, "sync_threeds_shiny_toggle"):
+            window.sync_threeds_shiny_toggle(shiny)
+        if hasattr(window, "_update_status"):
+            window._update_status(
+                f"3DS preview: {'shiny' if shiny else 'normal'} textures"
+            )
+        return True
+
+    def _remember_preview_context(self, window, asset: Asset, descriptor: dict) -> None:
+        window._threeds_preview_asset = asset
+        window._threeds_preview_descriptor = descriptor
+        window._threeds_preview_shiny = False
 
     def _show(self, window, asset: Asset, glb_path: str) -> None:
         from pathlib import Path
@@ -68,6 +92,10 @@ class ThreedsModelModule:
                 window.show_threeds_model_tabs(path, asset.asset_id)
             if hasattr(window, "_update_preview_details"):
                 window._update_preview_details(asset)
+            preview = getattr(window, "preview", None)
+            if preview is not None and hasattr(preview, "set_texture_variant"):
+                default = "shiny" if getattr(window, "_threeds_preview_shiny", False) else "normal"
+                preview.set_texture_variant(default)
             return
         preview = getattr(window, "preview", None)
         if preview is not None and hasattr(preview, "load_glb"):

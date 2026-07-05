@@ -7,7 +7,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from PySide6.QtWidgets import QFileDialog, QMessageBox, QDialog, QVBoxLayout, QLabel, QRadioButton, QDialogButtonBox
+from PySide6.QtWidgets import QFileDialog, QMessageBox, QDialog, QVBoxLayout, QLabel, QRadioButton, QDialogButtonBox, QCheckBox
 
 from ...core.modules import PlatformDispatch
 from ...exporter import apicula_available, apicula_help_text, archive_directory_as_zip, export_asset, export_assets, export_readable_asset
@@ -29,9 +29,10 @@ class ExportActionsMixin:
             )
             return
         options = self._export_options_for(asset)
-        choice = self._choose_export_option(asset, options)
+        choice, extras = self._choose_export_option(asset, options)
         if not choice:
             return
+        self._export_glb_shiny = bool(extras.get("export_glb_shiny", False))
         default_dir = Path.cwd() / "exports"
         default_dir.mkdir(exist_ok=True)
         out_dir = QFileDialog.getExistingDirectory(self, "Choose export folder", str(default_dir))
@@ -66,7 +67,7 @@ class ExportActionsMixin:
             QMessageBox.information(self, "Empty folder", "This folder has no visible assets to export.")
             return
         options = self._folder_export_options()
-        choice = self._choose_export_option_dialog(
+        choice, _extras = self._choose_export_option_dialog(
             "Export Folder",
             f"Folder: {' / '.join(parts)}\nAssets in folder: {len(assets)}",
             options,
@@ -143,11 +144,19 @@ class ExportActionsMixin:
     def _export_options_for(self, asset: Asset) -> list[tuple[str, str, str]]:
         return PlatformDispatch.export_options_for(asset, rom_platform_id=self._rom_platform())
 
-    def _choose_export_option(self, asset: Asset, options: list[tuple[str, str, str]]) -> str | None:
+    def _choose_export_option(
+        self,
+        asset: Asset,
+        options: list[tuple[str, str, str]],
+    ) -> tuple[str | None, dict[str, bool]]:
+        shiny_checkbox = asset.magic == "GFMD" and any(key == "glb" for key, _, _ in options)
         return self._choose_export_option_dialog(
             "Export Selected",
             f"Choose how to export:\n{asset.magic} — {asset.virtual_path}",
             options,
+            extra_checkboxes=[("export_glb_shiny", "Default variant: shiny (both sets are always embedded)")]
+            if shiny_checkbox
+            else None,
         )
 
     def _choose_export_option_dialog(
@@ -155,7 +164,9 @@ class ExportActionsMixin:
         title: str,
         header: str,
         options: list[tuple[str, str, str]],
-    ) -> str | None:
+        *,
+        extra_checkboxes: list[tuple[str, str]] | None = None,
+    ) -> tuple[str | None, dict[str, bool]]:
         dialog = QDialog(self)
         dialog.setWindowTitle(title)
         layout = QVBoxLayout(dialog)
@@ -168,16 +179,25 @@ class ExportActionsMixin:
             rb.setChecked(idx == 0)
             layout.addWidget(rb)
             buttons.append(rb)
+        checkbox_values: dict[str, bool] = {}
+        checkbox_widgets: list[tuple[str, QCheckBox]] = []
+        if extra_checkboxes:
+            for key, label in extra_checkboxes:
+                cb = QCheckBox(label)
+                layout.addWidget(cb)
+                checkbox_widgets.append((key, cb))
         box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         box.accepted.connect(dialog.accept)
         box.rejected.connect(dialog.reject)
         layout.addWidget(box)
         if dialog.exec() != QDialog.Accepted:
-            return None
+            return None, {}
+        for key, cb in checkbox_widgets:
+            checkbox_values[key] = cb.isChecked()
         for rb, (key, _label, _desc) in zip(buttons, options):
             if rb.isChecked():
-                return key
-        return options[0][0] if options else None
+                return key, checkbox_values
+        return (options[0][0] if options else None), checkbox_values
 
     def _run_export_choice(self, asset: Asset, choice: str, out: Path) -> list[Path]:
         return PlatformDispatch.run_export_choice(

@@ -124,6 +124,8 @@ class EasyFindActionsMixin:
 
         if in_easyfind:
             self.open_rom_toolbar_action.setVisible(False)
+            if hasattr(self, "open_recent_rom_toolbar_button"):
+                self.open_recent_rom_toolbar_button.setVisible(False)
             self.save_session_toolbar_action.setVisible(False)
             self.easyfind_action.setVisible(False)
             self.easyfind_back_action.setVisible(True)
@@ -140,6 +142,8 @@ class EasyFindActionsMixin:
             self.easyfind_reset_action.setEnabled(canvas_ready and not building)
         else:
             self.open_rom_toolbar_action.setVisible(True)
+            if hasattr(self, "open_recent_rom_toolbar_button"):
+                self.open_recent_rom_toolbar_button.setVisible(True)
             self.save_session_toolbar_action.setVisible(loaded)
             rom_platform = getattr(self, "_rom_platform_id", None) or "nds"
             easyfind_enabled = supports_easyfind(rom_platform)

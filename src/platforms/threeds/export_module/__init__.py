@@ -23,8 +23,11 @@ class ThreedsExportModule:
     def export_options_for(self, asset: Asset) -> list[tuple[str, str, str]]:
         if asset.magic == "GFMD":
             return [
-                ("glb", "GLB model (normal textures)", "Textured glTF binary with skeleton, skinning and animations."),
-                ("glb_shiny", "GLB model (shiny textures)", "Same rigged mesh with the shiny texture set."),
+                (
+                    "glb",
+                    "GLB model",
+                    "One species glTF with skeleton, animations, forms/patterns, and embedded normal + shiny texture sets.",
+                ),
                 ("textures", "Texture PNGs (normal + shiny)", "Decode every texture map to PNG."),
                 ("animations_raw", "Raw animation packs", "GFMotion payloads for external tools."),
                 ("raw", "Raw model package", "Undecoded GARC payload."),
@@ -59,9 +62,15 @@ class ThreedsExportModule:
         out.mkdir(parents=True, exist_ok=True)
         progress = getattr(host, "_update_status", None)
         if choice == "glb":
-            return [build_model_glb(descriptor, out, progress=progress)]
-        if choice == "glb_shiny":
-            return [build_model_glb(descriptor, out, shiny=True, progress=progress)]
+            shiny = bool(getattr(host, "_export_glb_shiny", False))
+            return [
+                build_model_glb(
+                    descriptor,
+                    out,
+                    shiny=shiny,
+                    progress=progress,
+                )
+            ]
         if choice == "textures":
             return export_texture_pngs(descriptor, out, progress=progress)
         if choice == "animations_raw":
@@ -83,7 +92,6 @@ class ThreedsExportModule:
         out_dir.mkdir(parents=True, exist_ok=True)
         paths = [
             build_model_glb(descriptor, out_dir),
-            build_model_glb(descriptor, out_dir, shiny=True),
         ]
         paths.extend(export_texture_pngs(descriptor, out_dir / "textures"))
         return True, f"Wrote {len(paths)} file(s) to {out_dir}"

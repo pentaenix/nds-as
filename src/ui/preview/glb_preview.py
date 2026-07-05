@@ -373,6 +373,11 @@ class GlbPreviewMixin:
         if web_view is not None and web_view.is_available():
             web_view.set_eye_expression_frame(material_name, frame_index)
 
+    def set_texture_variant(self, variant_id: str) -> None:
+        web_view = getattr(self, "_web_view", None)
+        if web_view is not None and web_view.is_available():
+            web_view.set_texture_variant(variant_id)
+
     def set_material_texture_frame(self, material_name: str, offset_u: float, offset_v: float) -> None:
         """Deprecated: use set_eye_expression_frame."""
         self.set_eye_expression_frame(material_name, int(offset_u))

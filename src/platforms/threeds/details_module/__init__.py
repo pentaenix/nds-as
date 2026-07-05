@@ -18,7 +18,7 @@ class ThreedsDetailsModule:
         if kind == "model":
             lines.append(f"3DS Pokémon model — {descriptor.get('name', '?')}")
             lines.append(f"GARC {descriptor.get('garc')} group {descriptor.get('group')} (slots {descriptor.get('base_slot')}+)")
-            lines.append("Export options: GLB (normal), GLB (shiny), texture PNGs, raw animation packs.")
+            lines.append("Export options: GLB (optional shiny checkbox), texture PNGs, raw animation packs.")
         elif kind == "textures":
             lines.append(f"3DS texture set — {descriptor.get('name', '?')}")
             lines.append("Contains the normal set; the shiny set lives in the next GARC slot.")

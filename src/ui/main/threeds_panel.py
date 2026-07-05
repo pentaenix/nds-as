@@ -10,6 +10,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QGridLayout,
     QHBoxLayout,
@@ -113,6 +114,7 @@ class ThreedsAnimationsWidget(QWidget):
 
 class ThreedsTexturesWidget(QWidget):
     eye_frame_changed = Signal(str, int)  # material, frame index (0-based)
+    shiny_toggled = Signal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -128,13 +130,34 @@ class ThreedsTexturesWidget(QWidget):
         self._layout.setContentsMargins(6, 6, 6, 6)
         self._layout.setSpacing(8)
         self._eye_expressions: dict[str, dict] = {}
+        self._shiny_toggle = QCheckBox("Shiny textures")
+        self._shiny_toggle.setToolTip("Preview the shiny texture set for this Pokémon model.")
+        self._shiny_toggle.toggled.connect(self.shiny_toggled.emit)
+        self._shiny_toggle.hide()
+
+    def set_shiny_available(self, available: bool, *, checked: bool = False) -> None:
+        self._shiny_toggle.setVisible(available)
+        self._shiny_toggle.blockSignals(True)
+        self._shiny_toggle.setChecked(checked)
+        self._shiny_toggle.blockSignals(False)
+
+    def sync_shiny_checked(self, checked: bool) -> None:
+        if not self._shiny_toggle.isVisible():
+            return
+        self._shiny_toggle.blockSignals(True)
+        self._shiny_toggle.setChecked(checked)
+        self._shiny_toggle.blockSignals(False)
 
     def set_context(self, images: list[dict], materials: list[dict]) -> None:
+        if self._shiny_toggle.parent() is self._content:
+            self._layout.removeWidget(self._shiny_toggle)
         while self._layout.count():
             item = self._layout.takeAt(0)
             widget = item.widget()
-            if widget is not None:
+            if widget is not None and widget is not self._shiny_toggle:
                 widget.deleteLater()
+
+        self._layout.addWidget(self._shiny_toggle)
 
         eye_materials = [
             mat
@@ -223,6 +246,7 @@ class ThreedsPanelMixin:
         self.threeds_animations.stop_requested.connect(self._on_threeds_stop_animation)
         self.threeds_textures = ThreedsTexturesWidget()
         self.threeds_textures.eye_frame_changed.connect(self._on_threeds_eye_frame)
+        self.threeds_textures.shiny_toggled.connect(self._on_threeds_shiny_toggled)
         self._inspector_tab_threeds_animations = tabs.addTab(self.threeds_animations, "Animations")
         self._inspector_tab_threeds_textures = tabs.addTab(self.threeds_textures, "Textures")
         tabs.setTabVisible(self._inspector_tab_threeds_animations, False)
@@ -237,6 +261,8 @@ class ThreedsPanelMixin:
         summary = _parse_glb_summary(Path(glb_path))
         self.threeds_animations.set_animations(summary["animations"])
         self.threeds_textures.set_context(summary["images"], summary["materials"])
+        shiny = bool(getattr(self, "_threeds_preview_shiny", False))
+        self.threeds_textures.set_shiny_available(True, checked=shiny)
         self._threeds_tabs_asset_id = asset_id
         self._threeds_has_animations = bool(summary["animations"])
         self._last_previewed_asset_id = asset_id
@@ -257,6 +283,11 @@ class ThreedsPanelMixin:
             self._inspector_tab_threeds_animations, active and self._threeds_has_animations
         )
         tabs.setTabVisible(self._inspector_tab_threeds_textures, active)
+        if hasattr(self, "threeds_textures"):
+            self.threeds_textures.set_shiny_available(
+                active,
+                checked=bool(getattr(self, "_threeds_preview_shiny", False)),
+            )
         if not tabs.isTabVisible(tabs.currentIndex()):
             tabs.setCurrentIndex(getattr(self, "_inspector_tab_preview", 0))
 
@@ -273,6 +304,19 @@ class ThreedsPanelMixin:
         preview = getattr(self, "preview", None)
         if preview is not None and hasattr(preview, "stop_glb_animation"):
             preview.stop_glb_animation()
+
+    def sync_threeds_shiny_toggle(self, checked: bool) -> None:
+        if hasattr(self, "threeds_textures"):
+            self.threeds_textures.sync_shiny_checked(checked)
+
+    def _on_threeds_shiny_toggled(self, checked: bool) -> None:
+        if getattr(self, "_threeds_preview_shiny", False) == checked:
+            return
+        from ...core.modules import get_platform_modules
+
+        model_module = get_platform_modules("3ds").model
+        if hasattr(model_module, "set_preview_shiny"):
+            model_module.set_preview_shiny(self, shiny=checked)
 
     def _on_threeds_eye_frame(self, material_name: str, frame_index: int) -> None:
         preview = getattr(self, "preview", None)

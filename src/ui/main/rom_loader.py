@@ -87,6 +87,7 @@ from ..constants import (
 from ..preview_btx import write_btx_preview_images
 from ..preview_quality import CachedTextureResolution, TextureQuality, converted_texture_quality
 from ..preview_widgets import PreviewWidget, qcolor_rgbf
+from ..recent_roms import load_recent_roms, remember_recent_rom
 from ..workers import (
     FilterWorker,
     ImagePreviewWorker,
@@ -127,6 +128,27 @@ class RomLoaderMixin:
         if not path:
             return
         self._open_rom_path(path)
+
+    def _rebuild_recent_roms_menu(self) -> None:
+        menu = getattr(self, "_recent_roms_menu", None)
+        button = getattr(self, "open_recent_rom_toolbar_button", None)
+        if menu is None or button is None:
+            return
+        menu.clear()
+        recent = load_recent_roms()
+        if not recent:
+            placeholder = QAction("No recent ROMs", self)
+            placeholder.setEnabled(False)
+            menu.addAction(placeholder)
+            button.setEnabled(False)
+            return
+        button.setEnabled(True)
+        for path in recent:
+            label = Path(path).name
+            action = QAction(label, self)
+            action.setToolTip(path)
+            action.triggered.connect(lambda checked=False, rom_path=path: self._open_rom_path(rom_path))
+            menu.addAction(action)
 
     def _open_rom_path(self, path: str) -> None:
         platform = platform_for_path(Path(path))
@@ -195,6 +217,9 @@ class RomLoaderMixin:
         self.worker.start()
 
     def _scan_finished(self, assets: list[Asset], _report: object | None = None) -> None:
+        if self.rom_path:
+            remember_recent_rom(self.rom_path)
+            self._rebuild_recent_roms_menu()
         self.assets = expand_btx0_texture_slots(assets)
         self.assets_by_id = {a.asset_id: a for a in self.assets}
         self._load_profile_summary()

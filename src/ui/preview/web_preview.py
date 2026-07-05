@@ -141,6 +141,14 @@ class WebGlbPreviewWidget(QWidget):
             f"window.raeGlbPreview.setEyeExpressionFrame({_js_string(material_name)}, {int(frame_index)});"
         )
 
+    def set_texture_variant(self, variant_id: str) -> None:
+        if not self._available:
+            return
+        variant = "shiny" if str(variant_id).strip().lower() == "shiny" else "normal"
+        self._run_when_api_ready(
+            f"window.raeGlbPreview.setTextureVariant({_js_string(variant)});"
+        )
+
     def set_texture_frame(self, material_name: str, offset_u: float, offset_v: float) -> None:
         """Deprecated: use set_eye_expression_frame with a 0-based frame index."""
         if not self._available:
