@@ -3,6 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from ....core.assets import Asset
+from ..pokemon_bulk_export import (
+    PokemonBulkExportResult,
+    pokemon_bulk_export_available,
+    pokemon_bulk_export_assets,
+    run_pokemon_bulk_export,
+)
 from ..rom import load_descriptor, read_garc_slot
 from ..service import (
     build_model_glb,
@@ -82,6 +88,32 @@ class ThreedsExportModule:
         if choice == "raw":
             return self._export_raw(asset, descriptor, out)
         return []
+
+    def supports_pokemon_bulk_export(self, rom_path: str | Path, assets: list[Asset]) -> bool:
+        return pokemon_bulk_export_available(rom_path, assets)
+
+    def pokemon_bulk_export_assets(self, assets: list[Asset]) -> list[Asset]:
+        return pokemon_bulk_export_assets(assets)
+
+    def run_pokemon_bulk_export(
+        self,
+        host: object,
+        assets: list[Asset],
+        rom_path: str | Path,
+        out_dir: Path,
+        *,
+        shiny: bool = False,
+        progress=None,
+    ) -> PokemonBulkExportResult:
+        report = progress or getattr(host, "_update_status", None)
+        return run_pokemon_bulk_export(
+            host,
+            assets,
+            rom_path,
+            out_dir,
+            shiny=shiny,
+            progress=report,
+        )
 
     def export_blender_bundle(self, host: object, asset: Asset, out_dir: Path) -> tuple[bool, str]:
         if asset.magic != "GFMD":

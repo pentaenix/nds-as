@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 def _parse_glb_summary(glb_path: Path) -> dict:
     """Extract animation names, image thumbnails and material->texture links
     from a GLB without external dependencies."""
-    out = {"animations": [], "images": [], "materials": []}
+    out = {"animations": [], "images": [], "materials": [], "forms": [], "default_form": ""}
     try:
         data = glb_path.read_bytes()
         if data[:4] != b"glTF":
@@ -39,6 +39,23 @@ def _parse_glb_summary(glb_path: Path) -> dict:
             str(anim.get("name") or f"animation_{i}")
             for i, anim in enumerate(doc.get("animations", []))
         ]
+        appearance = (doc.get("extras") or {}).get("rae", {}).get("appearanceVariants") or {}
+        defaults = appearance.get("default") or {}
+        out["default_form"] = str(defaults.get("form") or "")
+        for axis in appearance.get("axes") or []:
+            if axis.get("id") != "form":
+                continue
+            if not out["default_form"]:
+                out["default_form"] = str(axis.get("default") or "")
+            out["forms"] = [
+                {
+                    "id": str(option.get("id") or ""),
+                    "label": str(option.get("label") or option.get("id") or ""),
+                }
+                for option in axis.get("options") or []
+                if option.get("id")
+            ]
+            break
         views = doc.get("bufferViews", [])
         for image in doc.get("images", []):
             view = views[image["bufferView"]] if "bufferView" in image else None
@@ -115,6 +132,7 @@ class ThreedsAnimationsWidget(QWidget):
 class ThreedsTexturesWidget(QWidget):
     eye_frame_changed = Signal(str, int)  # material, frame index (0-based)
     shiny_toggled = Signal(bool)
+    form_changed = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -134,6 +152,10 @@ class ThreedsTexturesWidget(QWidget):
         self._shiny_toggle.setToolTip("Preview the shiny texture set for this Pokémon model.")
         self._shiny_toggle.toggled.connect(self.shiny_toggled.emit)
         self._shiny_toggle.hide()
+        self._form_combo = QComboBox()
+        self._form_combo.setToolTip("Preview an embedded Pokémon form/pattern variant.")
+        self._form_combo.currentIndexChanged.connect(self._emit_form_changed)
+        self._form_combo.hide()
 
     def set_shiny_available(self, available: bool, *, checked: bool = False) -> None:
         self._shiny_toggle.setVisible(available)
@@ -148,15 +170,34 @@ class ThreedsTexturesWidget(QWidget):
         self._shiny_toggle.setChecked(checked)
         self._shiny_toggle.blockSignals(False)
 
+    def set_forms(self, forms: list[dict], default_form: str = "") -> None:
+        self._form_combo.blockSignals(True)
+        self._form_combo.clear()
+        for form in forms:
+            self._form_combo.addItem(form.get("label") or form.get("id") or "", form.get("id") or "")
+        index = 0
+        if default_form:
+            for i in range(self._form_combo.count()):
+                if self._form_combo.itemData(i) == default_form:
+                    index = i
+                    break
+        if self._form_combo.count():
+            self._form_combo.setCurrentIndex(index)
+        self._form_combo.setVisible(self._form_combo.count() > 1)
+        self._form_combo.blockSignals(False)
+
     def set_context(self, images: list[dict], materials: list[dict]) -> None:
         if self._shiny_toggle.parent() is self._content:
             self._layout.removeWidget(self._shiny_toggle)
+        if self._form_combo.parent() is self._content:
+            self._layout.removeWidget(self._form_combo)
         while self._layout.count():
             item = self._layout.takeAt(0)
             widget = item.widget()
-            if widget is not None and widget is not self._shiny_toggle:
+            if widget is not None and widget not in (self._shiny_toggle, self._form_combo):
                 widget.deleteLater()
 
+        self._layout.addWidget(self._form_combo)
         self._layout.addWidget(self._shiny_toggle)
 
         eye_materials = [
@@ -233,6 +274,11 @@ class ThreedsTexturesWidget(QWidget):
             return
         self.eye_frame_changed.emit(material_name, frame)
 
+    def _emit_form_changed(self) -> None:
+        form_id = self._form_combo.currentData()
+        if form_id:
+            self.form_changed.emit(str(form_id))
+
 
 class ThreedsPanelMixin:
     """Adds Animations/Textures inspector tabs for 3DS model previews."""
@@ -247,6 +293,7 @@ class ThreedsPanelMixin:
         self.threeds_textures = ThreedsTexturesWidget()
         self.threeds_textures.eye_frame_changed.connect(self._on_threeds_eye_frame)
         self.threeds_textures.shiny_toggled.connect(self._on_threeds_shiny_toggled)
+        self.threeds_textures.form_changed.connect(self._on_threeds_form_changed)
         self._inspector_tab_threeds_animations = tabs.addTab(self.threeds_animations, "Animations")
         self._inspector_tab_threeds_textures = tabs.addTab(self.threeds_textures, "Textures")
         tabs.setTabVisible(self._inspector_tab_threeds_animations, False)
@@ -260,6 +307,7 @@ class ThreedsPanelMixin:
             return
         summary = _parse_glb_summary(Path(glb_path))
         self.threeds_animations.set_animations(summary["animations"])
+        self.threeds_textures.set_forms(summary.get("forms") or [], summary.get("default_form") or "")
         self.threeds_textures.set_context(summary["images"], summary["materials"])
         shiny = bool(getattr(self, "_threeds_preview_shiny", False))
         self.threeds_textures.set_shiny_available(True, checked=shiny)
@@ -322,3 +370,8 @@ class ThreedsPanelMixin:
         preview = getattr(self, "preview", None)
         if preview is not None and hasattr(preview, "set_eye_expression_frame"):
             preview.set_eye_expression_frame(material_name, frame_index)
+
+    def _on_threeds_form_changed(self, form_id: str) -> None:
+        preview = getattr(self, "preview", None)
+        if preview is not None and hasattr(preview, "set_form_variant"):
+            preview.set_form_variant(form_id)

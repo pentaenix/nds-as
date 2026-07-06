@@ -41,8 +41,11 @@ parallel shiny material siblings:
 Future species-bundle exports should add a `form` axis under
 `appearanceVariants`. Texture-only forms should use per-material
 `extras.rae.formMaterialIndices`; geometry forms should use node
-`extras.rae.visibleForForms`. Consumers should resolve form/material visibility
-first, then apply the active texture variant such as normal or shiny.
+`extras.rae.visibleForForms`. Full-geometry forms get independent skeleton
+nodes, independent skins, and animation channels targeting that form's bones, so
+they do not borrow the default form's rest pose. Consumers should resolve
+form/material visibility first, then apply the active texture variant such as
+normal or shiny.
 
 ## Pokémon Ultra Moon GARC map
 

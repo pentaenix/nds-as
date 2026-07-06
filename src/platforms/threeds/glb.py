@@ -33,6 +33,7 @@ class FormVariantExport:
     model: GfModel
     textures: list[GfTexture]
     shiny_textures: list[GfTexture] | None = None
+    animations: list[GfMotion] | None = None
     geometry: str = "texture_only"
 
 
@@ -641,6 +642,71 @@ def write_model_glb(
                 }
             )
 
+    form_skin_index_by_id: dict[str, int] = {}
+    form_bone_node_index_by_id: dict[str, dict[str, int]] = {}
+    form_bone_local_index_by_id: dict[str, dict[str, int]] = {}
+    for form in geometry_forms:
+        if not form.model.bones:
+            continue
+        form_has_skinning = any(sub.joints for mesh in form.model.meshes for sub in mesh.submeshes)
+        if not form_has_skinning:
+            continue
+        form_bone_index_by_name: dict[str, int] = {b.name: i for i, b in enumerate(form.model.bones)}
+        node_index_by_name: dict[str, int] = {}
+        local_index_by_name: dict[str, int] = {}
+        children_by_parent: dict[int, list[int]] = {}
+        form_roots: list[int] = []
+        first_node = len(nodes)
+        for local_index, bone in enumerate(form.model.bones):
+            node_index = len(nodes)
+            node = {"name": f"{bone.name}__form_{form.id}"}
+            if bone.translation != (0.0, 0.0, 0.0):
+                node["translation"] = list(bone.translation)
+            if bone.rotation != (0.0, 0.0, 0.0):
+                node["rotation"] = list(_quat_from_euler_xyz(*bone.rotation))
+            if bone.scale != (1.0, 1.0, 1.0):
+                node["scale"] = list(bone.scale)
+            nodes.append(node)
+            node_index_by_name[bone.name] = node_index
+            local_index_by_name[bone.name] = local_index
+            parent = form_bone_index_by_name.get(bone.parent, -1) if bone.parent else -1
+            if parent >= 0 and parent != local_index:
+                children_by_parent.setdefault(first_node + parent, []).append(node_index)
+            else:
+                form_roots.append(node_index)
+        for parent, children in children_by_parent.items():
+            nodes[parent]["children"] = children
+        skeleton_roots.extend(form_roots)
+        world: list[list[list[float]]] = [None] * len(form.model.bones)  # type: ignore[list-item]
+        for i, bone in enumerate(form.model.bones):
+            local = _local_matrix(bone)
+            parent = form_bone_index_by_name.get(bone.parent, -1) if bone.parent else -1
+            world[i] = _mat_mul(world[parent], local) if 0 <= parent < i else local
+        ibm_data = b"".join(
+            struct.pack("<16f", *_column_major(_affine_inverse(w))) for w in world
+        )
+        ibm_view = add_view(ibm_data)
+        accessors.append(
+            {
+                "bufferView": ibm_view,
+                "componentType": 5126,
+                "count": len(form.model.bones),
+                "type": "MAT4",
+            }
+        )
+        skin_index = len(skins)
+        skins.append(
+            {
+                "name": f"{form.model.name}_form_{form.id}_skin",
+                "joints": [node_index_by_name[bone.name] for bone in form.model.bones],
+                "inverseBindMatrices": len(accessors) - 1,
+                "skeleton": form_roots[0] if form_roots else first_node,
+            }
+        )
+        form_skin_index_by_id[form.id] = skin_index
+        form_bone_node_index_by_id[form.id] = node_index_by_name
+        form_bone_local_index_by_id[form.id] = local_index_by_name
+
     # -- geometry --------------------------------------------------------------
     mesh_materials: dict[str, list[str]] = {}
     for mesh in model.meshes:
@@ -785,8 +851,11 @@ def write_model_glb(
 
     for form in geometry_forms:
         material_map = form_material_index_by_id.get(form.id, {})
+        form_skin_index = form_skin_index_by_id.get(form.id, -1)
+        form_has_skin = form_skin_index >= 0
         for mesh in sorted(form.model.meshes, key=_mesh_draw_priority):
             primitives = []
+            mesh_has_skinning = False
             for sub in mesh.submeshes:
                 if not sub.positions or not sub.indices:
                     continue
@@ -856,6 +925,60 @@ def write_model_glb(
                     )
                     attributes["TEXCOORD_0"] = len(accessors) - 1
 
+                if (
+                    form_has_skin
+                    and len(sub.joints) == count
+                    and len(sub.weights) == count
+                ):
+                    joint_rows: list[tuple[int, int, int, int]] = []
+                    weight_rows: list[tuple[float, float, float, float]] = []
+                    table = sub.bone_table
+                    for (j0, j1, j2, j3), (w0, w1, w2, w3) in zip(sub.joints, sub.weights):
+                        raw = (j0, j1, j2, j3)
+                        w = [max(0.0, w0), max(0.0, w1), max(0.0, w2), max(0.0, w3)]
+                        total = w[0] + w[1] + w[2] + w[3]
+                        if total <= 1e-6:
+                            w = [1.0, 0.0, 0.0, 0.0]
+                        else:
+                            w = [v / total for v in w]
+                        mapped = []
+                        for slot in range(4):
+                            idx = raw[slot]
+                            if table and idx < len(table):
+                                idx = table[idx]
+                            if idx >= len(form.model.bones) or w[slot] == 0.0:
+                                idx = idx if idx < len(form.model.bones) else 0
+                            mapped.append(idx)
+                        joint_rows.append(tuple(mapped))
+                        weight_rows.append(tuple(w))
+                    joints_view = add_view(
+                        b"".join(struct.pack("<4B", *j) for j in joint_rows),
+                        target=34962,
+                    )
+                    accessors.append(
+                        {
+                            "bufferView": joints_view,
+                            "componentType": 5121,
+                            "count": count,
+                            "type": "VEC4",
+                        }
+                    )
+                    attributes["JOINTS_0"] = len(accessors) - 1
+                    weights_view = add_view(
+                        b"".join(struct.pack("<4f", *w) for w in weight_rows),
+                        target=34962,
+                    )
+                    accessors.append(
+                        {
+                            "bufferView": weights_view,
+                            "componentType": 5126,
+                            "count": count,
+                            "type": "VEC4",
+                        }
+                    )
+                    attributes["WEIGHTS_0"] = len(accessors) - 1
+                    mesh_has_skinning = True
+
                 idx_data = b"".join(struct.pack("<H", i) for i in sub.indices)
                 idx_view = add_view(idx_data, target=34963)
                 accessors.append(
@@ -884,13 +1007,19 @@ def write_model_glb(
             mesh_extras["visibleForForms"] = [form.id]
             if draw_priority >= 2:
                 mesh_extras["renderOrder"] = draw_priority
+            if mesh_has_skinning:
+                mesh_node["skin"] = form_skin_index
             nodes.append(mesh_node)
 
     # -- animations --------------------------------------------------------------
     gltf_animations: list[dict] = []
     if animations and model.bones:
         rest_pose = {b.name: (b.scale, b.rotation, b.translation) for b in model.bones}
-        for motion in animations:
+        form_animations_by_id: dict[str, dict[str, GfMotion]] = {
+            form.id: {motion.name: motion for motion in (form.animations or [])}
+            for form in geometry_forms
+        }
+        for motion_index, motion in enumerate(animations):
             times, baked = bake_motion(motion, rest_pose)
             if len(times) < 2:
                 continue
@@ -941,6 +1070,67 @@ def write_model_glb(
                             "target": {"node": node_index, "path": path},
                         }
                     )
+            for form in geometry_forms:
+                form_motion = form_animations_by_id.get(form.id, {}).get(motion.name)
+                if form_motion is None and form.animations and motion_index < len(form.animations):
+                    form_motion = form.animations[motion_index]
+                form_node_by_name = form_bone_node_index_by_id.get(form.id, {})
+                if form_motion is None:
+                    form_motion = motion
+                if not form_node_by_name:
+                    continue
+                form_rest_pose = {
+                    b.name: (b.scale, b.rotation, b.translation)
+                    for b in form.model.bones
+                }
+                form_times, form_baked = bake_motion(form_motion, form_rest_pose)
+                if len(form_times) < 2:
+                    continue
+                form_time_view = add_view(b"".join(struct.pack("<f", t) for t in form_times))
+                accessors.append(
+                    {
+                        "bufferView": form_time_view,
+                        "componentType": 5126,
+                        "count": len(form_times),
+                        "type": "SCALAR",
+                        "min": [form_times[0]],
+                        "max": [form_times[-1]],
+                    }
+                )
+                form_time_accessor = len(accessors) - 1
+                for bone_anim in form_baked:
+                    node_index = form_node_by_name.get(bone_anim.name)
+                    if node_index is None:
+                        continue
+                    for path, values, fmt in (
+                        ("translation", bone_anim.translations, "<3f"),
+                        ("rotation", bone_anim.rotations, "<4f"),
+                        ("scale", bone_anim.scales, "<3f"),
+                    ):
+                        if not values:
+                            continue
+                        out_view = add_view(b"".join(struct.pack(fmt, *v) for v in values))
+                        accessors.append(
+                            {
+                                "bufferView": out_view,
+                                "componentType": 5126,
+                                "count": len(values),
+                                "type": "VEC4" if path == "rotation" else "VEC3",
+                            }
+                        )
+                        samplers_a.append(
+                            {
+                                "input": form_time_accessor,
+                                "output": len(accessors) - 1,
+                                "interpolation": "LINEAR",
+                            }
+                        )
+                        channels_a.append(
+                            {
+                                "sampler": len(samplers_a) - 1,
+                                "target": {"node": node_index, "path": path},
+                            }
+                        )
             if channels_a or motion.visibility_tracks:
                 anim_entry: dict = {
                     "name": motion.name,

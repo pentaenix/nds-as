@@ -26,7 +26,7 @@ PLATFORM_MODULE_BUILDERS: dict[str, str] = {
 }
 
 # ROM platforms that may install Device Toolkit menus when active.
-TOOLKIT_PLATFORM_IDS: tuple[str, ...] = ("mobile", "nds")
+TOOLKIT_PLATFORM_IDS: tuple[str, ...] = ("mobile", "nds", "3ds")
 
 # Registry platform id → on-disk package folder under ``platforms/``.
 # Most ids match the folder name; ``3ds`` is stored as ``threeds`` (Python identifier).

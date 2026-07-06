@@ -139,6 +139,39 @@ class PlatformDispatch:
         return modules.export.export_blender_bundle(host, asset, out_dir)
 
     @staticmethod
+    def supports_pokemon_bulk_export(
+        *,
+        rom_path: str | Path,
+        rom_platform_id: str | None,
+        assets: list,
+    ) -> bool:
+        if (rom_platform_id or "") != "3ds":
+            return False
+        return get_platform_modules("3ds").export.supports_pokemon_bulk_export(rom_path, assets)
+
+    @staticmethod
+    def run_pokemon_bulk_export(
+        host: object,
+        assets: list,
+        rom_path: str | Path,
+        out_dir: Path,
+        *,
+        rom_platform_id: str | None,
+        shiny: bool = False,
+        progress=None,
+    ):
+        if (rom_platform_id or "") != "3ds":
+            raise ValueError("Pokémon bulk export is only available for 3DS ROMs.")
+        return get_platform_modules("3ds").export.run_pokemon_bulk_export(
+            host,
+            assets,
+            rom_path,
+            out_dir,
+            shiny=shiny,
+            progress=progress,
+        )
+
+    @staticmethod
     def preview_platform_id(rom_platform_id: str | None) -> str:
         return rom_platform_id or "nds"
 

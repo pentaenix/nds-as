@@ -12,12 +12,14 @@ from rae.platforms.threeds.gf import (
     GfMaterial,
     GfMesh,
     GfModel,
+    GfBone,
     GfSubMesh,
     GfTexture,
     GfTextureUnit,
 )
 from rae.platforms.threeds.glb import write_model_glb
 from rae.platforms.threeds.glb import FormVariantExport
+from rae.platforms.threeds.motion import GfMotBoneTrack, GfMotKey, GfMotion
 from rae.platforms.threeds.export_module import ThreedsExportModule
 from rae.platforms.threeds.model_module import ThreedsModelModule
 from rae.scanner import Asset
@@ -140,6 +142,39 @@ def _single_triangle_model(name: str, *, material_name: str = "Body", size: floa
     )
 
 
+def _skinned_triangle_model(name: str, *, size: float = 1.0) -> GfModel:
+    model = _single_triangle_model(name, size=size)
+    model.bones = [
+        GfBone(
+            name="Root",
+            parent="",
+            flags=0,
+            scale=(1.0, 1.0, 1.0),
+            rotation=(0.0, 0.0, 0.0),
+            translation=(0.0, 0.0, 0.0),
+        )
+    ]
+    sub = model.meshes[0].submeshes[0]
+    sub.bone_table = [0]
+    sub.joints = [(0, 0, 0, 0)] * 3
+    sub.weights = [(1.0, 0.0, 0.0, 0.0)] * 3
+    return model
+
+
+def _root_translate_motion(name: str) -> GfMotion:
+    track = GfMotBoneTrack(name="Root", is_axis_angle=False)
+    track.channels[7] = [
+        GfMotKey(0, 0.0, 0.0),
+        GfMotKey(30, 1.0, 0.0),
+    ]
+    return GfMotion(
+        name=name,
+        frames_count=30,
+        is_looping=True,
+        bones=[track],
+    )
+
+
 def test_writer_exports_form_axis_material_and_geometry_metadata(monkeypatch, tmp_path: Path) -> None:
     def fake_decode(self: GfTexture) -> bytes:
         return self.raw
@@ -180,6 +215,100 @@ def test_writer_exports_form_axis_material_and_geometry_metadata(monkeypatch, tm
         node.get("extras", {}).get("rae", {}).get("visibleForForms") == ["02"]
         for node in mesh_nodes
     )
+
+
+def test_writer_skins_compatible_full_geometry_form(monkeypatch, tmp_path: Path) -> None:
+    def fake_decode(self: GfTexture) -> bytes:
+        return self.raw
+
+    monkeypatch.setattr(GfTexture, "decode_rgba", fake_decode)
+
+    base = _skinned_triangle_model("base")
+    alternate = _skinned_triangle_model("alternate", size=2.0)
+    normal = GfTexture("BodyAlb", 1, 1, 0x04, 0, bytes((255, 0, 0, 255)))
+    alt_tex = GfTexture("BodyAlb", 1, 1, 0x04, 0, bytes((0, 0, 255, 255)))
+    glb = write_model_glb(
+        base,
+        [normal],
+        tmp_path / "skinned_forms.glb",
+        animations=[_root_translate_motion("slot4_00")],
+        default_form_variant="00",
+        form_variants=[
+            FormVariantExport(
+                "01",
+                "Alt",
+                alternate,
+                [alt_tex],
+                animations=[_root_translate_motion("different_form_idle_name")],
+                geometry="full_geometry",
+            ),
+        ],
+    )
+    doc = _read_glb_json(glb)
+    alt_nodes = [
+        node
+        for node in doc["nodes"]
+        if node.get("extras", {}).get("rae", {}).get("visibleForForms") == ["01"]
+    ]
+    assert alt_nodes
+    assert len(doc.get("skins", [])) == 2
+    assert all(node.get("skin") == 1 for node in alt_nodes)
+    alt_mesh = doc["meshes"][alt_nodes[0]["mesh"]]
+    attrs = alt_mesh["primitives"][0]["attributes"]
+    assert "JOINTS_0" in attrs
+    assert "WEIGHTS_0" in attrs
+    alt_bone_nodes = [
+        i
+        for i, node in enumerate(doc["nodes"])
+        if node.get("name") == "Root__form_01"
+    ]
+    assert alt_bone_nodes
+    assert any(
+        channel["target"]["node"] == alt_bone_nodes[0]
+        for animation in doc.get("animations", [])
+        if animation.get("name") == "slot4_00"
+        for channel in animation.get("channels", [])
+    )
+
+
+def test_writer_retargets_base_animation_to_full_geometry_form_without_form_motion(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    def fake_decode(self: GfTexture) -> bytes:
+        return self.raw
+
+    monkeypatch.setattr(GfTexture, "decode_rgba", fake_decode)
+
+    base = _skinned_triangle_model("base")
+    alternate = _skinned_triangle_model("alternate", size=2.0)
+    normal = GfTexture("BodyAlb", 1, 1, 0x04, 0, bytes((255, 0, 0, 255)))
+    alt_tex = GfTexture("BodyAlb", 1, 1, 0x04, 0, bytes((0, 0, 255, 255)))
+    glb = write_model_glb(
+        base,
+        [normal],
+        tmp_path / "retargeted_forms.glb",
+        animations=[_root_translate_motion("slot4_00")],
+        default_form_variant="00",
+        form_variants=[
+            FormVariantExport(
+                "01",
+                "Alt",
+                alternate,
+                [alt_tex],
+                animations=[],
+                geometry="full_geometry",
+            ),
+        ],
+    )
+    doc = _read_glb_json(glb)
+    base_root = next(i for i, node in enumerate(doc["nodes"]) if node.get("name") == "Root")
+    alt_root = next(i for i, node in enumerate(doc["nodes"]) if node.get("name") == "Root__form_01")
+    slot4 = next(animation for animation in doc.get("animations", []) if animation.get("name") == "slot4_00")
+    targets = [channel["target"]["node"] for channel in slot4.get("channels", [])]
+
+    assert base_root in targets
+    assert alt_root in targets
 
 
 def test_export_glb_single_file_with_default_variant(monkeypatch, tmp_path: Path) -> None:

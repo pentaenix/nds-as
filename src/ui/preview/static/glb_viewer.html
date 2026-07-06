@@ -112,6 +112,7 @@
     let defaultMeshVisibility = {};
     let animMeshVisibilityByName = {};
     let activeTextureVariant = 'normal';
+    let activeFormVariant = '';
     const MESH_VIS_FPS = 30;
 
     function applyMeshVisibilityMap(visMap) {
@@ -126,6 +127,7 @@
 
     function applyDefaultMeshVisibility() {
       applyMeshVisibilityMap(defaultMeshVisibility);
+      applyActiveFormVisibility();
     }
 
     function buildMeshVisibilityTables(gltf) {
@@ -154,6 +156,25 @@
         const idx = Math.min(frame, values.length - 1);
         obj.visible = !!values[idx];
       });
+      applyActiveFormVisibility();
+    }
+
+    function applyFormVariantToRoot(root, formId) {
+      if (!root || !formId) return 0;
+      let count = 0;
+      root.traverse((obj) => {
+        if (!obj.isMesh) return;
+        const forms = obj.userData?.rae?.visibleForForms || obj.userData?.visibleForForms;
+        if (!Array.isArray(forms) || !forms.length) return;
+        obj.visible = obj.visible && forms.includes(formId);
+        count += 1;
+      });
+      return count;
+    }
+
+    function applyActiveFormVisibility() {
+      if (!animModel || !activeFormVariant) return 0;
+      return applyFormVariantToRoot(animModel, activeFormVariant);
     }
 
     function showError(msg) {
@@ -314,6 +335,7 @@
       animLastTick = 0;
       animPlayingName = name;
       sampleAnimMeshVisibility(name, 0);
+      applyActiveFormVisibility();
       return true;
     }
 
@@ -373,6 +395,9 @@
         }
       });
       await Promise.all(installJobs);
+      const appearance = gltf.parser?.json?.extras?.rae?.appearanceVariants;
+      const defaultForm = appearance?.default?.form;
+      activeFormVariant = typeof defaultForm === 'string' ? defaultForm : '';
       const defaultVariant = gltf.parser?.json?.extras?.rae?.textureVariants?.default;
       if (defaultVariant === 'shiny' || defaultVariant === 'normal') {
         activeTextureVariant = defaultVariant;
@@ -380,6 +405,19 @@
         activeTextureVariant = 'normal';
       }
       applyTextureVariantToRoot(model, activeTextureVariant);
+    }
+
+    function setFormVariant(formId) {
+      const next = String(formId || '').trim();
+      if (!next) return 0;
+      activeFormVariant = next;
+      if (!animModel) return 0;
+      applyDefaultMeshVisibility();
+      if (animPlayingName) {
+        const action = animMixer?._actions?.find((a) => a.isRunning());
+        sampleAnimMeshVisibility(animPlayingName, action ? action.time : 0);
+      }
+      return applyActiveFormVisibility();
     }
 
     function setTextureVariant(variantId) {
@@ -825,6 +863,12 @@
       },
       getTextureVariant() {
         return activeTextureVariant;
+      },
+      setFormVariant(formId) {
+        return setFormVariant(formId);
+      },
+      getFormVariant() {
+        return activeFormVariant;
       },
       getEyeExpressionFrame(materialName) {
         const mat = findMaterial(materialName);

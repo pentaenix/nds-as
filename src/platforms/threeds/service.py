@@ -400,6 +400,10 @@ def build_model_glb(
                 form_shiny = load_textures(form_descriptor, shiny=True)
             except Exception:
                 form_shiny = None
+            try:
+                form_motions = load_motions(form_descriptor)
+            except Exception:
+                form_motions = []
             geometry = (
                 "texture_only"
                 if _model_geometry_fingerprint(form_model) == base_fingerprint
@@ -412,6 +416,7 @@ def build_model_glb(
                     model=form_model,
                     textures=form_textures,
                     shiny_textures=form_shiny,
+                    animations=form_motions,
                     geometry=geometry,
                 )
             )
