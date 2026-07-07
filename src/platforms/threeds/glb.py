@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import struct
 from dataclasses import dataclass
 from pathlib import Path
@@ -175,16 +176,304 @@ def _diffuse_tint(mat: GfMaterial) -> tuple[int, int, int]:
     return (dr, dg, db)
 
 
-def _uses_additive_blend(mat: GfMaterial, rgba: bytes | None = None) -> bool:
+def _gf_duplicate_unit_glow(mat: GfMaterial) -> bool:
+    """GF duplicates the same texture unit for additive glow (e.g. battle fire planes)."""
+    if mat.emission is None or mat.emission[3] == 0:
+        return False
+    names = [unit.name for unit in mat.texture_units if unit.name]
+    return len(names) >= 2 and len(set(names)) < len(names)
+
+
+def _gf_single_texture_unit(mat: GfMaterial) -> bool:
+    """True when the material does not stack multiple distinct TEV texture units."""
+    names = [unit.name for unit in mat.texture_units if unit.name]
+    return len(set(names)) <= 1
+
+
+def _gf_emission_channel_active(mat: GfMaterial) -> bool:
+    """True when GF emission color or duplicate-unit glow should affect export."""
+    if mat.emission is None or mat.emission[3] == 0:
+        return False
+    er, eg, eb, _ea = mat.emission
+    if (er, eg, eb) != (0, 0, 0):
+        return True
+    return _gf_duplicate_unit_glow(mat)
+
+
+def _texture_uses_luminance_alpha(rgba: bytes) -> bool:
+    """True when GF stores cutout/falloff in grayscale RGB with a solid alpha channel."""
+    if not rgba or len(rgba) < 4:
+        return False
+    alphas = rgba[3::4]
+    total = len(alphas)
+    if sum(1 for alpha in alphas if alpha < 250) / total >= 0.005:
+        return False
+    if not _texture_is_grayscale(rgba):
+        return False
+    pure_black = sum(
+        1 for i in range(0, len(rgba), 4) if max(rgba[i], rgba[i + 1], rgba[i + 2]) < 8
+    )
+    dark = sum(
+        1 for i in range(0, len(rgba), 4) if max(rgba[i], rgba[i + 1], rgba[i + 2]) < 32
+    )
+    bright = sum(
+        1 for i in range(0, len(rgba), 4) if max(rgba[i], rgba[i + 1], rgba[i + 2]) >= 48
+    )
+    return (
+        pure_black / total >= 0.10
+        and dark / total >= 0.15
+        and bright / total >= 0.02
+    )
+
+
+def _is_floor_shadow_material(mat: GfMaterial) -> bool:
+    return "shadow" in mat.name.casefold()
+
+
+_GLOW_OVERLAY_NAME = re.compile(
+    r"(?:fire|komo|sunny|hika|light|ika_light|_li\d|_li_t)",
+    re.IGNORECASE,
+)
+
+
+def _is_alfa_mask_unit_name(name: str) -> bool:
+    """GF battle/world decals name their cutout unit ``*alfa*`` (not floor TEV masks)."""
+    leaf = name.rsplit("/", 1)[-1].casefold()
+    return "alfa" in leaf or leaf.endswith("fl02.tga")
+
+
+def _gf_has_alfa_mask_unit(mat: GfMaterial) -> bool:
+    return any(_is_alfa_mask_unit_name(unit.name) for unit in mat.texture_units if unit.name)
+
+
+def _ordered_unique_texture_unit_names(mat: GfMaterial) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for unit in sorted(
+        (unit for unit in mat.texture_units if unit.name),
+        key=lambda unit: unit.unit_index,
+    ):
+        if unit.name in seen:
+            continue
+        seen.add(unit.name)
+        ordered.append(unit.name)
+    return ordered
+
+
+def _should_composite_alfa_mask(mat: GfMaterial) -> bool:
+    """Only flatten simple base+alfa pairs — not 3-layer floor TEV stacks."""
+    if not _gf_has_alfa_mask_unit(mat):
+        return False
+    if "jime" in mat.name.casefold():
+        return False
+    unique = _ordered_unique_texture_unit_names(mat)
+    if len(unique) == 2 and _is_alfa_mask_unit_name(unique[1]):
+        return True
+    if len(unique) == 2 and _gf_duplicate_unit_glow(mat) and _is_alfa_mask_unit_name(unique[1]):
+        return True
+    return False
+
+
+def _is_gf_glow_overlay_material(mat: GfMaterial) -> bool:
+    """Additive glow cards: torches, komo beams, sunny shafts, room lights, etc."""
+    if _is_incandescent_material(mat.name):
+        return False
+    name = mat.name.casefold()
+    if any(token in name for token in ("shadow", "stage", "jime", "_sm", "gake", "kusa")):
+        return False
+    if name.startswith("body"):
+        return False
+    return _GLOW_OVERLAY_NAME.search(mat.name) is not None
+
+
+def _resize_rgba_nearest(
+    rgba: bytes,
+    src_w: int,
+    src_h: int,
+    dst_w: int,
+    dst_h: int,
+) -> bytes:
+    if src_w == dst_w and src_h == dst_h:
+        return rgba
+    out = bytearray(dst_w * dst_h * 4)
+    for y in range(dst_h):
+        sy = y * src_h // dst_h
+        row_src = sy * src_w * 4
+        row_dst = y * dst_w * 4
+        for x in range(dst_w):
+            sx = x * src_w // dst_w
+            si = row_src + sx * 4
+            di = row_dst + x * 4
+            out[di : di + 4] = rgba[si : si + 4]
+    return bytes(out)
+
+
+def _apply_alfa_mask_overlay(
+    base: bytearray,
+    mask_rgba: bytes,
+    *,
+    glow: bool,
+    threshold: int = 32,
+) -> None:
+    """Apply a GF ``*alfa*`` unit onto the base RGBA buffer.
+
+    GF TEV treats a mask texel with alpha/luminance below threshold as "layer off"
+    — the base texel stays unchanged. Glow overlays key out when the mask is off.
+    """
+    for i in range(0, len(base), 4):
+        mask_lum = max(mask_rgba[i], mask_rgba[i + 1], mask_rgba[i + 2])
+        base_lum = max(base[i], base[i + 1], base[i + 2])
+        if glow:
+            if mask_lum < threshold:
+                base[i + 3] = 0
+            elif base_lum < threshold:
+                base[i + 3] = mask_lum
+            else:
+                base[i + 3] = min(255, base_lum * mask_lum // 255)
+        elif mask_lum < threshold:
+            base[i + 3] = 0
+        else:
+            base[i + 3] = min(base[i + 3], mask_lum)
+
+
+def _composite_alfa_mask_rgba(
+    mat: GfMaterial,
+    tex_objects: dict[str, object],
+) -> tuple[bytes, int, int] | None:
+    """Flatten base + ``*alfa*`` units for export. Skips floor TEV stacks (no alfa unit)."""
+    units = sorted(
+        (unit for unit in mat.texture_units if unit.name),
+        key=lambda unit: unit.unit_index,
+    )
+    if not units:
+        return None
+    base_name = units[0].name
+    base_tex = tex_objects.get(base_name)
+    if base_tex is None:
+        return None
+    try:
+        rgba = bytearray(_bake_gf_texture_colors(base_tex.decode_rgba(), mat))
+    except Exception:
+        return None
+    width, height = base_tex.width, base_tex.height
+    glow = _is_gf_glow_overlay_material(mat) and not _is_floor_shadow_material(mat)
+    applied = False
+    for unit in units[1:]:
+        if not _is_alfa_mask_unit_name(unit.name):
+            continue
+        mask_tex = tex_objects.get(unit.name)
+        if mask_tex is None:
+            continue
+        try:
+            mask_rgba = mask_tex.decode_rgba()
+        except Exception:
+            continue
+        if mask_tex.width != width or mask_tex.height != height:
+            mask_rgba = _resize_rgba_nearest(
+                mask_rgba,
+                mask_tex.width,
+                mask_tex.height,
+                width,
+                height,
+            )
+        _apply_alfa_mask_overlay(rgba, mask_rgba, glow=glow)
+        applied = True
+    if not applied:
+        return None
+    if glow:
+        rgba = bytearray(_bake_luminance_mask_alpha(bytes(rgba)))
+    return bytes(rgba), width, height
+
+
+def _should_bake_luminance_mask(mat: GfMaterial, rgba: bytes) -> bool:
+    if _is_incandescent_material(mat.name):
+        return False
+    if _gf_duplicate_unit_glow(mat):
+        return _texture_uses_luminance_alpha(rgba)
+    if _should_composite_alfa_mask(mat) and _is_gf_glow_overlay_material(mat):
+        return True
+    if not _gf_single_texture_unit(mat):
+        return False
+    return _texture_uses_luminance_alpha(rgba)
+
+
+def _bake_luminance_mask_alpha(rgba: bytes, *, threshold: int = 32) -> bytes:
+    """Move GF luminance-mask storage from RGB into the alpha channel."""
+    out = bytearray(rgba)
+    for i in range(0, len(out), 4):
+        lum = max(out[i], out[i + 1], out[i + 2])
+        if lum < threshold:
+            out[i + 3] = 0
+        else:
+            out[i + 3] = lum
+    return bytes(out)
+
+
+def _apply_glow_black_key(rgba: bytes, mat: GfMaterial) -> bytes:
+    """Bake luminance-keyed GF glow/shadow masks for glTF export."""
+    if not _should_bake_luminance_mask(mat, rgba):
+        return rgba
+    return _bake_luminance_mask_alpha(rgba)
+
+
+def _resolve_material_texture_rgba(
+    mat: GfMaterial,
+    tex_objects: dict[str, object],
+) -> tuple[bytes, int, int] | None:
+    """Decode GF texture units for glTF export.
+
+    Floor TEV stacks (e.g. ``stag02`` / sand ``jime`` layers) stay on unit 0 only.
+    Simple base + ``*alfa*`` glow pairs are flattened first.
+    """
+    if _should_composite_alfa_mask(mat):
+        composite = _composite_alfa_mask_rgba(mat, tex_objects)
+        if composite is not None:
+            return composite
+    albedo = next((name for name in mat.texture_names if name in tex_objects), None)
+    if albedo is None:
+        return None
+    tex = tex_objects[albedo]
+    try:
+        rgba = _apply_glow_black_key(
+            _bake_gf_texture_colors(tex.decode_rgba(), mat),
+            mat,
+        )
+    except Exception:
+        return None
+    return rgba, tex.width, tex.height
+
+
+def _uses_additive_blend(
+    mat: GfMaterial,
+    rgba: bytes | None = None,
+    *,
+    source_rgba: bytes | None = None,
+) -> bool:
     """Additive only for GF glow overlays — mirrors DS glb_policy texture-alpha rules.
 
     On NDS, apicula tags ``textureAlpha`` (opaque / transparent / translucent) and
     ``apply_glb_policy`` downgrades false blends when the PNG has no real alpha.
     GF ``emission`` alpha>0 is *not* a blanket additive flag; use texture signals first.
     """
-    if mat.emission is None or mat.emission[3] == 0:
-        return False
     if _is_incandescent_material(mat.name):
+        return False
+    mask_rgba = source_rgba if source_rgba is not None else rgba
+    if (
+        _gf_duplicate_unit_glow(mat)
+        and mask_rgba is not None
+        and _texture_uses_luminance_alpha(mask_rgba)
+    ):
+        return True
+    if _is_gf_glow_overlay_material(mat) and not _is_floor_shadow_material(mat):
+        return True
+    if (
+        mask_rgba is not None
+        and _gf_single_texture_unit(mat)
+        and _texture_uses_luminance_alpha(mask_rgba)
+        and not _is_floor_shadow_material(mat)
+    ):
+        return True
+    if not _gf_emission_channel_active(mat):
         return False
     if rgba is None or len(rgba) < 4:
         return False
@@ -408,16 +697,13 @@ def write_model_glb(
         key = _material_texture_key(mat, tex_name) + texture_key_suffix
         if key in png_by_key:
             return png_by_key[key]
-        tex = texture_objects.get(tex_name)
-        if tex is None:
+        resolved = _resolve_material_texture_rgba(mat, texture_objects)
+        if resolved is None:
             return None
-        try:
-            rgba = _bake_gf_texture_colors(tex.decode_rgba(), mat)
-        except Exception:
-            return None
+        rgba, width, height = resolved
         from .pica import rgba_to_png
 
-        png = rgba_to_png(rgba, tex.width, tex.height)
+        png = rgba_to_png(rgba, width, height)
         view_index = add_view(png)
         images.append({"bufferView": view_index, "mimeType": "image/png", "name": key})
         png_by_key[key] = len(images) - 1
@@ -473,12 +759,16 @@ def write_model_glb(
             tex_key = _material_texture_key(mat, albedo) + texture_key_suffix if albedo else ""
             nitro_alpha = _material_nitro_alpha(mat)
             albedo_rgba: bytes | None = None
+            source_rgba: bytes | None = None
             if albedo is not None and albedo in tex_objects:
                 try:
-                    albedo_rgba = tex_objects[albedo].decode_rgba()
+                    source_rgba = tex_objects[albedo].decode_rgba()
                 except Exception:
-                    albedo_rgba = None
-            additive = _uses_additive_blend(mat, albedo_rgba)
+                    source_rgba = None
+            resolved = _resolve_material_texture_rgba(mat, tex_objects)
+            if resolved is not None:
+                albedo_rgba = resolved[0]
+            additive = _uses_additive_blend(mat, albedo_rgba, source_rgba=source_rgba)
             unit = None
             if albedo is not None:
                 unit = next((u for u in mat.texture_units if u.name == albedo), None)

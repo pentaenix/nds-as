@@ -67,6 +67,10 @@ function resolvePreviewBlendMode(mat) {
     return { mode: 'additive', alphaCutoff, nitroAlpha };
   }
 
+  if (renderClass === 'opaque') {
+    return { mode: 'opaque', alphaCutoff, nitroAlpha };
+  }
+
   if (alphaMode === 'MASK' || renderClass === 'mask') {
     if (hasPartial) {
       return { mode: 'blend', alphaCutoff, nitroAlpha };
@@ -154,7 +158,7 @@ function applyPreviewBlendMode(mat, blend) {
     case 'additive':
       mat.transparent = true;
       mat.depthWrite = false;
-      mat.alphaTest = 0;
+      mat.alphaTest = 0.04;
       mat.opacity = 1;
       mat.blending = THREE.AdditiveBlending;
       break;

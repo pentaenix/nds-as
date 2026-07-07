@@ -781,11 +781,10 @@
           const src = Number.isInteger(matIndex) ? gltf.parser.json.materials?.[matIndex] : null;
           if (src?.extras) mat.userData.gltfExtensions = { extras: src.extras };
           captureMaterialPolicy(mat, src);
-          scheduleMaterialPolicyWhenMapReady(mat);
         }
       });
-      applyRaeMaterialPolicy(model);
       applyUnlitPreviewMaterials(model);
+      applyRaeMaterialPolicy(model);
       model.traverse((obj) => {
         if (obj.isSkinnedMesh) {
           obj.frustumCulled = false;
