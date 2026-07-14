@@ -89,8 +89,14 @@ class ThreedsExportModule:
             return self._export_raw(asset, descriptor, out)
         return []
 
-    def supports_pokemon_bulk_export(self, rom_path: str | Path, assets: list[Asset]) -> bool:
-        return pokemon_bulk_export_available(rom_path, assets)
+    def supports_pokemon_bulk_export(
+        self,
+        rom_path: str | Path,
+        assets: list[Asset],
+        *,
+        product_code: str | None = None,
+    ) -> bool:
+        return pokemon_bulk_export_available(rom_path, assets, product_code=product_code)
 
     def pokemon_bulk_export_assets(self, assets: list[Asset]) -> list[Asset]:
         return pokemon_bulk_export_assets(assets)

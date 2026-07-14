@@ -39,6 +39,18 @@ def _parse_glb_summary(glb_path: Path) -> dict:
             str(anim.get("name") or f"animation_{i}")
             for i, anim in enumerate(doc.get("animations", []))
         ]
+        map_motion = (doc.get("extras") or {}).get("rae", {}).get("mapMaterialMotion") or {}
+        seen = set(out["animations"])
+        for clip in map_motion.get("clips") or []:
+            if not clip.get("tracks"):
+                continue
+            clip_id = str(clip.get("id") or "")
+            if clip_id and clip_id not in seen:
+                out["animations"].append(clip_id)
+                seen.add(clip_id)
+        default_map_clip = str(map_motion.get("defaultClip") or "")
+        if default_map_clip:
+            out["default_map_clip"] = default_map_clip
         appearance = (doc.get("extras") or {}).get("rae", {}).get("appearanceVariants") or {}
         defaults = appearance.get("default") or {}
         out["default_form"] = str(defaults.get("form") or "")
@@ -97,6 +109,7 @@ class ThreedsAnimationsWidget(QWidget):
         self._list = QListWidget()
         self._list.setToolTip("Double-click an animation to play it in the preview.")
         self._list.itemDoubleClicked.connect(self._on_double_click)
+        self._default_map_clip = ""
         layout.addWidget(self._list, stretch=1)
         buttons = QHBoxLayout()
         self._play = QPushButton("Play")
@@ -108,10 +121,16 @@ class ThreedsAnimationsWidget(QWidget):
         buttons.addStretch()
         layout.addLayout(buttons)
 
-    def set_animations(self, names: list[str]) -> None:
+    def set_animations(self, names: list[str], *, default_clip: str = "") -> None:
         self._list.clear()
+        self._default_map_clip = default_clip
         for name in names:
             self._list.addItem(QListWidgetItem(name))
+        if default_clip:
+            for row in range(self._list.count()):
+                if self._list.item(row).text() == default_clip:
+                    self._list.setCurrentRow(row)
+                    return
 
     def _selected_name(self) -> str:
         item = self._list.currentItem()
@@ -120,8 +139,16 @@ class ThreedsAnimationsWidget(QWidget):
     def _on_play(self) -> None:
         name = self._selected_name()
         if not name and self._list.count():
-            self._list.setCurrentRow(0)
-            name = self._selected_name()
+            default_clip = getattr(self, "_default_map_clip", "")
+            if default_clip:
+                for row in range(self._list.count()):
+                    if self._list.item(row).text() == default_clip:
+                        self._list.setCurrentRow(row)
+                        name = default_clip
+                        break
+            if not name:
+                self._list.setCurrentRow(0)
+                name = self._selected_name()
         if name:
             self.play_requested.emit(name)
 
@@ -306,7 +333,10 @@ class ThreedsPanelMixin:
         if tabs is None or not hasattr(self, "threeds_animations"):
             return
         summary = _parse_glb_summary(Path(glb_path))
-        self.threeds_animations.set_animations(summary["animations"])
+        self.threeds_animations.set_animations(
+            summary["animations"],
+            default_clip=str(summary.get("default_map_clip") or ""),
+        )
         self.threeds_textures.set_forms(summary.get("forms") or [], summary.get("default_form") or "")
         self.threeds_textures.set_context(summary["images"], summary["materials"])
         shiny = bool(getattr(self, "_threeds_preview_shiny", False))

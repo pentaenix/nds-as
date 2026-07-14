@@ -204,10 +204,9 @@ class RomLoaderMixin:
         if hasattr(self, "_update_preview_inspector_visibility"):
             self._update_preview_inspector_visibility(None)
         self.preview.show_message("Opening ROM...\n\nRAE is building a guided asset index. Model conversion and audio expansion run only when you ask for them.")
-        if hasattr(self, "sync_threeds_pokemon_bulk_export_ui"):
-            from ..threeds_bulk_export import sync_threeds_pokemon_bulk_export_ui
+        from ..threeds_bulk_export import sync_threeds_pokemon_bulk_export_ui
 
-            sync_threeds_pokemon_bulk_export_ui(self, visible=False)
+        sync_threeds_pokemon_bulk_export_ui(self, visible=False)
         self._focus_terminal(
             banner="Opening ROM… watch this panel for scan and texture-index progress. The UI stays responsive while background workers run.",
         )
@@ -258,10 +257,9 @@ class RomLoaderMixin:
             self._update_main_toolbar()
         if hasattr(self, "_bind_easyfind_for_current_game"):
             self._bind_easyfind_for_current_game(log=True)
-        if hasattr(self, "sync_threeds_pokemon_bulk_export_ui"):
-            from ..threeds_bulk_export import sync_threeds_pokemon_bulk_export_ui
+        from ..threeds_bulk_export import sync_threeds_pokemon_bulk_export_ui
 
-            sync_threeds_pokemon_bulk_export_ui(self)
+        sync_threeds_pokemon_bulk_export_ui(self)
 
     def _session_overview_text(self, *, source_label: str, mode: str, counts: tuple[int, int, int, int, int, int]) -> str:
         total, models, textures, two_d, pngs, audio = counts

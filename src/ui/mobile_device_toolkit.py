@@ -403,12 +403,6 @@ def install_mobile_device_toolkit(window) -> None:
     from PySide6.QtGui import QAction
 
     menubar = window.menuBar()
-    try:
-        # On macOS this puts the menu in the system menu bar while RAE is focused.
-        menubar.setNativeMenuBar(True)
-    except Exception:
-        pass
-
     menu = _menu_named(menubar, "Device Toolkit") or menubar.addMenu("Device Toolkit")
     mobile_menu = _submenu_named(menu, "Mobile") or menu.addMenu("Mobile")
 

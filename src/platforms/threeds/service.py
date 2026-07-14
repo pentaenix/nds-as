@@ -20,7 +20,7 @@ from .gf import (
     parse_gf_texture,
 )
 from .glb import FormVariantExport, write_model_glb
-from .motion import GfMotion, is_gf_motion, parse_gf_motion
+from .motion import GfMotion, GFMOTION_MAGIC, is_gf_motion, parse_gf_motion
 from .rom import (
     ANIMATION_SLOTS,
     MODEL_GROUP_STRIDE,
@@ -310,6 +310,30 @@ def load_motions(descriptor: dict) -> list[GfMotion]:
     return motions
 
 
+def load_world_motions(descriptor: dict) -> list[GfMotion]:
+    """Parse every GFMotion embedded in a world-model GARC subfile payload."""
+    if descriptor.get("type") != "world_model":
+        return []
+    payload = read_garc_slot(descriptor["rom"], descriptor["garc"], int(descriptor["slot"]))
+    motions: list[GfMotion] = []
+    seen: set[bytes] = set()
+    magic = struct.pack("<I", GFMOTION_MAGIC)
+    for chunk in _world_payload_chunks(payload):
+        for offset in _find_magic_offsets(chunk, magic):
+            entry = chunk[offset:]
+            if not is_gf_motion(entry):
+                continue
+            digest = struct.pack("<I", len(entry)) + entry[:64] + entry[-64:]
+            if digest in seen:
+                continue
+            seen.add(digest)
+            try:
+                motions.append(parse_gf_motion(entry, f"world_{len(motions):02d}"))
+            except Exception:
+                continue
+    return motions
+
+
 def _pokemon_species_form_descriptors(descriptor: dict) -> list[dict]:
     species = int(descriptor.get("species") or 0)
     if not species or descriptor.get("garc") != POKEMON_MODEL_GARC:
@@ -442,7 +466,10 @@ def build_model_glb(
     if progress:
         progress("3DS: parsing GFMotion animations…")
     try:
-        motions = load_motions(base_descriptor)
+        if base_descriptor.get("type") == "world_model":
+            motions = load_world_motions(base_descriptor)
+        else:
+            motions = load_motions(base_descriptor)
     except Exception:
         motions = []
     out_path = out_dir / f"{stem}.glb"

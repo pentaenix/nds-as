@@ -164,6 +164,12 @@ class ShellMixin:
             PlatformDispatch.install_toolkit(self)
         except Exception as exc:
             self._update_status(f"Device Toolkit menu could not be installed: {exc}")
+        try:
+            from ..threeds_bulk_export import install_threeds_bulk_export_ui
+
+            install_threeds_bulk_export_ui(self)
+        except Exception as exc:
+            self._update_status(f"Bulk Pokémon export menu could not be installed: {exc}")
         self._update_status("Open a local .nds ROM to start. Use ./rae run next time to launch this app.")
 
     def _model_preview_policy(self):
@@ -218,6 +224,12 @@ class ShellMixin:
 
     def _build_ui(self) -> None:
         menubar = self.menuBar()
+        try:
+            # Must be set before addMenu() — calling this later (e.g. from Device Toolkit
+            # install) deletes existing QMenu wrappers on macOS.
+            menubar.setNativeMenuBar(True)
+        except Exception:
+            pass
 
         file_menu = menubar.addMenu("&File")
         open_rom_action = QAction("Open ROM…", self)
@@ -259,12 +271,18 @@ class ShellMixin:
         view_menu.addAction(show_terminal_action)
 
         advanced_menu = menubar.addMenu("&Advanced")
+        self.advanced_menu = advanced_menu
         pin_texture_action = QAction("Pin Selected BTX0", self)
         pin_texture_action.triggered.connect(self.pin_selected_texture)
         advanced_menu.addAction(pin_texture_action)
         clear_texture_action = QAction("Clear Texture Pin", self)
         clear_texture_action.triggered.connect(self.clear_pinned_texture)
         advanced_menu.addAction(clear_texture_action)
+
+        from ..threeds_bulk_export import create_bulk_export_action
+
+        advanced_menu.addSeparator()
+        advanced_menu.addAction(create_bulk_export_action(self))
 
         self.export_action = export_action
         self.open_rom_action = open_rom_action

@@ -19,11 +19,14 @@ from .motion import (
     EYE_SHEET_ROWS,
     GfMotion,
     _eye_sheet_dims,
+    _is_sclera_material_name,
     eye_expression_frame_offsets,
     eye_expression_frame_translations,
     bake_motion,
+    build_world_map_material_motion,
     mesh_bind_visibility,
     visibility_track_export,
+    world_visibility_gltf_animations,
 )
 
 
@@ -570,8 +573,8 @@ def _bake_eye_sclera_uv(u: float, v: float, sy: float) -> tuple[float, float]:
 
 
 def _material_role(name: str) -> str | None:
-    """GF Pokémon expression layers: Eye/LEye/REye/Mouth sclera sheets; *Iris pupils."""
-    if name in ("Eye", "LEye", "REye", "Mouth"):
+    """GF Pokémon expression layers, including numbered and head-prefixed eye sheets."""
+    if _is_sclera_material_name(name):
         return "eye_sclera"
     if name.endswith("Iris") or name.casefold().endswith("iris"):
         return "eye_iris"
@@ -1003,7 +1006,7 @@ def write_model_glb(
         mesh_materials[mesh.name] = [sub.material_name for sub in mesh.submeshes]
     bind_visibility = mesh_bind_visibility(
         [mesh.name for mesh in model.meshes],
-        animations or [],
+        animations or [] if model.bones else [],
         opt_mesh_materials=mesh_materials,
     )
 
@@ -1303,6 +1306,7 @@ def write_model_glb(
 
     # -- animations --------------------------------------------------------------
     gltf_animations: list[dict] = []
+    world_map_motion: dict | None = None
     if animations and model.bones:
         rest_pose = {b.name: (b.scale, b.rotation, b.translation) for b in model.bones}
         form_animations_by_id: dict[str, dict[str, GfMotion]] = {
@@ -1437,6 +1441,14 @@ def write_model_glb(
                 if channels_a or motion.visibility_tracks:
                     gltf_animations.append(anim_entry)
 
+    elif animations and not model.bones:
+        world_map_motion = build_world_map_material_motion(
+            animations,
+            model,
+            material_names=material_index_by_name.keys(),
+        )
+        gltf_animations.extend(world_visibility_gltf_animations(animations))
+
     mesh_node_indices = [i for i, n in enumerate(nodes) if "mesh" in n]
     gltf = {
         "asset": {"version": "2.0", "generator": "RAE 3DS GFModel exporter"},
@@ -1455,6 +1467,10 @@ def write_model_glb(
         gltf["skins"] = skins
     if gltf_animations:
         gltf["animations"] = gltf_animations
+    if world_map_motion:
+        gltf.setdefault("extras", {}).setdefault("rae", {})[
+            "mapMaterialMotion"
+        ] = world_map_motion
     if gltf_textures:
         gltf["samplers"] = samplers
         gltf["images"] = images

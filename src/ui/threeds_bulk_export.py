@@ -58,29 +58,40 @@ class ThreedsPokemonBulkExportWorker(QThread):
             self.failed.emit(str(exc))
 
 
-def install_threeds_bulk_export_ui(window: object) -> None:
-    """Add File-menu + toolbar actions; visibility is synced after each ROM scan."""
-    menubar = window.menuBar()
-    file_menu = _menu_named(menubar, "File")
-    if file_menu is None:
-        return
+def create_bulk_export_action(window: object) -> QAction:
+    """Create (or return) the Advanced-menu bulk export action."""
+    action = getattr(window, "_threeds_pokemon_bulk_export_action", None)
+    if action is not None:
+        return action
+    action = QAction("Bulk Export All Pokémon (GLB)…", window)
+    action.setToolTip(
+        "Export every Pokémon species to GLB files using the same pipeline as "
+        "Export Selected (animations, all forms, normal + shiny textures). "
+        "Ultra Moon only."
+    )
+    action.triggered.connect(lambda: _start_bulk_export(window))
+    action.setEnabled(False)
+    window._threeds_pokemon_bulk_export_action = action
+    return action
 
+
+def install_threeds_bulk_export_ui(window: object) -> None:
+    """Wire toolbar button + visibility sync for bulk Pokémon export."""
     action = getattr(window, "_threeds_pokemon_bulk_export_action", None)
     if action is None:
-        action = QAction("Bulk Export All Pokémon (GLB)…", window)
-        action.setToolTip(
-            "Export every Pokémon species to GLB files using the same pipeline as "
-            "Export Selected (animations, all forms, normal + shiny textures). "
-            "Ultra Moon only."
-        )
-        action.triggered.connect(lambda: _start_bulk_export(window))
-        insert_before = _action_named(file_menu, "Export Selected")
-        if insert_before is not None:
-            file_menu.insertAction(insert_before, action)
-            file_menu.insertSeparator(insert_before)
-        else:
-            file_menu.addAction(action)
-        window._threeds_pokemon_bulk_export_action = action
+        advanced_menu = getattr(window, "advanced_menu", None)
+        if advanced_menu is None:
+            menubar = window.menuBar()
+            advanced_menu = _menu_named(menubar, "Advanced")
+        if advanced_menu is None:
+            return
+        action = create_bulk_export_action(window)
+        advanced_menu.addSeparator()
+        advanced_menu.addAction(action)
+
+    window.sync_threeds_pokemon_bulk_export_ui = (
+        lambda *args, **kwargs: sync_threeds_pokemon_bulk_export_ui(window, *args, **kwargs)
+    )
 
     button = getattr(window, "_threeds_pokemon_bulk_export_button", None)
     if button is None and hasattr(window, "export_button"):
@@ -89,7 +100,7 @@ def install_threeds_bulk_export_ui(window: object) -> None:
         button = QPushButton("Bulk Pokémon…")
         button.setToolTip(action.toolTip())
         button.clicked.connect(action.trigger)
-        button.hide()
+        button.setEnabled(False)
         layout = window.export_button.parentWidget().layout()
         if layout is not None:
             layout.insertWidget(layout.indexOf(window.export_button) + 1, button)
@@ -114,12 +125,19 @@ def sync_threeds_pokemon_bulk_export_ui(window: object, *, visible: bool | None 
                 rom_path=rom_path,
                 rom_platform_id=platform_id,
                 assets=assets,
+                product_code=getattr(window, "rom_game_code", None),
             )
         )
     if action is not None:
-        action.setVisible(visible)
+        # macOS native menu bar ignores setVisible() on QAction after first hide —
+        # keep the item in Advanced always and gate with enabled state instead.
+        action.setEnabled(visible)
     if button is not None:
         button.setVisible(visible)
+        button.setEnabled(visible)
+    update = getattr(window, "_update_status", None)
+    if callable(update) and visible:
+        update("Bulk Pokémon export is available under Advanced → Bulk Export All Pokémon (GLB)…")
 
 
 def _start_bulk_export(window: object) -> None:
@@ -137,6 +155,7 @@ def _start_bulk_export(window: object) -> None:
         rom_path=rom_path,
         rom_platform_id=platform_id,
         assets=assets,
+        product_code=getattr(window, "rom_game_code", None),
     ):
         QMessageBox.information(
             window,
@@ -227,12 +246,4 @@ def _menu_named(menubar, title: str):
         menu = action.menu()
         if menu is not None and action.text().replace("&", "") == title:
             return menu
-    return None
-
-
-def _action_named(menu, title: str):
-    needle = title.replace("&", "")
-    for action in menu.actions():
-        if action.text().replace("&", "") == needle:
-            return action
     return None

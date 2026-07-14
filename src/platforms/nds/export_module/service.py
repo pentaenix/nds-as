@@ -23,6 +23,7 @@ from ..exporter import (
 from ..model_module.preview_pipeline import export_textured_model_glb
 from ..nitro_2d import decode_nitro2d_related_preview, save_preview_images
 from ..texture_library import TextureLibrary
+from .tile_bundle import export_tile_bundle
 
 
 class ExportHost(Protocol):
@@ -57,6 +58,7 @@ def export_options_for(asset: Asset) -> list[tuple[str, str, str]]:
     if asset.magic == "BMD0":
         options.extend([
             ("model_glb", "Model: GLB (self-contained)", "Convert to a single GLB with embedded textures and same-folder animation siblings via apicula."),
+            ("tile_bundle", "Tile: Pokemon Resort (.tile)", "Package this model, its materials, and detected texture frames for direct tile-pack import."),
             ("model_dae", "Model: DAE / Collada via apicula", "Useful for Blender import and debugging material names."),
             ("model_obj", "Model: OBJ + MTL via GLB bridge", "Experimental: converts GLB output to OBJ/MTL using trimesh."),
             ("model_bundle", "Model: full research bundle", "Raw model, related BTX0/animations, decoded texture PNGs, GLB, DAE, reports."),
@@ -170,6 +172,18 @@ def run_export_choice(host: ExportHost, asset: Asset, choice: str, out: Path) ->
     if choice == "model_glb":
         model_out = out / f"dsm_model_{asset.asset_id}_glb"
         return export_viewport_matched_glb(host, asset, model_out)
+    if choice == "tile_bundle":
+        host._update_status("Exporting Pokemon Resort tile bundle…")
+        tile_path = export_tile_bundle(
+            host,
+            asset,
+            _host_all_assets(host, asset),
+            out,
+            texture_library=_host_texture_library(host),
+            policy=_host_preview_policy(host),
+            progress=host._update_status,
+        )
+        return [tile_path]
     if choice == "model_dae":
         model_out = out / f"dsm_model_{asset.asset_id}_dae"
         related = model_related_assets(host, asset)

@@ -374,3 +374,187 @@ export function applyRaeMaterialPolicy(root) {
     }
   });
 }
+
+const MAP_MOTION_FPS = 30;
+
+function applyMapMotionFrame(mat, track, frameIndex) {
+  if (!mat?.map || !track?.frameOffsets?.length) return false;
+  const maxFrame = track.frameOffsets.length - 1;
+  const frame = Math.max(0, Math.min(maxFrame, Number(frameIndex) || 0));
+  const off = track.frameOffsets[frame] || [0, 0];
+  mat.map.offset.set(Number(off[0]) || 0, Number(off[1]) || 0);
+  mat.map.needsUpdate = true;
+  mat.needsUpdate = true;
+  track.activeFrame = frame;
+  return true;
+}
+
+export function installMapMaterialMotion(root, mapMotion) {
+  if (!root || !mapMotion?.clips?.length) return 0;
+  root.userData.raeMapMaterialMotion = {
+    clips: mapMotion.clips,
+    frameRate: Number(mapMotion.frameRate) || MAP_MOTION_FPS,
+    defaultClip: mapMotion.defaultClip || mapMotion.clips[0]?.id || null,
+    activeClipId: null,
+    playing: false,
+    elapsedMs: 0,
+    lastTick: 0,
+    meshVisibility: null,
+    meshVisibilityAnimated: false,
+  };
+  return mapMotion.clips.length;
+}
+
+function findMapMotionClip(mapMotion, clipId) {
+  if (!mapMotion?.clips?.length) return null;
+  if (clipId == null) {
+    const wanted = mapMotion.defaultClip;
+    return mapMotion.clips.find((clip) => clip.id === wanted) || mapMotion.clips[0];
+  }
+  return mapMotion.clips.find((clip) => clip.id === clipId) || mapMotion.clips[0];
+}
+
+function meshVisibilityIsAnimated(visMap) {
+  if (!visMap) return false;
+  return Object.values(visMap).some((values) => {
+    if (!values?.length) return false;
+    return new Set(values).size > 1;
+  });
+}
+
+function resetMapMotionOffset(mat) {
+  if (!mat?.map) return;
+  mat.map.offset.set(0, 0);
+  mat.map.needsUpdate = true;
+  mat.needsUpdate = true;
+}
+
+function applyMapMotionClipToRoot(root, clip) {
+  if (!root || !clip) return 0;
+  const byMaterial = new Map((clip.tracks || []).map((track) => [track.material, track]));
+  let count = 0;
+  root.traverse((obj) => {
+    if (!obj.isMesh || !obj.material) return;
+    const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+    for (const mat of mats) {
+      const gltfMat = mat.userData?.gltfMaterial;
+      const name = gltfMat?.name || mat.name;
+      const track = byMaterial.get(name);
+      if (!track) {
+        if (mat.userData?.raeMapMotionTrack) {
+          delete mat.userData.raeMapMotionTrack;
+          resetMapMotionOffset(mat);
+        }
+        continue;
+      }
+      mat.userData.raeMapMotionTrack = track;
+      applyMapMotionFrame(mat, track, 0);
+      count += 1;
+    }
+  });
+  return count;
+}
+
+function sampleMapMotionMeshVisibility(root, visMap, frameIndex) {
+  if (!root || !visMap) return;
+  const frame = Math.max(0, Number(frameIndex) || 0);
+  root.traverse((obj) => {
+    if (!obj.isMesh || !obj.name) return;
+    const values = visMap[obj.name];
+    if (!values?.length) return;
+    const idx = Math.min(frame, values.length - 1);
+    obj.visible = !!values[idx];
+  });
+}
+
+export function startMapMaterialMotion(root, clipId) {
+  const mapMotion = root?.userData?.raeMapMaterialMotion;
+  if (!mapMotion) return false;
+  const clip = findMapMotionClip(mapMotion, clipId ?? mapMotion.defaultClip);
+  if (!clip?.tracks?.length && !clip?.meshVisibility) return false;
+  applyMapMotionClipToRoot(root, clip);
+  mapMotion.activeClipId = clip.id;
+  mapMotion.playing = true;
+  mapMotion.elapsedMs = 0;
+  mapMotion.lastTick = 0;
+  mapMotion.meshVisibility = clip.meshVisibility || null;
+  mapMotion.meshVisibilityAnimated = meshVisibilityIsAnimated(mapMotion.meshVisibility);
+  if (mapMotion.meshVisibilityAnimated) {
+    sampleMapMotionMeshVisibility(root, mapMotion.meshVisibility, 0);
+  }
+  return true;
+}
+
+export function pauseMapMaterialMotion(root) {
+  const mapMotion = root?.userData?.raeMapMaterialMotion;
+  if (!mapMotion) return;
+  mapMotion.playing = false;
+  mapMotion.lastTick = 0;
+}
+
+export function stopMapMaterialMotion(root) {
+  const mapMotion = root?.userData?.raeMapMaterialMotion;
+  if (!mapMotion) return;
+  mapMotion.playing = false;
+  mapMotion.lastTick = 0;
+  mapMotion.elapsedMs = 0;
+  mapMotion.activeClipId = null;
+  mapMotion.meshVisibility = null;
+  mapMotion.meshVisibilityAnimated = false;
+  if (!root) return;
+  root.traverse((obj) => {
+    if (!obj.isMesh || !obj.material) return;
+    const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+    for (const mat of mats) {
+      if (mat.userData?.raeMapMotionTrack) {
+        delete mat.userData.raeMapMotionTrack;
+        resetMapMotionOffset(mat);
+      }
+    }
+  });
+}
+
+export function mapMaterialMotionClipIds(root) {
+  const clips = root?.userData?.raeMapMaterialMotion?.clips;
+  if (!clips?.length) return [];
+  return clips.filter((clip) => clip?.tracks?.length).map((clip) => String(clip.id));
+}
+
+export function advanceMapMaterialMotion(root, now) {
+  const mapMotion = root?.userData?.raeMapMaterialMotion;
+  if (!mapMotion?.playing) return false;
+  const dt = mapMotion.lastTick ? now - mapMotion.lastTick : 0;
+  mapMotion.lastTick = now;
+  mapMotion.elapsedMs += dt;
+  const clip = findMapMotionClip(mapMotion, mapMotion.activeClipId);
+  if (!clip) return false;
+  const frameRate = Number(mapMotion.frameRate) || MAP_MOTION_FPS;
+  const clipFrame = Math.floor((mapMotion.elapsedMs / 1000) * frameRate);
+  const clipFrameCount = Math.max(1, Number(clip.frameCount) || 1);
+  let clipDone = false;
+  if (!clip.loop && clipFrame >= clipFrameCount - 1) {
+    clipDone = true;
+    mapMotion.playing = false;
+  }
+  root.traverse((obj) => {
+    if (!obj.isMesh || !obj.material) return;
+    const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+    for (const mat of mats) {
+      const track = mat.userData?.raeMapMotionTrack;
+      if (!track) continue;
+      const frameCount = Math.max(1, track.frameOffsets?.length || clipFrameCount);
+      let frame = clipFrame;
+      if (clip.loop) {
+        frame %= frameCount;
+      } else {
+        frame = Math.min(frame, frameCount - 1);
+      }
+      applyMapMotionFrame(mat, track, frame);
+    }
+  });
+  if (mapMotion.meshVisibilityAnimated) {
+    const visFrame = clip.loop ? clipFrame % clipFrameCount : Math.min(clipFrame, clipFrameCount - 1);
+    sampleMapMotionMeshVisibility(root, mapMotion.meshVisibility, visFrame);
+  }
+  return !clipDone;
+}

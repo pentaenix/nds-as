@@ -62,7 +62,7 @@ The legacy `./dsas` launcher still works but forwards to `./rae`.
 2. Run `./rae run` and open the ROM.
 3. Browse mapped folders, Raw Folders, or filter (`BMD0`, `BTX0`, `cat:models`, …).
 4. Preview assets; for models use **Set Textures** for verified material→texture binding.
-5. **Export Selected…** for raw, readable PNG, GLB (via apicula), or audio bundles.
+5. **Export Selected…** for raw, readable PNG, GLB (via apicula), Pokemon Resort `.tile`, or audio bundles.
 6. **Save Session** (`.raesession`) to continue without rescanning.
 
 ## CLI examples
@@ -83,6 +83,11 @@ Vendored Rust tool under `tools/apicula/`. `./rae install` builds it when Cargo 
 RAE looks for apicula on `PATH`, `RAE_APICULA` (legacy: `DSAS_APICULA`, `DSM_APICULA`), and `tools/apicula/target/release/apicula`.
 
 After apicula converts a model to GLB, RAE runs a **NDS-owned** material policy pass (`platforms/nds/gltf/apply.py`) that writes `extras.rae.renderClass` on each material. See `docs/GLB_RENDER_POLICY.md` and `docs/agents/platform-isolation-contract.md`.
+
+The Nintendo DS export menu also includes **Tile: Pokemon Resort (.tile)** for
+models. It packages the self-contained GLB and any detected material texture
+frames for direct import into the Pokemon Resort Map Editor. See
+[`docs/pokemon_resort_tile_bundle.md`](docs/pokemon_resort_tile_bundle.md).
 
 3D preview uses **Qt WebEngine + three.js**. Each platform uses its own `platforms/<id>/preview/material-policy.js` (loaded via `?policy=` in the viewer URL). Install PySide6 Add-ons if WebEngine is missing. Set `RAE_LEGACY_GL_PREVIEW=1` to fall back to the old pyqtgraph path.
 

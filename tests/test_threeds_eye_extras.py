@@ -9,8 +9,16 @@ from rae.platforms.threeds.glb import _attach_material_extras, _material_role
 
 def test_material_role_mapping():
     assert _material_role("Eye") == "eye_sclera"
+    assert _material_role("AEye") == "eye_sclera"
+    assert _material_role("BEye") == "eye_sclera"
+    assert _material_role("CEye") == "eye_sclera"
+    assert _material_role("Eye00") == "eye_sclera"
+    assert _material_role("LEye03") == "eye_sclera"
+    assert _material_role("EyeA") == "eye_sclera"
     assert _material_role("LIris") == "eye_iris"
     assert _material_role("RIris") == "eye_iris"
+    assert _material_role("EyeInc") is None
+    assert _material_role("EffWaitB_Eye_Add") is None
     assert _material_role("BodyA") is None
 
 

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 from ...core.assets import Asset
-from .game_catalog import is_ultra_moon_rom, read_product_code
+from .game_catalog import is_ultra_moon_product_code, read_product_code
 from .rom import load_descriptor
 
 Progress = Callable[[str], None]
@@ -22,9 +22,45 @@ class PokemonBulkExportResult:
     species_count: int = 0
 
 
-def pokemon_bulk_export_available(rom_path: str | Path, assets: Iterable[Asset]) -> bool:
-    """True when *rom_path* is Ultra Moon and the scan has GFMD rows."""
-    if not is_ultra_moon_rom(rom_path):
+def product_code_from_assets(assets: Iterable[Asset]) -> str:
+    """Read the NCCH product code stored in the 3DS ROM summary row."""
+    for asset in assets:
+        if asset.magic != "3DSR":
+            continue
+        try:
+            payload = json.loads(asset.data.decode("utf-8"))
+        except Exception:
+            continue
+        code = str(payload.get("product_code") or "").strip()
+        if code:
+            return code
+    return ""
+
+
+def resolve_product_code(
+    rom_path: str | Path,
+    assets: Iterable[Asset],
+    *,
+    product_code: str | None = None,
+) -> str:
+    code = (product_code or "").strip()
+    if code:
+        return code
+    code = product_code_from_assets(assets)
+    if code:
+        return code
+    return read_product_code(rom_path)
+
+
+def pokemon_bulk_export_available(
+    rom_path: str | Path,
+    assets: Iterable[Asset],
+    *,
+    product_code: str | None = None,
+) -> bool:
+    """True when the ROM is Ultra Moon (A2B* serial) and the scan has GFMD rows."""
+    code = resolve_product_code(rom_path, assets, product_code=product_code)
+    if not is_ultra_moon_product_code(code):
         return False
     return any(asset.magic == "GFMD" for asset in assets)
 
@@ -103,7 +139,7 @@ def run_pokemon_bulk_export(
     manifest = {
         "format": "rae-threeds-pokemon-bulk-export-v1",
         "game": "Pokémon Ultra Moon",
-        "product_code": read_product_code(rom_path),
+        "product_code": resolve_product_code(rom_path, assets),
         "rom": str(Path(rom_path).expanduser().resolve()),
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "species_requested": total,

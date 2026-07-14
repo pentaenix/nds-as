@@ -83,16 +83,28 @@ class PlatformDispatch:
         from ...core.registry import active_platforms
         from .platform_boundaries import TOOLKIT_PLATFORM_IDS
 
+        # Install 3DS last so Advanced-menu hooks are not invalidated by later toolkit work.
+        install_order = ("mobile", "nds", "3ds")
+        platforms_by_id = {platform.id: platform for platform in active_platforms()}
         seen: set[str] = set()
-        for platform in active_platforms():
-            if platform.id not in TOOLKIT_PLATFORM_IDS:
+        for platform_id in install_order:
+            if platform_id not in TOOLKIT_PLATFORM_IDS:
                 continue
-            if platform.id in seen:
+            platform = platforms_by_id.get(platform_id)
+            if platform is None or platform.id in seen:
                 continue
             seen.add(platform.id)
             modules = get_platform_modules(platform.id)
-            if modules.toolkit is not None:
+            if modules.toolkit is None:
+                continue
+            try:
                 modules.toolkit.install_ui(window)
+            except Exception as exc:
+                update = getattr(window, "_update_status", None)
+                if callable(update):
+                    update(f"{platform.label} toolkit could not be installed: {exc}")
+                else:
+                    raise
 
     @staticmethod
     def export_route(asset, *, rom_platform_id: str | None) -> ExportRoute:
@@ -144,10 +156,15 @@ class PlatformDispatch:
         rom_path: str | Path,
         rom_platform_id: str | None,
         assets: list,
+        product_code: str | None = None,
     ) -> bool:
         if (rom_platform_id or "") != "3ds":
             return False
-        return get_platform_modules("3ds").export.supports_pokemon_bulk_export(rom_path, assets)
+        return get_platform_modules("3ds").export.supports_pokemon_bulk_export(
+            rom_path,
+            assets,
+            product_code=product_code,
+        )
 
     @staticmethod
     def run_pokemon_bulk_export(

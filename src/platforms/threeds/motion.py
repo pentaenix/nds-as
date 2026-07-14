@@ -24,9 +24,10 @@ verified byte-by-byte against Pokémon Ultra Moon `/a/0/9/4` animation packs:
 from __future__ import annotations
 
 import math
+import re
 import struct
 from dataclasses import dataclass, field
-from typing import Iterable
+from typing import Any, Iterable
 
 GFMOTION_MAGIC = 0x00060000
 
@@ -230,13 +231,18 @@ def _parse_visibility_section(
     return tracks
 
 
+_EYE_SCLERA_MATERIAL_RE = re.compile(
+    r"^(?:[a-z]?eye(?:[a-z]|\d{1,2})?)$",
+    re.IGNORECASE,
+)
+
+
 def _is_eye_material_name(name: str) -> bool:
-    lowered = name.casefold()
-    return lowered == "eye" or "iris" in lowered or lowered in {"leye", "reye"}
+    return _is_sclera_material_name(name) or _is_iris_material_name(name)
 
 
 def _is_sclera_material_name(name: str) -> bool:
-    return name in ("Eye", "LEye", "REye", "Mouth")
+    return name == "Mouth" or _EYE_SCLERA_MATERIAL_RE.fullmatch(name) is not None
 
 
 def _is_iris_material_name(name: str) -> bool:
@@ -696,3 +702,329 @@ def bake_material_motion(
             anim.translations.append((tx, ty))
         baked.append(anim)
     return baked
+
+
+# -- world / battle map material motion ----------------------------------------
+
+
+def _material_unit_uv(
+    model: Any, material_name: str, unit_index: int
+) -> tuple[float, float, float, float] | None:
+    """GF albedo scale/translation for one material texture unit."""
+    from .gf import GfModel
+
+    if not isinstance(model, GfModel):
+        return None
+    for mat in model.materials:
+        if mat.name != material_name:
+            continue
+        for unit in mat.texture_units:
+            if unit.unit_index == unit_index:
+                return (
+                    unit.scale[0],
+                    unit.scale[1],
+                    unit.translation[0],
+                    unit.translation[1],
+                )
+    return None
+
+
+def _world_motion_track_signature(motion: GfMotion) -> tuple[Any, ...]:
+    mat_bits = tuple(
+        sorted(
+            (
+                track.name,
+                track.unit_index,
+                bool(track.has_translation),
+                bool(track.has_scale),
+            )
+            for track in motion.material_tracks
+            if track.has_translation or track.has_scale
+        )
+    )
+    vis_bits = tuple(sorted(track.name for track in motion.visibility_tracks))
+    return (motion.frames_count, motion.is_looping, mat_bits, vis_bits)
+
+
+def dedupe_world_motions(motions: Iterable[GfMotion]) -> list[GfMotion]:
+    """Drop duplicate embedded battle-map clips (payloads repeat weather sets)."""
+    out: list[GfMotion] = []
+    seen: set[tuple[Any, ...]] = set()
+    for motion in motions:
+        sig = _world_motion_track_signature(motion)
+        if sig in seen:
+            continue
+        seen.add(sig)
+        out.append(motion)
+    return out
+
+
+def world_motion_effective_loop(motion: GfMotion) -> bool:
+    """GF battle backgrounds often loop long ambient UV cycles even when the flag is clear."""
+    if motion.is_looping:
+        return True
+    if motion.frames_count < 300:
+        return False
+    return any(track.has_translation or track.has_scale for track in motion.material_tracks)
+
+
+# GF battle-map UV deltas at or below this are exported as plant wind, not scroll.
+WIND_UV_AMP_MAX = 0.12
+
+
+def _is_scroll_material(material_name: str) -> bool:
+    """Materials that intentionally use large UV translation (water, fire, streaks)."""
+    low = material_name.casefold()
+    return any(
+        token in low
+        for token in (
+            "unami",
+            "fire01",
+            "light02",
+            "sea_iro",
+            "wind01",
+            "kaze",
+            "_wind",
+            "_kaze",
+        )
+    )
+
+
+def _is_grass_wind_material(material_name: str) -> bool:
+    """Grass, flowers, and garden plants that use small dual-unit TEV wind."""
+    low = material_name.casefold()
+    if any(
+        token in low
+        for token in ("jime", "iwa", "mori", "hana", "_ji1", "_ji2", "kusa_ji")
+    ):
+        return False
+    if any(token in low for token in ("kusa_kusa", "kusa_ueki", "siba_kusa")):
+        return True
+    if "kusa01" in low:
+        return True
+    if "ueki" in low:
+        return True
+    return False
+
+
+def _material_accepts_world_uv_motion(material_name: str) -> bool:
+    """Whether a material may be considered for map UV motion export."""
+    low = material_name.casefold()
+    if any(token in low for token in ("jime", "stage", "rain", "snow")):
+        return False
+    if _is_scroll_material(material_name) or _is_grass_wind_material(material_name):
+        return True
+    if any(token in low for token in ("kusa", "ueki", "hana")):
+        return False
+    return True
+
+
+def _classify_uv_motion_kind(material_name: str, max_delta: float) -> str | None:
+    """Classify baked offset magnitude as wind, scroll, or skip."""
+    if max_delta < 1e-6:
+        return None
+    if _is_scroll_material(material_name):
+        return "scroll"
+    if max_delta <= WIND_UV_AMP_MAX:
+        return "wind"
+    if _is_grass_wind_material(material_name):
+        return None
+    return "scroll"
+
+
+def _world_motion_clip_id(motion: GfMotion, index: int) -> str:
+    uv_count = sum(
+        1
+        for track in motion.material_tracks
+        if track.has_translation or track.has_scale
+    )
+    vis_count = len(motion.visibility_tracks)
+    if world_motion_effective_loop(motion) and uv_count:
+        kind = "ambient"
+    elif vis_count > 2:
+        kind = "weather"
+    elif uv_count:
+        kind = "uv"
+    else:
+        kind = "vis"
+    loop_tag = "loop" if world_motion_effective_loop(motion) else "once"
+    return f"{kind}_{motion.frames_count}f_{loop_tag}_{index:02d}"
+
+
+def pick_default_world_motion_clip(clips: list[dict]) -> str | None:
+    """Prefer the longest primary ambient UV clip for autoplay (one clip, not a merge)."""
+    if not clips:
+        return None
+
+    def material_priority(clip: dict) -> int:
+        names = " ".join(str(track.get("material") or "") for track in clip.get("tracks") or [])
+        low = names.casefold()
+        if any(token in low for token in ("unami", "fire01", "light02", "kusa_kusa", "kusa_ueki", "siba_kusa")):
+            return 3
+        if any(token in low for token in ("kusa", "jime", "stage")):
+            return 0
+        if "iro" in low or "sea_" in low:
+            return 1
+        return 2
+
+    def score(clip: dict) -> tuple[int, int, int, int, int, int]:
+        tracks = clip.get("tracks") or []
+        if not tracks:
+            return (-1, -1, -1, -1, -1, -1)
+        frame_count = int(clip.get("frameCount") or 0)
+        is_loop = 1 if clip.get("loop") else 0
+        clip_id = str(clip.get("id", ""))
+        is_weather = 1 if clip_id.startswith("weather_") else 0
+        is_short_pulse = 1 if frame_count <= 60 else 0
+        is_primary = 1 if frame_count >= 300 else 0
+        return (
+            is_loop,
+            is_primary,
+            material_priority(clip),
+            len(tracks),
+            frame_count,
+            -is_weather,
+            -is_short_pulse,
+        )
+
+    with_tracks = [clip for clip in clips if clip.get("tracks")]
+    if not with_tracks:
+        return str(clips[0]["id"]) if clips else None
+    ambient = [
+        clip
+        for clip in with_tracks
+        if str(clip.get("id", "")).startswith("ambient_")
+        and int(clip.get("frameCount") or 0) >= 60
+    ]
+    pool = ambient or with_tracks
+    best = max(pool, key=score)
+    return str(best["id"])
+
+
+def _should_export_world_uv_track(
+    track: GfMotUVTrack, motion_tracks: list[GfMotUVTrack]
+) -> bool:
+    """Map motion targets the albedo unit exported to GLB (unit 0)."""
+    if not (track.has_translation or track.has_scale):
+        return False
+    if track.unit_index == 0:
+        return True
+    same_mat = [t for t in motion_tracks if t.name == track.name]
+    if any(
+        t.unit_index == 0 and (t.has_translation or t.has_scale) for t in same_mat
+    ):
+        return False
+    # Grass/plant wind often keys unit 1 while export uses unit-0 albedo.
+    if track.unit_index == 1 and _is_grass_wind_material(track.name):
+        return True
+    return False
+
+
+def bake_world_map_motion_clip(
+    motion: GfMotion,
+    model: Any,
+    *,
+    material_names: set[str],
+) -> list[dict]:
+    """Bake GF UV motion into per-frame ``map.offset`` deltas for one clip."""
+    frame_indices = list(range(motion.frames_count + 1))
+    baked: list[dict] = []
+    for track in motion.material_tracks:
+        if track.name not in material_names:
+            continue
+        if not _material_accepts_world_uv_motion(track.name):
+            continue
+        if not _should_export_world_uv_track(track, motion.material_tracks):
+            continue
+        bind = _material_unit_uv(model, track.name, 0)
+        if bind is None:
+            continue
+        bind_sx, bind_sy, bind_tx, bind_ty = bind
+        sample_bind = _material_unit_uv(model, track.name, track.unit_index) or bind
+        offsets: list[list[float]] = []
+        for frame in frame_indices:
+            tx = sample_track(track.channels[3], frame, sample_bind[2])
+            ty = sample_track(track.channels[4], frame, sample_bind[3])
+            ox, oy = gf_uv_to_map_offset(
+                bind_sx,
+                bind_sy,
+                tx,
+                ty,
+                bind_tx,
+                bind_ty,
+            )
+            offsets.append([ox, oy])
+        if all(abs(ox) < 1e-6 and abs(oy) < 1e-6 for ox, oy in offsets):
+            continue
+        max_delta = max(max(abs(ox) for ox, _ in offsets), max(abs(oy) for _, oy in offsets))
+        motion_kind = _classify_uv_motion_kind(track.name, max_delta)
+        if motion_kind is None:
+            continue
+        baked.append(
+            {
+                "material": track.name,
+                "frameOffsets": offsets,
+                "motionKind": motion_kind,
+            }
+        )
+    return baked
+
+
+def build_world_map_material_motion(
+    motions: Iterable[GfMotion],
+    model: Any,
+    *,
+    material_names: Iterable[str],
+) -> dict | None:
+    """Build root ``extras.rae.mapMaterialMotion`` for battle / world maps."""
+    names = set(material_names)
+    clips: list[dict] = []
+    for index, motion in enumerate(dedupe_world_motions(motions)):
+        tracks = bake_world_map_motion_clip(motion, model, material_names=names)
+        vis = {
+            track.name: visibility_track_export(track)
+            for track in motion.visibility_tracks
+        }
+        if not tracks and not vis:
+            continue
+        clip: dict = {
+            "id": _world_motion_clip_id(motion, index),
+            "frameCount": motion.frames_count + 1,
+            "loop": world_motion_effective_loop(motion),
+            "tracks": tracks,
+        }
+        if vis:
+            clip["meshVisibility"] = vis
+        clips.append(clip)
+    if not clips:
+        return None
+    default_clip = pick_default_world_motion_clip(clips)
+    return {
+        "frameRate": FRAME_RATE,
+        "defaultClip": default_clip,
+        "clips": clips,
+    }
+
+
+def world_visibility_gltf_animations(motions: Iterable[GfMotion]) -> list[dict]:
+    """Visibility-only glTF animation stubs (no skeletal channels)."""
+    animations: list[dict] = []
+    for index, motion in enumerate(dedupe_world_motions(motions)):
+        if not motion.visibility_tracks:
+            continue
+        animations.append(
+            {
+                "name": _world_motion_clip_id(motion, index),
+                "samplers": [],
+                "channels": [],
+                "extras": {
+                    "rae": {
+                        "meshVisibility": {
+                            track.name: visibility_track_export(track)
+                            for track in motion.visibility_tracks
+                        }
+                    }
+                },
+            }
+        )
+    return animations
