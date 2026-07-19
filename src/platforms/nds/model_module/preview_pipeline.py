@@ -203,6 +203,7 @@ def build_textured_model_bundle(
             material_to_texture=material_to_texture,
             texture_bind_order=bind_order,
             fallback_paths=list(fallback_paths),
+            prefer_material_bindings=bool(resolution.bindings),
         )
     )
 

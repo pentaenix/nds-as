@@ -1,4 +1,4 @@
-"""Material render-class classification for DS-derived GLBs."""
+"""Material render-class classification for 3DS GF/PICA-derived GLBs."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -94,6 +94,26 @@ def _nitro_translucent_texture(material: dict) -> bool:
     return mode == "BLEND" and alpha >= 0.999
 
 
+def _pica_render_class(material: dict) -> RenderClass | None:
+    extras = material.get("extras") or {}
+    pica = (extras.get("rae") or {}).get("pica")
+    if (
+        not isinstance(pica, dict)
+        or not pica.get("authoritative", True)
+        or "alphaBlendEnabled" not in pica
+    ):
+        return None
+    if bool(pica.get("alphaBlendEnabled")):
+        source = str(pica.get("sourceRgbFactor") or "")
+        destination = str(pica.get("destinationRgbFactor") or "")
+        if source == "one" and destination == "zero":
+            return RenderClass.MASK if pica.get("alphaTestEnabled") else RenderClass.OPAQUE
+        if destination == "one" and source in {"one", "source_alpha"}:
+            return RenderClass.ADDITIVE
+        return RenderClass.BLEND
+    return RenderClass.MASK if pica.get("alphaTestEnabled") else RenderClass.OPAQUE
+
+
 def classify_material(
     material: dict,
     *,
@@ -105,6 +125,15 @@ def classify_material(
     horizontal_fraction = geometry_stats.horizontal_face_fraction if geometry_stats else 0.0
     declared_mode = _declared_alpha_mode(material)
     nitro_tex_alpha = _nitro_texture_alpha_kind(material)
+
+    pica_render_class = _pica_render_class(material)
+    if pica_render_class is not None:
+        return ClassificationResult(
+            render_class=pica_render_class,
+            texture_meaningful_alpha=meaningful_alpha,
+            horizontal_face_fraction=horizontal_fraction,
+            nitro_alpha=nitro_alpha,
+        )
 
     if _nitro_blend_mode(material) == "additive":
         return ClassificationResult(
@@ -232,7 +261,7 @@ def apply_render_class_to_material(
     elif render_class == RenderClass.ADDITIVE:
         material["alphaMode"] = "BLEND"
         material.pop("alphaCutoff", None)
-        material["doubleSided"] = True
+        material["doubleSided"] = not cull_backface
 
     extras: dict[str, Any] = dict(material.get("extras") or {})
     rae: dict[str, Any] = dict(extras.get("rae") or {})

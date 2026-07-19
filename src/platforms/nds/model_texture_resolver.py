@@ -387,6 +387,34 @@ def _rank_texture_binding_for_model(
     name_rank = _texture_asset_name_rank(model, texture_asset, manifest)
     return (context, name_rank, number_delta, texture_path)
 
+
+def _texture_request_names(model: Asset, material: MaterialBinding) -> list[str]:
+    """Candidate dictionary names, preferring material names for carved maps.
+
+    Gen 5 map NSBMDs carved from table containers frequently expose unreliable
+    texture-to-material association tables. Their material dictionary names are
+    stable, while a parsed cross-binding can point at an unrelated surface.
+    """
+    candidates = (
+        [material.material_name, material.texture_name]
+        if model.carved
+        else [material.texture_name, material.material_name]
+    )
+    out: list[str] = []
+    for candidate in candidates:
+        value = str(candidate or "").strip()
+        if not value:
+            continue
+        variants = [value]
+        match = re.match(r"^(.+?)[._](\d+)$", value)
+        if match:
+            variants.extend([f"{match.group(1)}.{match.group(2)}", f"{match.group(1)}_{match.group(2)}"])
+        for variant in variants:
+            if variant.casefold() not in {item.casefold() for item in out}:
+                out.append(variant)
+    return out
+
+
 def _resolve_from_library(
     model: Asset,
     manifest: NsbmdManifest,
@@ -405,14 +433,16 @@ def _resolve_from_library(
     lines: list[str] = []
     seen_images: set[tuple[str, str, str | None]] = set()
     seen_asset_ids: set[str] = set()
-    candidate_archive_budget: set[str] = set()
 
     for material in manifest.materials:
-        tex_name = material.texture_name or material.material_name
-        if not tex_name:
+        request_names = _texture_request_names(model, material)
+        if not request_names:
             unresolved.append(material)
             continue
-        matches = texture_library.find_exact(tex_name, material.palette_name)
+        palette_name = None if model.carved else material.palette_name
+        matches: list[TextureBinding] = []
+        for request_name in request_names:
+            matches.extend(texture_library.find_exact(request_name, palette_name))
         if asset_filter is not None:
             matches = [m for m in matches if m.texture_asset_id in asset_filter]
         if matches:
@@ -425,25 +455,17 @@ def _resolve_from_library(
                     manifest=manifest,
                 ),
             )
-            max_archives = policy.max_candidate_archives
-            if max_archives is not None:
-                kept: list[TextureBinding] = []
-                skipped_asset_ids: set[str] = set()
-                for binding in matches:
-                    if binding.texture_asset_id in candidate_archive_budget or len(candidate_archive_budget) < max_archives:
-                        kept.append(binding)
-                        candidate_archive_budget.add(binding.texture_asset_id)
-                    else:
-                        skipped_asset_ids.add(binding.texture_asset_id)
-                if skipped_asset_ids:
-                    lines.append(
-                        f"- preview quality {policy.label}: ranked exact matches for {tex_name}; "
-                        f"trying {len(candidate_archive_budget)} likely archive(s), skipped {len(skipped_asset_ids)} broad archive(s)"
-                    )
-                matches = kept
+            max_attempts = policy.max_candidate_archives or 8
+            if len(matches) > max_attempts:
+                lines.append(
+                    f"- ranked exact matches for {request_names[0]}; trying the {max_attempts} closest archive(s), "
+                    f"skipped {len(matches) - max_attempts} duplicate-name archive(s)"
+                )
+                matches = matches[:max_attempts]
         if not matches:
             unresolved.append(material)
             continue
+        material_resolved = False
         for binding in matches:
             image, _diag_images, diag_lines = texture_library.decode_binding_with_diagnostics(binding)
             images_for_binding: list[DecodedImage] = []
@@ -451,7 +473,6 @@ def _resolve_from_library(
             status_for_binding = "strict"
             if image is None:
                 if not policy.allow_palette_variants:
-                    unresolved.append(material)
                     lines.append(
                         f"- preview quality {policy.label}: skipped palette-variant decode for {binding.texture_name} in {binding.texture_asset_path}"
                     )
@@ -461,12 +482,11 @@ def _resolve_from_library(
                     reason = f"{reason_prefix}; palette pairing not proven, decoded all palette variants"
                     status_for_binding = "palette-variant"
                 else:
-                    unresolved.append(material)
                     if diag_lines:
                         for diag_line in diag_lines:
                             lines.append(diag_line if diag_line.startswith("  ") else f"- {diag_line}")
                     else:
-                        lines.append(f"- exact name {tex_name} found in {binding.texture_asset_path}, but no palette/image could be decoded")
+                        lines.append(f"- exact name {binding.texture_name} found in {binding.texture_asset_path}, but no palette/image could be decoded")
                     continue
             else:
                 images_for_binding = [image]
@@ -475,6 +495,7 @@ def _resolve_from_library(
             if tex_asset is not None and tex_asset.asset_id not in seen_asset_ids:
                 resolved_assets.append(tex_asset)
                 seen_asset_ids.add(tex_asset.asset_id)
+            cap_reached = False
             for img in images_for_binding:
                 key = (binding.texture_asset_id, img.name, img.palette_name)
                 if key not in seen_images:
@@ -484,7 +505,8 @@ def _resolve_from_library(
                         lines.append(
                             f"- preview quality {policy.label}: stopped texture decode at {max_images} image(s); switch to Full Fidelity for exhaustive fallback"
                         )
-                        return resolved, decoded_images, unresolved, resolved_assets, lines
+                        cap_reached = True
+                        break
             first_image = images_for_binding[0] if images_for_binding else None
             resolved.append(ResolvedMaterialTexture(
                 material_name=material.material_name,
@@ -495,8 +517,18 @@ def _resolve_from_library(
                 decoded_image=first_image,
                 reason=reason,
             ))
+            material_resolved = True
             if status_for_binding == "palette-variant":
                 lines.append(f"- exact texture name {binding.texture_name} found in {binding.texture_asset_path}; decoded palette variants because the palette pair is not proven")
+            if cap_reached:
+                return resolved, decoded_images, unresolved, resolved_assets, lines
+            # Duplicate map texture dictionaries can contain the same name in
+            # hundreds of archives. The closest successful archive is the one
+            # intended for this model; do not paint every duplicate into the
+            # preview/export fallback pool.
+            break
+        if not material_resolved and material not in unresolved:
+            unresolved.append(material)
 
     return resolved, decoded_images, unresolved, resolved_assets, lines
 
@@ -711,6 +743,7 @@ def build_preview_texture_maps(
         base = image.name.split("__", 1)[0].casefold()
         if base:
             texture_by_name.setdefault(base, path)
+    decoded_texture_paths = dict(texture_by_name)
 
     bind_order: list[str] = []
     seen_tex: set[str] = set()
@@ -749,7 +782,10 @@ def build_preview_texture_maps(
             material_to_texture[mat] = tex
             path = texture_by_name.get(tex)
             if path is not None:
-                texture_by_name[mat] = path
+                # A corrupt cross-binding must not replace an exact decoded
+                # texture whose own dictionary name happens to equal the
+                # material name (common in carved Gen 5 map models).
+                texture_by_name.setdefault(mat, path)
     for binding in resolution.bindings:
         mat = (binding.material_name or "").casefold()
         raw_tex = (binding.texture_name or "").casefold()
@@ -761,7 +797,7 @@ def build_preview_texture_maps(
             decoded_names=decoded_names,
         )
         material_to_texture[mat] = tex
-        path = texture_by_name.get(tex)
+        path = decoded_texture_paths.get(tex) or texture_by_name.get(tex)
         if path is not None:
             texture_by_name[mat] = path
     return texture_by_name, material_to_texture, bind_order

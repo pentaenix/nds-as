@@ -31,6 +31,31 @@ def texture_data_requirements(texture: TextureEntry) -> dict:
         return {"block1": w * h * 2, "palette_colors": 0}
     return {"unsupported": True}
 
+
+def _used_palette_colors(texture: TextureEntry, tex0: Tex0Info, fallback: int) -> int:
+    """Return the palette span actually addressed by the texture's texels.
+
+    Game Freak commonly stores deliberately short palettes (for example an
+    eight-color palette on a 4bpp image). Requiring the format's theoretical
+    maximum rejects valid water/foam frames and the last palette in some map
+    archives.
+    """
+    start = texture.offset
+    pixels = texture.width * texture.height
+    if texture.format_id in {1, 4, 6}:
+        raw = tex0.block1[start : start + pixels]
+        if not raw:
+            return fallback
+        mask = {1: 0x1F, 4: 0xFF, 6: 0x07}[texture.format_id]
+        return max((value & mask) for value in raw) + 1
+    if texture.format_id == 2:
+        raw = tex0.block1[start : start + (pixels + 3) // 4]
+        return max((byte >> shift) & 0x03 for byte in raw for shift in (0, 2, 4, 6)) + 1 if raw else fallback
+    if texture.format_id == 3:
+        raw = tex0.block1[start : start + (pixels + 1) // 2]
+        return max(nibble for byte in raw for nibble in (byte & 0x0F, byte >> 4)) + 1 if raw else fallback
+    return fallback
+
 def validate_texture_ranges(texture: TextureEntry, palette: PaletteEntry | None, tex0: Tex0Info) -> list[str]:
     problems: list[str] = []
     w, h = texture.width, texture.height
@@ -73,7 +98,8 @@ def validate_texture_ranges(texture: TextureEntry, palette: PaletteEntry | None,
         if palette is None:
             problems.append(f"missing palette for indexed format {fmt}")
         else:
-            pal_end = palette.offset + pal_colors * 2
+            used_colors = _used_palette_colors(texture, tex0, pal_colors)
+            pal_end = palette.offset + used_colors * 2
             if pal_end > len(tex0.block4):
                 problems.append(f"palette out of range: need end 0x{pal_end:X}, block4 len 0x{len(tex0.block4):X}")
     return problems
@@ -143,4 +169,3 @@ def format_decode_failure(failure: TextureDecodeFailure, *, source_path: str = "
     for reason in failure.reasons:
         lines.append(f"  decode failed: {reason}")
     return lines
-

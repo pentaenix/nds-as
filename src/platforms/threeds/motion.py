@@ -468,8 +468,12 @@ def mesh_bind_visibility(
     motions: Iterable[GfMotion],
     *,
     opt_mesh_materials: dict[str, list[str]] | None = None,
+    opt_mesh_geometry: dict[
+        str, tuple[tuple[tuple[int, int], ...], tuple[float, float, float, float, float, float]]
+    ]
+    | None = None,
 ) -> dict[str, bool]:
-    """Bind-pose mesh visibility from the first idle-like clip (``*_00``) or any clip."""
+    """Resolve bind visibility from source tracks and geometry-matched alternatives."""
     names = list(mesh_names)
     defaults = {name: True for name in names}
     motion_list = list(motions)
@@ -483,14 +487,48 @@ def mesh_bind_visibility(
                 defaults[track.name] = track.values[0]
                 tracked.add(track.name)
     materials = opt_mesh_materials or {}
+    geometry = opt_mesh_geometry or {}
+
+    def material_variant_key(material_names: list[str]) -> str:
+        joined = "|".join(material_names).casefold()
+        return re.sub(r"(?:vco|none|[^a-z0-9])", "", joined)
+
+    def geometry_matches(left_name: str, right_name: str) -> bool:
+        left = geometry.get(left_name)
+        right = geometry.get(right_name)
+        if left is None or right is None or left[0] != right[0]:
+            return False
+        left_bounds, right_bounds = left[1], right[1]
+        extent = max(
+            left_bounds[3] - left_bounds[0],
+            left_bounds[4] - left_bounds[1],
+            left_bounds[5] - left_bounds[2],
+            1.0,
+        )
+        tolerance = extent * 0.005
+        return all(abs(a - b) <= tolerance for a, b in zip(left_bounds, right_bounds))
+
     for mesh_name in names:
         if mesh_name in tracked:
             continue
         if not mesh_name.endswith("_OptMesh"):
             continue
         mat_names = materials.get(mesh_name, [])
-        if any("Vco" in m or m.endswith("Ef1") for m in mat_names):
-            defaults[mesh_name] = False
+        if not any("vco" in material.casefold() for material in mat_names):
+            continue
+        variant_key = material_variant_key(mat_names)
+        for other_name in names:
+            other_materials = materials.get(other_name, [])
+            if (
+                other_name == mesh_name
+                or other_name in tracked
+                or any("vco" in material.casefold() for material in other_materials)
+                or material_variant_key(other_materials) != variant_key
+            ):
+                continue
+            if geometry_matches(mesh_name, other_name):
+                defaults[mesh_name] = False
+                break
     return defaults
 
 
@@ -812,6 +850,9 @@ def _material_accepts_world_uv_motion(material_name: str) -> bool:
     low = material_name.casefold()
     if any(token in low for token in ("jime", "stage", "rain", "snow")):
         return False
+    # Dual-unit sea tint uses per-vertex alpha; scrolling one exported layer looks wrong.
+    if "sea_iro" in low:
+        return False
     if _is_scroll_material(material_name) or _is_grass_wind_material(material_name):
         return True
     if any(token in low for token in ("kusa", "ueki", "hana")):
@@ -899,6 +940,36 @@ def pick_default_world_motion_clip(clips: list[dict]) -> str | None:
     pool = ambient or with_tracks
     best = max(pool, key=score)
     return str(best["id"])
+
+
+def pick_ambient_overlay_clips(clips: list[dict], default_id: str | None) -> list[str]:
+    """Long ambient loops that layer on the default clip (e.g. slow sea caustics)."""
+    if not default_id:
+        return []
+    default_mats = {
+        str(track.get("material") or "")
+        for clip in clips
+        if str(clip.get("id")) == default_id
+        for track in clip.get("tracks") or []
+    }
+    overlays: list[str] = []
+    for clip in clips:
+        clip_id = str(clip.get("id") or "")
+        if clip_id == default_id or not clip.get("loop"):
+            continue
+        if not clip_id.startswith("ambient_"):
+            continue
+        if int(clip.get("frameCount") or 0) < 300:
+            continue
+        tracks = clip.get("tracks") or []
+        if not tracks:
+            continue
+        if any(str(track.get("material") or "") in default_mats for track in tracks):
+            continue
+        if any("sea_iro" in str(track.get("material") or "").casefold() for track in tracks):
+            continue
+        overlays.append(clip_id)
+    return overlays
 
 
 def _should_export_world_uv_track(
@@ -999,11 +1070,15 @@ def build_world_map_material_motion(
     if not clips:
         return None
     default_clip = pick_default_world_motion_clip(clips)
-    return {
+    overlay_clips = pick_ambient_overlay_clips(clips, default_clip)
+    payload: dict = {
         "frameRate": FRAME_RATE,
         "defaultClip": default_clip,
         "clips": clips,
     }
+    if overlay_clips:
+        payload["overlayClips"] = overlay_clips
+    return payload
 
 
 def world_visibility_gltf_animations(motions: Iterable[GfMotion]) -> list[dict]:

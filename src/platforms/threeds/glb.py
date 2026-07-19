@@ -203,6 +203,25 @@ def _gf_emission_channel_active(mat: GfMaterial) -> bool:
     return _gf_duplicate_unit_glow(mat)
 
 
+def _pica_render_class(mat: GfMaterial) -> str | None:
+    if mat.render_state is None:
+        return None
+    return mat.render_state.render_class()
+
+
+def _material_uses_vertex_alpha(mat: GfMaterial) -> bool:
+    """Keep COLOR_0 alpha only when PICA uses it for translucent blending.
+
+    GF also stores lighting/TEV control values in vertex alpha.  Exporting those
+    values on opaque or alpha-tested geometry makes glTF multiply them into the
+    final alpha, producing holes and accidental translucency.
+    """
+    render_class = _pica_render_class(mat)
+    if render_class is None:
+        return True
+    return render_class in ("blend", "additive")
+
+
 def _texture_uses_luminance_alpha(rgba: bytes) -> bool:
     """True when GF stores cutout/falloff in grayscale RGB with a solid alpha channel."""
     if not rgba or len(rgba) < 4:
@@ -227,6 +246,22 @@ def _texture_uses_luminance_alpha(rgba: bytes) -> bool:
         and dark / total >= 0.15
         and bright / total >= 0.02
     )
+
+
+def _texture_is_black_backed_signal(rgba: bytes) -> bool:
+    """Detect opaque RGB glow cards whose black texels mean zero contribution."""
+    if not rgba or len(rgba) < 4:
+        return False
+    total = len(rgba) // 4
+    if any(alpha < 250 for alpha in rgba[3::4]):
+        return False
+    dark = sum(
+        1 for i in range(0, len(rgba), 4) if max(rgba[i], rgba[i + 1], rgba[i + 2]) < 32
+    )
+    bright = sum(
+        1 for i in range(0, len(rgba), 4) if max(rgba[i], rgba[i + 1], rgba[i + 2]) >= 48
+    )
+    return dark / total >= 0.10 and bright / total >= 0.02
 
 
 def _is_floor_shadow_material(mat: GfMaterial) -> bool:
@@ -275,6 +310,67 @@ def _should_composite_alfa_mask(mat: GfMaterial) -> bool:
     if len(unique) == 2 and _gf_duplicate_unit_glow(mat) and _is_alfa_mask_unit_name(unique[1]):
         return True
     return False
+
+
+def _should_composite_sea_color(mat: GfMaterial) -> bool:
+    """Flatten ``sea_iro`` base + modulation for export (static; UV motion needs both TEV units)."""
+    if "sea_iro" not in mat.name.casefold():
+        return False
+    if _gf_has_alfa_mask_unit(mat) or _gf_duplicate_unit_glow(mat):
+        return False
+    unique = _ordered_unique_texture_unit_names(mat)
+    return len(unique) == 2
+
+
+def _composite_sea_color_rgba(
+    mat: GfMaterial,
+    tex_objects: dict[str, object],
+) -> tuple[bytes, int, int] | None:
+    """Multiply ``iro01`` RGB by ``iro02``; keep alpha opaque (shore fade is per-vertex)."""
+    units = sorted(
+        (unit for unit in mat.texture_units if unit.name),
+        key=lambda unit: unit.unit_index,
+    )
+    if len(units) < 2:
+        return None
+    base_tex = tex_objects.get(units[0].name)
+    mod_tex = tex_objects.get(units[1].name)
+    if base_tex is None or mod_tex is None:
+        return None
+    try:
+        rgba = bytearray(_bake_gf_texture_colors(base_tex.decode_rgba(), mat))
+        mod_rgba = mod_tex.decode_rgba()
+    except Exception:
+        return None
+    width, height = base_tex.width, base_tex.height
+    if mod_tex.width != width or mod_tex.height != height:
+        mod_rgba = _resize_rgba_nearest(
+            mod_rgba,
+            mod_tex.width,
+            mod_tex.height,
+            width,
+            height,
+        )
+    for i in range(0, len(rgba), 4):
+        for channel in range(3):
+            rgba[i + channel] = rgba[i + channel] * mod_rgba[i + channel] // 255
+        rgba[i + 3] = 255
+    return bytes(rgba), width, height
+
+
+def _uses_vertex_alpha_blend(mat: GfMaterial) -> bool:
+    """Beach water tint: alpha blend driven by per-vertex color on ``G_seacolor``."""
+    if "sea_iro" not in mat.name.casefold():
+        return False
+    if mat.render_state is None:
+        return False
+    extras = mat.render_state.to_extras()
+    if not extras.get("alphaBlendEnabled"):
+        return False
+    return (
+        str(extras.get("sourceRgbFactor") or "") == "source_alpha"
+        and str(extras.get("destinationRgbFactor") or "") == "one_minus_source_alpha"
+    )
 
 
 def _is_gf_glow_overlay_material(mat: GfMaterial) -> bool:
@@ -389,6 +485,8 @@ def _composite_alfa_mask_rgba(
 
 
 def _should_bake_luminance_mask(mat: GfMaterial, rgba: bytes) -> bool:
+    if _pica_render_class(mat) == "additive" and _texture_is_black_backed_signal(rgba):
+        return True
     if _is_incandescent_material(mat.name):
         return False
     if _gf_duplicate_unit_glow(mat):
@@ -432,6 +530,10 @@ def _resolve_material_texture_rgba(
         composite = _composite_alfa_mask_rgba(mat, tex_objects)
         if composite is not None:
             return composite
+    if _should_composite_sea_color(mat):
+        composite = _composite_sea_color_rgba(mat, tex_objects)
+        if composite is not None:
+            return composite
     albedo = next((name for name in mat.texture_names if name in tex_objects), None)
     if albedo is None:
         return None
@@ -458,6 +560,8 @@ def _uses_additive_blend(
     ``apply_glb_policy`` downgrades false blends when the PNG has no real alpha.
     GF ``emission`` alpha>0 is *not* a blanket additive flag; use texture signals first.
     """
+    if _pica_render_class(mat) == "additive":
+        return True
     if _is_incandescent_material(mat.name):
         return False
     mask_rgba = source_rgba if source_rgba is not None else rgba
@@ -551,15 +655,35 @@ def _bake_mesh_uv(
     v: float,
     sx: float,
     sy: float,
+    rotation: float,
     tx: float,
     ty: float,
 ) -> tuple[float, float]:
-    """Apply GF texture-unit transform; flip U when scale_x is negative (iris)."""
-    if sx < 0.0:
-        u_coord = (1.0 - u) * abs(sx) + tx
-    else:
-        u_coord = u * sx + tx
-    v_coord = 1.0 - (v * sy + ty)
+    """Bake GF's DccMaya texture matrix, then flip V for glTF.
+
+    GF translations are texture-space pivots subtracted before scale, not glTF
+    offsets added afterward. The half-unit terms preserve rotation around the
+    texture center and match SPICA's ``TextureTransform.GetTransform``.
+    """
+    cosine = math.cos(rotation)
+    sine = math.sin(rotation)
+    u_coord = sx * (
+        u * cosine
+        - v * sine
+        + 0.5 * sine
+        - 0.5 * cosine
+        + 0.5
+        - tx
+    )
+    transformed_v = sy * (
+        u * sine
+        + v * cosine
+        - 0.5 * sine
+        - 0.5 * cosine
+        + 0.5
+        - ty
+    )
+    v_coord = 1.0 - transformed_v
     return u_coord, v_coord
 
 
@@ -574,11 +698,30 @@ def _bake_eye_sclera_uv(u: float, v: float, sy: float) -> tuple[float, float]:
 
 def _material_role(name: str) -> str | None:
     """GF Pokémon expression layers, including numbered and head-prefixed eye sheets."""
+    if name.casefold() == "mouth":
+        return "mouth"
     if _is_sclera_material_name(name):
         return "eye_sclera"
     if name.endswith("Iris") or name.casefold().endswith("iris"):
         return "eye_iris"
     return None
+
+
+def _mesh_geometry_signature(
+    mesh: GfMesh,
+) -> tuple[
+    tuple[tuple[int, int], ...],
+    tuple[float, float, float, float, float, float],
+] | None:
+    positions = [position for sub in mesh.submeshes for position in sub.positions]
+    if not positions:
+        return None
+    counts = tuple((len(sub.positions), len(sub.indices)) for sub in mesh.submeshes)
+    bounds = tuple(
+        [min(position[axis] for position in positions) for axis in range(3)]
+        + [max(position[axis] for position in positions) for axis in range(3)]
+    )
+    return counts, bounds  # type: ignore[return-value]
 
 
 def _attach_material_extras(
@@ -589,6 +732,8 @@ def _attach_material_extras(
     additive: bool = False,
     uv_unit: tuple[float, float, float, float] | None = None,
     wrap_uv: tuple[int, int] | None = None,
+    texture_mapping_type: int = 0,
+    pica_authoritative: bool = True,
 ) -> None:
     nitro_alpha = _material_nitro_alpha(mat)
     extras = entry.setdefault("extras", {})
@@ -598,6 +743,24 @@ def _attach_material_extras(
     nitro["textureAlpha"] = texture_kind
     if additive:
         nitro["blendMode"] = "additive"
+    if mat.render_state is not None:
+        pica = mat.render_state.to_extras()
+        pica["authoritative"] = pica_authoritative
+        rae["pica"] = pica
+        nitro["cullBackface"] = mat.render_state.cull_backface_enabled
+        nitro["cullFrontface"] = mat.render_state.cull_frontface_enabled
+    mapping_names = {
+        0: "uv",
+        1: "camera_cube_environment",
+        2: "camera_sphere_environment",
+        3: "projection",
+        4: "shadow",
+        5: "shadow_box",
+    }
+    rae["textureMapping"] = {
+        "type": mapping_names.get(texture_mapping_type, "unknown"),
+        "sourceValue": texture_mapping_type,
+    }
     role = _material_role(mat.name)
     if role is not None:
         rae["materialRole"] = role
@@ -610,7 +773,7 @@ def _attach_material_extras(
     }
     if wrap_uv is not None:
         tex_unit["wrap"] = list(wrap_uv)
-    if role == "eye_sclera":
+    if role in ("eye_sclera", "mouth"):
         cols, rows = _eye_sheet_dims(sx, sy)
         translations = eye_expression_frame_translations(
             sx, sy, tx, ty, cols=cols, rows=rows
@@ -641,6 +804,7 @@ def write_model_glb(
     default_texture_variant: str = "normal",
     default_form_variant: str | None = None,
     form_variants: list[FormVariantExport] | None = None,
+    pica_render_state_authoritative: bool = True,
 ) -> Path:
     """Write *model* as a GLB with PNG textures embedded in the binary chunk.
 
@@ -666,6 +830,35 @@ def write_model_glb(
         bin_blob.extend(data)
         buffer_views.append(view)
         return len(buffer_views) - 1
+
+    def add_color_attribute(
+        sub,
+        count: int,
+        attributes: dict[str, int],
+        mat: GfMaterial | None,
+    ) -> None:
+        if len(sub.colors) != count:
+            return
+        uses_alpha = mat is None or _material_uses_vertex_alpha(mat)
+        color_type = "VEC4" if uses_alpha else "VEC3"
+        color_data = (
+            b"".join(struct.pack("<4f", *color) for color in sub.colors)
+            if uses_alpha
+            else b"".join(struct.pack("<3f", *color[:3]) for color in sub.colors)
+        )
+        color_view = add_view(
+            color_data,
+            target=34962,
+        )
+        accessors.append(
+            {
+                "bufferView": color_view,
+                "componentType": 5126,
+                "count": count,
+                "type": color_type,
+            }
+        )
+        attributes["COLOR_0"] = len(accessors) - 1
 
     # -- textures ------------------------------------------------------------
     tex_objects = {tex.name: tex for tex in textures}
@@ -733,7 +926,11 @@ def write_model_glb(
 
     # -- materials -------------------------------------------------------------
     material_index_by_name: dict[str, int] = {}
-    uv_transform_by_material: dict[str, tuple[float, float, float, float]] = {}
+    material_by_name = {mat.name: mat for mat in model.materials}
+    uv_transform_by_material: dict[
+        str,
+        tuple[float, float, float, float, float],
+    ] = {}
 
     def _append_materials(
         tex_objects: dict[str, GfTexture],
@@ -755,6 +952,8 @@ def write_model_glb(
                 },
                 "doubleSided": True,
             }
+            if mat.render_state is not None and mat.render_state.cull_backface_enabled:
+                entry["doubleSided"] = False
             albedo = next(
                 (name for name in mat.texture_names if name in tex_objects),
                 None,
@@ -780,7 +979,12 @@ def write_model_glb(
                 tex_kind = texture_alpha_kind.get(tex_key, "opaque")
                 if tex_index is not None:
                     entry["pbrMetallicRoughness"]["baseColorTexture"] = {"index": tex_index}
-                if additive or tex_kind in ("translucent", "transparent") or nitro_alpha < 0.999:
+                if (
+                    additive
+                    or tex_kind in ("translucent", "transparent")
+                    or nitro_alpha < 0.999
+                    or _uses_vertex_alpha_blend(mat)
+                ):
                     entry["alphaMode"] = "BLEND"
                 if nitro_alpha < 0.999:
                     entry["pbrMetallicRoughness"]["baseColorFactor"] = [1.0, 1.0, 1.0, nitro_alpha]
@@ -797,6 +1001,7 @@ def write_model_glb(
                     uv_transform_by_material[mat.name] = (
                         unit.scale[0],
                         unit.scale[1],
+                        unit.rotation,
                         unit.translation[0],
                         unit.translation[1],
                     )
@@ -806,7 +1011,12 @@ def write_model_glb(
                 tex_kind = "opaque"
             else:
                 tex_kind = "opaque"
-            uv_unit = uv_transform_by_material.get(mat.name)
+            transform = uv_transform_by_material.get(mat.name)
+            uv_unit = (
+                (transform[0], transform[1], transform[3], transform[4])
+                if transform is not None
+                else None
+            )
             wrap_pair = (unit.wrap_u, unit.wrap_v) if albedo is not None and unit is not None else None
             _attach_material_extras(
                 entry,
@@ -815,6 +1025,10 @@ def write_model_glb(
                 additive=additive,
                 uv_unit=uv_unit,
                 wrap_uv=wrap_pair,
+                texture_mapping_type=unit.mapping_type if unit is not None else 0,
+                pica_authoritative=(
+                    pica_render_state_authoritative or _uses_vertex_alpha_blend(mat)
+                ),
             )
             index_by_name[mat.name] = len(materials)
             materials.append(entry)
@@ -1002,12 +1216,17 @@ def write_model_glb(
 
     # -- geometry --------------------------------------------------------------
     mesh_materials: dict[str, list[str]] = {}
+    mesh_geometry = {}
     for mesh in model.meshes:
         mesh_materials[mesh.name] = [sub.material_name for sub in mesh.submeshes]
+        signature = _mesh_geometry_signature(mesh)
+        if signature is not None:
+            mesh_geometry[mesh.name] = signature
     bind_visibility = mesh_bind_visibility(
         [mesh.name for mesh in model.meshes],
         animations or [] if model.bones else [],
         opt_mesh_materials=mesh_materials,
+        opt_mesh_geometry=mesh_geometry,
     )
 
     default_form_id = default_form_variant or "00"
@@ -1051,10 +1270,10 @@ def write_model_glb(
 
             if len(sub.uvs) == count:
                 mat_role = _material_role(sub.material_name)
-                sx, sy, tx, ty = uv_transform_by_material.get(
-                    sub.material_name, (1.0, 1.0, 0.0, 0.0)
+                sx, sy, rotation, tx, ty = uv_transform_by_material.get(
+                    sub.material_name, (1.0, 1.0, 0.0, 0.0, 0.0)
                 )
-                if mat_role == "eye_sclera":
+                if mat_role in ("eye_sclera", "mouth"):
                     uv_data = b"".join(
                         struct.pack("<2f", *_bake_eye_sclera_uv(u, v, sy))
                         for u, v in sub.uvs
@@ -1063,7 +1282,7 @@ def write_model_glb(
                     uv_data = b"".join(
                         struct.pack(
                             "<2f",
-                            *_bake_mesh_uv(u, v, sx, sy, tx, ty),
+                            *_bake_mesh_uv(u, v, sx, sy, rotation, tx, ty),
                         )
                         for u, v in sub.uvs
                     )
@@ -1072,6 +1291,13 @@ def write_model_glb(
                     {"bufferView": uv_view, "componentType": 5126, "count": count, "type": "VEC2"}
                 )
                 attributes["TEXCOORD_0"] = len(accessors) - 1
+
+            add_color_attribute(
+                sub,
+                count,
+                attributes,
+                material_by_name.get(sub.material_name),
+            )
 
             if has_skinning and len(sub.joints) == count and len(sub.weights) == count:
                 joint_rows: list[tuple[int, int, int, int]] = []
@@ -1144,6 +1370,7 @@ def write_model_glb(
 
     for form in geometry_forms:
         material_map = form_material_index_by_id.get(form.id, {})
+        form_material_by_name = {mat.name: mat for mat in form.model.materials}
         form_skin_index = form_skin_index_by_id.get(form.id, -1)
         form_has_skin = form_skin_index >= 0
         for mesh in sorted(form.model.meshes, key=_mesh_draw_priority):
@@ -1194,17 +1421,20 @@ def write_model_glb(
 
                 if len(sub.uvs) == count:
                     mat_role = _material_role(sub.material_name)
-                    sx, sy, tx, ty = uv_transform_by_material.get(
-                        sub.material_name, (1.0, 1.0, 0.0, 0.0)
+                    sx, sy, rotation, tx, ty = uv_transform_by_material.get(
+                        sub.material_name, (1.0, 1.0, 0.0, 0.0, 0.0)
                     )
-                    if mat_role == "eye_sclera":
+                    if mat_role in ("eye_sclera", "mouth"):
                         uv_data = b"".join(
                             struct.pack("<2f", *_bake_eye_sclera_uv(u, v, sy))
                             for u, v in sub.uvs
                         )
                     else:
                         uv_data = b"".join(
-                            struct.pack("<2f", *_bake_mesh_uv(u, v, sx, sy, tx, ty))
+                            struct.pack(
+                                "<2f",
+                                *_bake_mesh_uv(u, v, sx, sy, rotation, tx, ty),
+                            )
                             for u, v in sub.uvs
                         )
                     uv_view = add_view(uv_data, target=34962)
@@ -1217,6 +1447,13 @@ def write_model_glb(
                         }
                     )
                     attributes["TEXCOORD_0"] = len(accessors) - 1
+
+                add_color_attribute(
+                    sub,
+                    count,
+                    attributes,
+                    form_material_by_name.get(sub.material_name),
+                )
 
                 if (
                     form_has_skin

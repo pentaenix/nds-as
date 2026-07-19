@@ -162,6 +162,12 @@ class TextureAssignerPanelMixin:
         if hasattr(self, "_inspector_tab_animation"):
             tabs.setTabVisible(self._inspector_tab_animation, show_animation)
 
+        PlatformDispatch.sync_model_inspector(
+            asset,
+            window=self,
+            rom_platform_id=getattr(self, "_rom_platform_id", None),
+        )
+
         if not tabs.isTabVisible(tabs.currentIndex()):
             tabs.setCurrentIndex(getattr(self, "_inspector_tab_preview", 0))
 
@@ -275,6 +281,7 @@ class TextureAssignerPanelMixin:
             texture_bind_order=texture_bind_order,
             mesh_texture_overrides={},
             preview_platform_id=getattr(self, "_rom_platform_id", None),
+            prefer_material_bindings=bool(material_to_texture),
         )
         mesh_labels = list(getattr(self.preview, "_last_mesh_labels", []))
         if self._should_refresh_texture_assignments(
@@ -306,6 +313,7 @@ class TextureAssignerPanelMixin:
                 material_to_texture=material_to_texture,
                 texture_bind_order=texture_bind_order,
                 mesh_texture_overrides=overrides,
+                prefer_material_bindings=bool(material_to_texture),
             )
         self._store_preview_mesh_labels(list(getattr(self.preview, "_last_mesh_labels", [])))
         if hasattr(self, "_sync_texture_clip_preview"):

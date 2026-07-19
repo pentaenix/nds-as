@@ -4,9 +4,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from ...core.texture_assignments import texture_key_for_path
-from ...platforms.nds.texture_assigner import relevant_assigner_texture_paths
+from ...platforms.nds.texture_assigner import has_explicit_material_motion, relevant_assigner_texture_paths
 from ...core.texture_sequences import (
     detect_material_sequences,
+    ensure_default_play_state,
     list_playback_options,
     material_has_playable_states,
     normalize_material_spec,
@@ -47,12 +48,15 @@ class TextureAnimationPanelMixin:
         mesh_paths = list(getattr(self.preview, "_mesh_texture_paths", []))
         assignments = dict(self._texture_assignments.get(asset_id, {}))
         keys = self._available_texture_keys_for_asset(asset_id)
-        detected = detect_material_sequences(
-            labels,
-            mesh_paths,
-            assignments=assignments,
-            available_texture_keys=keys,
-        )
+        glb_path = getattr(self.preview, "_last_path", None)
+        detected = {}
+        if not has_explicit_material_motion(Path(glb_path) if glb_path else None):
+            detected = detect_material_sequences(
+                labels,
+                mesh_paths,
+                assignments=assignments,
+                available_texture_keys=keys,
+            )
         payload = self._texture_sequences.setdefault(asset_id, {"materials": {}})
         stored: dict[str, dict] = payload.setdefault("materials", {})
         merged: dict[str, dict] = {}
@@ -65,7 +69,10 @@ class TextureAnimationPanelMixin:
             spec["frameStyle"] = fresh.get("frameStyle") or spec.get("frameStyle")
             if not isinstance(spec.get("states"), dict):
                 spec["states"] = {}
-            merged[label] = spec
+            # Numbered texture families are animations by construction. Give a
+            # newly detected family a playable looping state so the viewport's
+            # play button is available without requiring Animation States setup.
+            merged[label] = ensure_default_play_state(spec)
 
         payload["materials"] = merged
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import tempfile
 
 from ....core.assets import Asset
 from ..pokemon_bulk_export import (
@@ -9,6 +10,7 @@ from ..pokemon_bulk_export import (
     pokemon_bulk_export_assets,
     run_pokemon_bulk_export,
 )
+from ..glbz import write_glbz
 from ..rom import load_descriptor, read_garc_slot
 from ..service import (
     build_model_glb,
@@ -33,6 +35,11 @@ class ThreedsExportModule:
                     "glb",
                     "GLB model",
                     "One species glTF with skeleton, animations, forms/patterns, and embedded normal + shiny texture sets.",
+                ),
+                (
+                    "glbz",
+                    "GLBZ model (lossless, smaller)",
+                    "The same complete GLB compressed with zstd and verified byte-for-byte when restored.",
                 ),
                 ("textures", "Texture PNGs (normal + shiny)", "Decode every texture map to PNG."),
                 ("animations_raw", "Raw animation packs", "GFMotion payloads for external tools."),
@@ -77,6 +84,19 @@ class ThreedsExportModule:
                     progress=progress,
                 )
             ]
+        if choice == "glbz":
+            shiny = bool(getattr(host, "_export_glb_shiny", False))
+            with tempfile.TemporaryDirectory(prefix="rae_threeds_glbz_") as temp_dir:
+                glb_path = build_model_glb(
+                    descriptor,
+                    Path(temp_dir),
+                    shiny=shiny,
+                    progress=progress,
+                )
+                output_path = out / glb_path.with_suffix(".glbz").name
+                if progress:
+                    progress(f"3DS: compressing lossless GLBZ {output_path.name}…")
+                return [write_glbz(glb_path, output_path)]
         if choice == "textures":
             return export_texture_pngs(descriptor, out, progress=progress)
         if choice == "animations_raw":

@@ -5,7 +5,12 @@ from pathlib import Path
 
 from PIL import Image
 
-from rae.platforms.nds.gltf.preview_textures import prefer_resolver_texture_map
+from rae.platforms.nds.gltf.glb_io import GlbData
+from rae.platforms.nds.gltf.preview_textures import (
+    GlbMeshPart,
+    build_mesh_texture_paths_for_glb_parts,
+    prefer_resolver_texture_map,
+)
 from rae.model_texture_resolver import ModelTextureResolution
 from rae.platforms.nds.model_module.preview_pipeline import _conversion_siblings
 from rae.scanner import Asset
@@ -34,6 +39,36 @@ def test_prefer_resolver_texture_map_overrides_apicula(tmp_path: Path) -> None:
     resolver_map = {"batt_field04d_1": right}
     merged = prefer_resolver_texture_map(resolver_map, apicula_map)
     assert merged["batt_field04d_1"] == right
+
+
+def test_verified_binding_precedes_wrong_glb_material_uri(tmp_path: Path) -> None:
+    wrong = tmp_path / "water.png"
+    right = tmp_path / "gake01a.png"
+    Image.new("RGBA", (32, 32), (0, 0, 255, 255)).save(wrong)
+    Image.new("RGBA", (8, 8), (100, 70, 40, 255)).save(right)
+    glb_path = tmp_path / "map.glb"
+    GlbData(
+        json={
+            "asset": {"version": "2.0"},
+            "materials": [{
+                "name": "gake01a",
+                "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
+            }],
+            "textures": [{"source": 0}],
+            "images": [{"uri": "water.png"}],
+        },
+        bin_chunk=b"",
+    ).write(glb_path)
+
+    result = build_mesh_texture_paths_for_glb_parts(
+        [GlbMeshPart("gake01a", 0)],
+        glb_path=glb_path,
+        texture_by_name={"gake01a": right},
+        material_to_texture={"gake01a": "gake01a"},
+        prefer_material_bindings=True,
+    )
+
+    assert result == [right]
 
 
 def test_conversion_siblings_excludes_unresolved_folder_btx() -> None:

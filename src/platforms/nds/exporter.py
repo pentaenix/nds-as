@@ -219,6 +219,7 @@ def convert_with_apicula(
     out_path = Path(out_dir)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
+    siblings = list(sibling_assets)
     with tempfile.TemporaryDirectory(prefix="dsm_") as tmp:
         tmp_path = Path(tmp)
         input_files: list[Path] = []
@@ -226,7 +227,7 @@ def convert_with_apicula(
         selected_path = _write_temp_asset(asset, tmp_path, prefix="selected")
         input_files.append(selected_path)
 
-        for i, sibling in enumerate(sibling_assets):
+        for i, sibling in enumerate(siblings):
             if sibling.asset_id == asset.asset_id:
                 continue
             # Textures and animations near the model are useful. Other models are not.
@@ -248,9 +249,14 @@ def convert_with_apicula(
         if not outputs:
             return ConvertResult(False, "apicula completed, but no converted file was found", outputs, cmd)
         if output_format.lower() == "glb":
+            bta0_files = [item.data for item in siblings if item.magic == "BTA0" and item.data]
             for path in outputs:
                 if path.suffix.lower() == ".glb" and path.is_file():
                     apply_platform_glb_policy(path)
+                    if bta0_files:
+                        from .material_animation import attach_bta0_material_motion
+
+                        attach_bta0_material_motion(path, bta0_files)
         return ConvertResult(True, "Converted successfully", outputs, cmd)
 
 

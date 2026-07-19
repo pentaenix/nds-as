@@ -6,6 +6,15 @@ from ....core.assets import Asset
 from ....core.modules.protocols import ExportModule
 from . import service
 
+__all__ = [
+    "NdsExportModule",
+    "build_nds_export_module",
+    "discover_tile_candidates",
+    "export_tile_candidates",
+    "handle_tile_export_request",
+    "tile_export_api_schema",
+]
+
 
 class NdsExportModule:
     platform_id = "nds"
@@ -31,3 +40,16 @@ class NdsExportModule:
 
 def build_nds_export_module() -> ExportModule:
     return NdsExportModule()
+
+
+def __getattr__(name: str):
+    if name in {
+        "discover_tile_candidates",
+        "export_tile_candidates",
+        "handle_tile_export_request",
+        "tile_export_api_schema",
+    }:
+        from . import api
+
+        return getattr(api, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

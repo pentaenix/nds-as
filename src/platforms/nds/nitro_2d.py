@@ -164,24 +164,29 @@ def decode_nclr_colors(data: bytes) -> list[tuple[int, int, int, int]]:
     # public Nitro docs, TTLP offsets include that section header, so the palette
     # bytes start at documented 0x18 -> payload 0x10. Older DSM builds used
     # 0x18 inside the payload and skipped most small palettes.
-    candidates: list[bytes] = []
+    candidates: list[tuple[int, bytes]] = []
     if len(payload) >= 0x10:
         data_size = read_u32le(payload, 0x8) if len(payload) >= 0x0C else 0
         start = 0x10
         end = start + data_size if data_size and start + data_size <= len(payload) else len(payload)
         if start < len(payload):
-            candidates.append(payload[start:end])
+            # A size-bounded TTLP/PLTT payload is authoritative. Do not let a
+            # longer recovery slice win merely because it includes the header.
+            candidates.append((2 if data_size and end - start == data_size else 1, payload[start:end]))
     # Recovery fallbacks for uncommon/variant files.
     if len(payload) > 0x18:
-        candidates.append(payload[0x18:])
-    candidates.append(payload)
+        candidates.append((0, payload[0x18:]))
+    candidates.append((-1, payload))
 
     best: list[tuple[int, int, int, int]] = []
-    for raw in candidates:
+    best_key = (-2, -1, -1)
+    for confidence, raw in candidates:
         vals = [bgr555_to_rgba(int.from_bytes(raw[i:i + 2], "little")) for i in range(0, len(raw) - 1, 2)]
-        # Prefer normal palette sizes and non-empty decoded data.
-        if len(vals) > len(best):
+        normal_size = 1 if len(vals) in {16, 32, 64, 128, 256} else 0
+        key = (confidence, normal_size, len(vals))
+        if vals and key > best_key:
             best = vals
+            best_key = key
     return best
 
 
@@ -370,34 +375,31 @@ def compose_screen(nscr_data: bytes, ncgr_data: bytes, nclr_data: bytes) -> Deco
 
 def parse_ncer_cells(data: bytes, *, max_cells: int = 48) -> list[list[CellOam]]:
     payload = find_section(data, {b"KBEC", b"CEBK"})
-    if not payload or len(payload) < 0x20:
+    if not payload or len(payload) < 0x18:
         return []
-    image_count = read_u32le(payload, 0)
-    if image_count <= 0 or image_count > 4096:
-        image_count = read_u16le(payload, 0)
+    image_count = read_u16le(payload, 0)
     if image_count <= 0 or image_count > 4096:
         return []
-    table_start = 0x18 if len(payload) > 0x18 else 0x10
-    table_bytes = image_count * 8
-    if table_start + table_bytes > len(payload):
-        table_start = 0x20 if 0x20 + table_bytes <= len(payload) else 0x10
+    has_bounds = read_u16le(payload, 2) != 0
+    table_start = read_u32le(payload, 4)
+    entry_size = 16 if has_bounds else 8
+    table_bytes = image_count * entry_size
+    if table_start < 0x18 or table_start + table_bytes > len(payload):
+        return []
     data_base = table_start + table_bytes
     cells: list[list[CellOam]] = []
     for i in range(min(image_count, max_cells)):
-        off = table_start + i * 8
+        off = table_start + i * entry_size
         if off + 8 > len(payload):
             break
         oam_count = read_u16le(payload, off)
         oam_rel = read_u32le(payload, off + 4)
         if oam_count <= 0 or oam_count > 256:
             continue
-        start_candidates = [data_base + oam_rel, oam_rel, table_start + oam_rel]
-        start = -1
-        for cand in start_candidates:
-            if 0 <= cand <= len(payload) and cand + oam_count * 6 <= len(payload):
-                start = cand
-                break
-        if start < 0:
+        # NCER OAM pointers are relative to the OAM array immediately following
+        # the complete cell table, not to the CEBK body or the individual cell.
+        start = data_base + oam_rel
+        if start < data_base or start + oam_count * 6 > len(payload):
             continue
         oams = []
         for j in range(oam_count):

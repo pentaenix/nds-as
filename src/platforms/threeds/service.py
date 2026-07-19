@@ -484,6 +484,7 @@ def build_model_glb(
         default_texture_variant="shiny" if shiny else "normal",
         default_form_variant=f"{selected_form:02d}",
         form_variants=form_exports,
+        pica_render_state_authoritative=base_descriptor.get("type") != "world_model",
     )
 
 

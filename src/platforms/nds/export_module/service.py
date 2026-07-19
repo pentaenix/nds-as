@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -57,7 +59,11 @@ def export_options_for(asset: Asset) -> list[tuple[str, str, str]]:
     ]
     if asset.magic == "BMD0":
         options.extend([
-            ("model_glb", "Model: GLB (self-contained)", "Convert to a single GLB with embedded textures and same-folder animation siblings via apicula."),
+            (
+                "model_glb",
+                "Model: GLB (self-contained)",
+                "Export the active exact map with buildings/animations when available; otherwise convert this model with embedded textures and animation siblings.",
+            ),
             ("tile_bundle", "Tile: Pokemon Resort (.tile)", "Package this model, its materials, and detected texture frames for direct tile-pack import."),
             ("model_dae", "Model: DAE / Collada via apicula", "Useful for Blender import and debugging material names."),
             ("model_obj", "Model: OBJ + MTL via GLB bridge", "Experimental: converts GLB output to OBJ/MTL using trimesh."),
@@ -105,8 +111,34 @@ def _host_preview_policy(host: ExportHost):
     return model_preview_policy(ModelPreviewQuality.FULL_FIDELITY)
 
 
+def _host_exact_map_composition(host: ExportHost, asset: Asset):
+    """Return the active NDS exact-map build for this selected browser asset."""
+    widget = getattr(host, "nds_map_objects", None)
+    if widget is None or str(getattr(widget, "_asset_id", "")) != str(asset.asset_id):
+        return None
+    composition = getattr(widget, "_composition", None)
+    path = getattr(composition, "composed_glb", None)
+    return composition if path is not None and Path(path).is_file() else None
+
+
 def export_viewport_matched_glb(host: ExportHost, asset: Asset, out_dir: Path) -> list[Path]:
     """GLB export using the same texture resolve + patch path as the live preview."""
+    exact = _host_exact_map_composition(host, asset)
+    if exact is not None:
+        label = re.sub(
+            r"[^A-Za-z0-9_-]+",
+            "_",
+            str(getattr(exact.objects, "variant_label", "exact")),
+        ).strip("_")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        output = out_dir / (
+            f"map_{int(exact.objects.map_file_index):04d}_{label or 'exact'}_with_buildings.glb"
+        )
+        shutil.copyfile(exact.composed_glb, output)
+        host._update_status(
+            "Exported the active exact map GLB with terrain, placed buildings, and animations."
+        )
+        return [output]
     host._update_status("Exporting self-contained GLB (embedded textures + animations)…")
     stem = sanitize_virtual_path(asset.virtual_path).stem or asset.asset_id
     return export_textured_model_glb(

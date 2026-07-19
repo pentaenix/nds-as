@@ -44,6 +44,7 @@ class GlbPreviewMixin:
         texture_bind_order: list[str] | None = None,
         mesh_texture_overrides: dict[str, Path] | None = None,
         preview_platform_id: str | None = None,
+        prefer_material_bindings: bool = False,
     ) -> None:
         self._last_path = path
         if fallback_textures is not None:
@@ -65,6 +66,7 @@ class GlbPreviewMixin:
             self._fallback_texture_path_order = []
         self._mesh_texture_paths: list[Path | None] = []
         self._mesh_texture_overrides = dict(mesh_texture_overrides or {})
+        self._prefer_material_bindings = bool(prefer_material_bindings)
         self._last_mesh_labels: list[str] = []
         self._preview_load_id = int(getattr(self, "_preview_load_id", 0)) + 1
         load_id = self._preview_load_id
@@ -86,6 +88,9 @@ class GlbPreviewMixin:
                     colocated,
                     glb_material_map,
                 )
+                if prefer_material_bindings:
+                    for key, texture_path in (texture_by_name or {}).items():
+                        self._texture_by_name[str(key).casefold()] = Path(texture_path)
                 self._fallback_texture_paths = merge_texture_paths(
                     ordered_texture_paths_from_glb(path, colocated),
                     self._fallback_texture_paths,
@@ -100,6 +105,7 @@ class GlbPreviewMixin:
                 texture_bind_order=getattr(self, "_texture_bind_order", []),
                 fallback_paths=self._fallback_texture_paths,
                 mesh_texture_overrides=self._mesh_texture_overrides,
+                prefer_material_bindings=prefer_material_bindings,
             )
             patched = self._build_web_preview_glb(path)
             preview_pid = preview_platform_id or getattr(self, "_rom_platform_id", None) or "nds"
@@ -140,6 +146,9 @@ class GlbPreviewMixin:
                     colocated,
                     glb_material_map,
                 )
+                if prefer_material_bindings:
+                    for key, texture_path in (texture_by_name or {}).items():
+                        self._texture_by_name[str(key).casefold()] = Path(texture_path)
                 self._fallback_texture_paths = merge_texture_paths(
                     ordered_texture_paths_from_glb(path, colocated),
                     self._fallback_texture_paths,
@@ -154,6 +163,7 @@ class GlbPreviewMixin:
                 texture_bind_order=getattr(self, "_texture_bind_order", []),
                 fallback_paths=self._fallback_texture_paths,
                 mesh_texture_overrides=self._mesh_texture_overrides,
+                prefer_material_bindings=prefer_material_bindings,
             )
             attached = attach_preview_textures(named_meshes, self._mesh_texture_paths)
             self._preload_texture_images(self._mesh_texture_paths)
@@ -335,6 +345,7 @@ class GlbPreviewMixin:
             texture_bind_order=getattr(self, "_texture_bind_order", []),
             fallback_paths=self._fallback_texture_paths,
             mesh_texture_overrides=getattr(self, "_mesh_texture_overrides", {}),
+            prefer_material_bindings=bool(getattr(self, "_prefer_material_bindings", False)),
         )
 
     def _glb_patcher(self) -> PreviewGlbPatcher:

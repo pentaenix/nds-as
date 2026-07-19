@@ -21,6 +21,7 @@ from .pica import (
     GPUREG_VSH_NUM_ATTR,
     read_pica_commands,
 )
+from .pica_material import PicaRenderState, parse_pica_render_state
 
 GFMODEL_MAGIC = 0x15122117
 GFTEXTURE_MAGIC = 0x15041213
@@ -168,6 +169,9 @@ class GfTextureUnit:
     scale: tuple[float, float]
     rotation: float
     translation: tuple[float, float]
+    # GFL2 texture-coordinate source: 0 UV, 1 camera cube environment,
+    # 2 camera sphere environment, 3 projection, 4 shadow, 5 shadow box.
+    mapping_type: int = 0
     wrap_u: int = 2  # 0 clamp-edge, 1 clamp-border, 2 repeat, 3 mirror
     wrap_v: int = 2
 
@@ -185,6 +189,7 @@ class GfMaterial:
     diffuse: tuple[int, int, int, int] | None = None
     specular0: tuple[int, int, int, int] | None = None
     blend: tuple[int, int, int, int] | None = None
+    render_state: PicaRenderState | None = None
 
 
 @dataclass(slots=True)
@@ -193,6 +198,7 @@ class GfSubMesh:
     positions: list[tuple[float, float, float]] = field(default_factory=list)
     normals: list[tuple[float, float, float]] = field(default_factory=list)
     uvs: list[tuple[float, float]] = field(default_factory=list)
+    colors: list[tuple[float, float, float, float]] = field(default_factory=list)
     indices: list[int] = field(default_factory=list)
     # Skinning: per-submesh table mapping the local bone-index attribute value
     # to a skeleton bone index, plus decoded per-vertex indices/weights.
@@ -352,7 +358,7 @@ def _parse_material(r: _Reader) -> GfMaterial:
         tex_name = r.hash_name()
         texture_names.append(tex_name)
         unit_index = r.u8()
-        r.skip(1)  # mapping type
+        mapping_type = r.u8()
         scale = (r.f32(), r.f32())
         rotation = r.f32()
         translation = (r.f32(), r.f32())
@@ -367,12 +373,13 @@ def _parse_material(r: _Reader) -> GfMaterial:
                 scale=scale,
                 rotation=rotation,
                 translation=translation,
+                mapping_type=mapping_type,
                 wrap_u=wrap_u,
                 wrap_v=wrap_v,
             )
         )
 
-    # Skip the GPU command block; material section length covers everything.
+    render_state = parse_pica_render_state(r.data[r.pos:end])
     r.pos = end
     return GfMaterial(
         name=material_name,
@@ -382,6 +389,7 @@ def _parse_material(r: _Reader) -> GfMaterial:
         diffuse=diffuse,
         specular0=specular0,
         blend=blend,
+        render_state=render_state,
     )
 
 
@@ -584,6 +592,7 @@ def _decode_vertices(
             if attr_name not in (
                 ATTR_POSITION,
                 ATTR_NORMAL,
+                ATTR_COLOR,
                 ATTR_TEXCOORD0,
                 ATTR_BONE_INDEX,
                 ATTR_BONE_WEIGHT,
@@ -597,6 +606,11 @@ def _decode_vertices(
                 sub.normals.append((scaled[0], scaled[1], scaled[2] if elements > 2 else 0.0))
             elif attr_name == ATTR_TEXCOORD0:
                 sub.uvs.append((scaled[0], scaled[1] if elements > 1 else 0.0))
+            elif attr_name == ATTR_COLOR:
+                rgba = scaled + (1.0, 1.0, 1.0, 1.0)
+                sub.colors.append(
+                    tuple(max(0.0, min(1.0, value)) for value in rgba[:4])
+                )
             elif attr_name == ATTR_BONE_INDEX:
                 raw_idx = tuple(int(v) for v in values) + (0, 0, 0)
                 joints = raw_idx[:4]

@@ -337,11 +337,40 @@ def test_export_glb_single_file_with_default_variant(monkeypatch, tmp_path: Path
     assert calls == [True]
 
 
-def test_export_options_single_glb_choice() -> None:
+def test_export_options_offer_glb_then_glbz() -> None:
     module = ThreedsExportModule()
     keys = [key for key, _, _ in module.export_options_for(_gfmd_asset())]
-    assert keys[0] == "glb"
+    assert keys[:2] == ["glb", "glbz"]
     assert "glb_shiny" not in keys
+
+
+def test_glbz_export_uses_glb_pipeline_then_compresses(monkeypatch, tmp_path: Path) -> None:
+    calls: list[tuple[str, bool]] = []
+
+    def fake_build(descriptor, out_dir, *, shiny=False, progress=None):
+        del descriptor, progress
+        path = Path(out_dir) / "pm0054_00_Psyduck.glb"
+        path.write_bytes(b"glTF temporary")
+        calls.append((path.suffix, shiny))
+        return path
+
+    def fake_write(source, destination):
+        assert Path(source).read_bytes() == b"glTF temporary"
+        Path(destination).write_bytes(b"PRGLBZ01 compiled")
+        return Path(destination)
+
+    monkeypatch.setattr("rae.platforms.threeds.export_module.build_model_glb", fake_build)
+    monkeypatch.setattr("rae.platforms.threeds.export_module.write_glbz", fake_write)
+    monkeypatch.setattr(
+        "rae.platforms.threeds.export_module.load_descriptor",
+        lambda asset: {"type": "model", "base_slot": 10, "species": 54},
+    )
+
+    module = ThreedsExportModule()
+    host = SimpleNamespace(_export_glb_shiny=True)
+    written = module.run_export_choice(host, _gfmd_asset(), "glbz", tmp_path)
+    assert written == [tmp_path / "pm0054_00_Psyduck.glbz"]
+    assert calls == [(".glb", True)]
 
 
 def test_model_module_preview_shiny_uses_viewer_variant() -> None:

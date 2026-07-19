@@ -26,3 +26,39 @@ def test_additive_blend_mode():
     }
     result = classify_material(material, texture_bytes=None, geometry_stats=None)
     assert result.render_class == RenderClass.ADDITIVE
+
+
+def test_pica_source_alpha_blend_overrides_no_zero_alpha_heuristic():
+    rgba = bytes((255, 255, 255, 96)) * (8 * 8)
+    png = rgba_to_png(rgba, 8, 8)
+    material = {
+        "extras": {
+            "rae": {
+                "pica": {
+                    "alphaBlendEnabled": True,
+                    "sourceRgbFactor": "source_alpha",
+                    "destinationRgbFactor": "one_minus_source_alpha",
+                    "alphaTestEnabled": True,
+                }
+            }
+        }
+    }
+    result = classify_material(material, texture_bytes=png, geometry_stats=None)
+    assert result.render_class == RenderClass.BLEND
+
+
+def test_pica_replacement_blend_keeps_alpha_texture_opaque():
+    material = {
+        "extras": {
+            "rae": {
+                "pica": {
+                    "alphaBlendEnabled": True,
+                    "sourceRgbFactor": "one",
+                    "destinationRgbFactor": "zero",
+                    "alphaTestEnabled": False,
+                }
+            }
+        }
+    }
+    result = classify_material(material, texture_bytes=None, geometry_stats=None)
+    assert result.render_class == RenderClass.OPAQUE

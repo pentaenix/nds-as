@@ -14,6 +14,7 @@ from rae.platforms.threeds.glb import (
     _gf_has_alfa_mask_unit,
     _gf_single_texture_unit,
     _is_gf_glow_overlay_material,
+    _material_uses_vertex_alpha,
     _resolve_material_texture_rgba,
     _should_bake_luminance_mask,
     _texture_uses_luminance_alpha,
@@ -113,6 +114,49 @@ def test_single_unit_luminance_mask_still_glows():
     assert _gf_single_texture_unit(mat)
     assert _should_bake_luminance_mask(mat, rgba)
     assert _uses_additive_blend(mat, rgba, source_rgba=rgba)
+
+
+def test_opaque_pica_material_drops_tev_control_vertex_alpha():
+    from rae.platforms.threeds.pica_material import PicaRenderState
+
+    mat = GfMaterial(
+        name="Body",
+        render_state=PicaRenderState(
+            color_operation=1 << 8,
+            blend_function=(1 << 16),  # source one, destination zero
+            alpha_test=0,
+            depth_color_mask=1 << 12,
+        ),
+    )
+    assert not _material_uses_vertex_alpha(mat)
+
+
+def test_pica_source_alpha_overlay_keeps_vertex_alpha_and_black_keys_texture():
+    from rae.platforms.threeds.pica_material import PicaRenderState
+
+    mat = GfMaterial(
+        name="GlowInc00",
+        texture_names=["glow.tga", "DummyTex.tga"],
+        texture_units=[
+            GfTextureUnit(name="glow.tga", unit_index=0, scale=(1.0, 1.0), rotation=0.0, translation=(0.0, 0.0)),
+            GfTextureUnit(name="DummyTex.tga", unit_index=1, scale=(1.0, 1.0), rotation=0.0, translation=(0.0, 0.0)),
+        ],
+        render_state=PicaRenderState(
+            color_operation=1 << 8,
+            blend_function=(6 << 16) | (1 << 20),  # source-alpha, destination one
+            alpha_test=0,
+            depth_color_mask=0,
+        ),
+    )
+    rgba = bytearray()
+    for i in range(64):
+        rgba.extend((0, 0, 0, 255) if i < 32 else (40, 120, 220, 255))
+
+    baked = _apply_glow_black_key(bytes(rgba), mat)
+    assert _material_uses_vertex_alpha(mat)
+    assert _uses_additive_blend(mat, baked, source_rgba=bytes(rgba))
+    assert baked[3] == 0
+    assert baked[-1] == 220
 
 
 def test_alfa_mask_composite_for_city_light02():
@@ -233,6 +277,22 @@ def test_battle_background_0008_sand_floor_stays_opaque(tmp_path):
 
     wave = materials["btl_G_hama_Unami05"]
     assert wave["extras"]["rae"]["renderClass"] == "additive"
+
+    sea = materials["btl_A_sea_iro045"]
+    assert sea["extras"]["rae"]["renderClass"] == "blend"
+    assert sea.get("alphaMode") == "BLEND"
+    sea_png = material_texture_bytes(glb, glb.json["materials"].index(sea))
+    assert sea_png is not None
+    assert not texture_has_fully_transparent_pixels(sea_png)
+
+    motion = glb.json.get("extras", {}).get("rae", {}).get("mapMaterialMotion") or {}
+    sea_tracks = [
+        track["material"]
+        for clip in motion.get("clips", [])
+        for track in clip.get("tracks", [])
+        if "sea_iro" in track.get("material", "")
+    ]
+    assert not sea_tracks
 
 
 @pytest.mark.skipif(

@@ -73,6 +73,7 @@ def test_battle_background_0008_exports_map_material_motion(tmp_path: Path) -> N
     assert max_dx < 0.05, "grass wind should be a subtle oscillation, not a scroll"
     assert "btl_A_sea_iro045" not in materials
     assert motion["defaultClip"] != "ambient_composite"
+    assert "overlayClips" not in motion or not motion.get("overlayClips")
     unami = next(t for t in default["tracks"] if t["material"] == "btl_G_hama_Unami05")
     assert len(unami["frameOffsets"]) == 376
     assert unami["frameOffsets"][0] != unami["frameOffsets"][100]
@@ -141,6 +142,26 @@ def test_pick_default_world_motion_clip_prefers_long_ambient() -> None:
         },
     ]
     assert pick_default_world_motion_clip(clips) == "ambient_375f_loop_00"
+
+
+def test_pick_ambient_overlay_clips_layers_sea_caustics() -> None:
+    from rae.platforms.threeds.motion import pick_ambient_overlay_clips
+
+    clips = [
+        {
+            "id": "ambient_375f_loop_00",
+            "frameCount": 376,
+            "loop": True,
+            "tracks": [{"material": "btl_G_hama_Unami05"}],
+        },
+        {
+            "id": "ambient_480f_loop_10",
+            "frameCount": 481,
+            "loop": True,
+            "tracks": [{"material": "btl_A_sea_iro045"}],
+        },
+    ]
+    assert pick_ambient_overlay_clips(clips, "ambient_375f_loop_00") == []
 
 
 def test_kusa_grass_wind_bakes_unit0_only() -> None:

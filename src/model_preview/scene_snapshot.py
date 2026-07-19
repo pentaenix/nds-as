@@ -304,6 +304,10 @@ def _build_draw_meshes(
         if expanded is not None and tex_arr is not None:
             flat_v, flat_uv, flat_f = expanded
             blend_mode = preview_blend_mode(material_state, tex_arr, None)
+            material = getattr(getattr(mesh, "visual", None), "material", None)
+            material_name = str(getattr(material, "name", "") or "").casefold()
+            if blend_mode == "shadow" and not any(token in material_name for token in ("shadow", "kage", "shade")):
+                blend_mode = "blend"
             mesh_items.append((
                 _DrawMesh(
                     flat_v,
@@ -336,7 +340,7 @@ def _build_draw_meshes(
             blend_mode,
         ))
 
-    return _order_draw_meshes(mesh_items, yaw_deg=DEFAULT_YAW_DEG, pitch_deg=DEFAULT_PITCH_DEG)
+    return [item[0] for item in mesh_items]
 
 
 def expand_textured_corners(
@@ -366,8 +370,12 @@ def expand_textured_corners(
     for face_index, face in enumerate(source_faces):
         tri_v = vertices[face]
         tri_uv = face_uvs[face_index].copy()
-        tri_uv[:, 0] = np.mod(tri_uv[:, 0], 1.0)
-        tri_uv[:, 1] = 1.0 - np.mod(tri_uv[:, 1], 1.0)
+        # Keep the coordinates unwrapped until after raster interpolation.
+        # Wrapping the triangle corners independently collapses integral UV
+        # spans (for example 0..3 becomes 0..0), which turns large Nitro map
+        # surfaces into concentric bands instead of repeating the texture.
+        # sample_texture_nearest performs the wrap on the interpolated value.
+        tri_uv[:, 1] = 1.0 - tri_uv[:, 1]
         flat_v.extend(tri_v)
         flat_uv.extend(tri_uv)
         flat_f.append([offset, offset + 1, offset + 2])
@@ -405,7 +413,9 @@ def _render_draw_meshes(
     view = np.linalg.inv(pose)
 
     rgba = np.zeros((height, width, 4), dtype=np.uint8)
-    zbuf = np.full((height, width), np.inf, dtype=np.float32)
+    # Camera-space geometry in front of the eye has a negative Z value; larger
+    # (less-negative) values are closer to the camera.
+    zbuf = np.full((height, width), -np.inf, dtype=np.float32)
 
     aspect = width / max(height, 1)
     half_h = (max_dim * 0.55) / max(zoom_factor, 1e-3)
@@ -423,7 +433,12 @@ def _render_draw_meshes(
         sy = margin + (0.5 - (y - cy) / (2.0 * half_h)) * drawable_h
         return sx, sy
 
-    for draw_mesh in draw_meshes:
+    ordered_meshes = _order_draw_meshes(
+        [(mesh, mesh.blend_mode) for mesh in draw_meshes],
+        yaw_deg=yaw_deg,
+        pitch_deg=pitch_deg,
+    )
+    for draw_mesh in ordered_meshes:
         cam = _world_to_camera(draw_mesh.vertices, view)
         for face in draw_mesh.faces:
             tri_cam = cam[face]
@@ -450,7 +465,7 @@ def _render_draw_meshes(
                         continue
                     w0, w1, w2 = bc
                     z = w0 * z0 + w1 * z1 + w2 * z2
-                    if z >= zbuf[py, px]:
+                    if z <= zbuf[py, px]:
                         continue
 
                     if draw_mesh.texture is not None and tri_uv is not None:
@@ -471,6 +486,20 @@ def _render_draw_meshes(
                     if a <= 0:
                         continue
                     if draw_mesh.blend_mode == "cutout" and a < 128:
+                        continue
+                    if draw_mesh.blend_mode in {"blend", "shadow"} and a < 255:
+                        source_alpha = a / 255.0
+                        dest_alpha = rgba[py, px, 3] / 255.0
+                        out_alpha = source_alpha + dest_alpha * (1.0 - source_alpha)
+                        if out_alpha > 1e-6:
+                            for channel, value in enumerate((r, g, b)):
+                                dest = float(rgba[py, px, channel])
+                                composed = (
+                                    float(value) * source_alpha
+                                    + dest * dest_alpha * (1.0 - source_alpha)
+                                ) / out_alpha
+                                rgba[py, px, channel] = int(max(0, min(255, round(composed))))
+                            rgba[py, px, 3] = int(max(0, min(255, round(out_alpha * 255.0))))
                         continue
                     zbuf[py, px] = z
                     rgba[py, px, 0] = r
@@ -534,7 +563,19 @@ def sample_texture_nearest(
     py = max(0, min(h - 1, py))
     row = tex[py, px].astype(float)
     rgba = np.array([[row[0], row[1], row[2], row[3]]], dtype=float) / 255.0
-    adjusted = apply_material_preview_alpha(rgba, material_state)
+    if material_state is not None and material_state.alpha_mode == "MASK":
+        # MASK is a per-fragment alpha test. The vertex-bake helper suppresses
+        # masks because three corner samples cannot represent a cutout, but
+        # this sampler has the actual texel and must keep passing fragments.
+        adjusted = rgba.copy()
+        adjusted[:, 3] *= max(0.0, min(1.0, float(material_state.alpha)))
+        adjusted[:, 3] = np.where(
+            adjusted[:, 3] >= float(material_state.alpha_cutoff),
+            adjusted[:, 3],
+            0.0,
+        )
+    else:
+        adjusted = apply_material_preview_alpha(rgba, material_state)
     if adjusted is None or len(adjusted) == 0:
         adjusted = rgba
     out = np.clip(np.rint(adjusted[0] * 255.0), 0, 255).astype(np.int32)
@@ -639,6 +680,11 @@ def visual_image(mesh, *, mesh_index: int, geometry_name: str, ctx: PreviewTextu
     visual = getattr(mesh, "visual", None)
     material = getattr(visual, "material", None) if visual is not None else None
     image = getattr(material, "image", None) if material is not None else None
+    if image is None and material is not None:
+        # trimesh exposes embedded glTF PBR images through baseColorTexture,
+        # while SimpleMaterial uses image. Portable `.tile` GLBs must render
+        # without the original preview pipeline's external texture map.
+        image = getattr(material, "baseColorTexture", None)
     if image is not None:
         return image
     if mesh_index < len(ctx.mesh_texture_paths) and ctx.mesh_texture_paths[mesh_index] is not None:

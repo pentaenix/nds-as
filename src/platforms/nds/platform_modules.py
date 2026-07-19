@@ -7,6 +7,7 @@ from .model_module import NdsModelModule
 from .scan_module import NdsScanModule
 from .export_module import NdsExportModule
 from .texture_module import NdsTextureModule
+from .toolkit_module import NdsToolkitModule
 
 
 def build_nds_modules() -> PlatformModules:
@@ -18,5 +19,5 @@ def build_nds_modules() -> PlatformModules:
         audio=NdsAudioModule(),
         details=NdsDetailsModule(),
         export=NdsExportModule(),
-        toolkit=None,
+        toolkit=NdsToolkitModule(),
     )

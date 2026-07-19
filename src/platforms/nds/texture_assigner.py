@@ -14,6 +14,19 @@ from ...core.texture_assignments import (
 )
 
 
+def has_explicit_material_motion(glb_path: Path | None) -> bool:
+    """True when the NDS GLB carries decoded BTA0 motion tracks."""
+    if glb_path is None or not Path(glb_path).is_file():
+        return False
+    try:
+        from .gltf.glb_io import read_glb_json
+
+        motion = ((read_glb_json(Path(glb_path)).get("extras") or {}).get("rae") or {}).get("mapMaterialMotion")
+        return bool(isinstance(motion, dict) and motion.get("clips"))
+    except Exception:
+        return False
+
+
 def _glb_material_texture_paths(glb_path: Path) -> list[Path]:
     """PNG paths referenced by this GLB's material table (not every file in the folder)."""
     try:

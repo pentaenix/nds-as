@@ -37,14 +37,32 @@ def test_parse_visibility_section_bit_packed():
     assert tracks[1].values == [True, True, True, True]
 
 
-def test_mesh_bind_visibility_hides_vco_opt_mesh():
+def test_mesh_bind_visibility_keeps_distinct_vco_feature_mesh():
     defaults = mesh_bind_visibility(
         ["BodyAVco_OptMesh", "pm0001_00_BodyBSkin"],
         [],
         opt_mesh_materials={"BodyAVco_OptMesh": ["BodyAVco"]},
     )
-    assert defaults["BodyAVco_OptMesh"] is False
+    assert defaults["BodyAVco_OptMesh"] is True
     assert defaults["pm0001_00_BodyBSkin"] is True
+
+
+def test_mesh_bind_visibility_hides_geometry_matched_vco_alternate():
+    counts = ((852, 4320),)
+    defaults = mesh_bind_visibility(
+        ["BodyUniranVco_OptMesh", "BodyUniranNone_OptMesh"],
+        [],
+        opt_mesh_materials={
+            "BodyUniranVco_OptMesh": ["BodyUniranVco"],
+            "BodyUniranNone_OptMesh": ["BodyUniranNone"],
+        },
+        opt_mesh_geometry={
+            "BodyUniranVco_OptMesh": (counts, (-13.40, 12.10, -13.36, 13.40, 38.18, 13.36)),
+            "BodyUniranNone_OptMesh": (counts, (-13.38, 12.12, -13.34, 13.38, 38.16, 13.34)),
+        },
+    )
+    assert defaults["BodyUniranVco_OptMesh"] is False
+    assert defaults["BodyUniranNone_OptMesh"] is True
 
 
 @pytest.mark.skipif(not ROM.is_file(), reason="ROM not available")
@@ -109,7 +127,9 @@ def test_victini_export_leye_has_expression_sheet():
         vco = next(
             n for n in doc["nodes"] if n.get("name") == "BodyAVco_OptMesh" and "mesh" in n
         )
-        assert vco["extras"]["rae"]["defaultVisible"] is False
+        assert vco["extras"]["rae"]["defaultVisible"] is True
+        primitives = doc["meshes"][vco["mesh"]]["primitives"]
+        assert all("COLOR_0" in primitive["attributes"] for primitive in primitives)
 
 
 @pytest.mark.skipif(not ROM.is_file(), reason="ROM not available")

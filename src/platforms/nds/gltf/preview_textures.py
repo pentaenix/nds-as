@@ -255,6 +255,7 @@ def build_mesh_texture_paths_for_glb_parts(
     texture_bind_order: list[str] | None = None,
     fallback_paths: list[Path] | None = None,
     mesh_texture_overrides: dict[str, Path] | None = None,
+    prefer_material_bindings: bool = False,
 ) -> list[Path | None]:
     """Return one PNG path per GLB mesh part (no trimesh required)."""
     texture_by_name = texture_by_name or {}
@@ -271,6 +272,12 @@ def build_mesh_texture_paths_for_glb_parts(
         colocated,
         glb_material_map,
     )
+    if prefer_material_bindings:
+        # Resolution images are exact dictionary matches for the selected
+        # model. Do not let a larger, incorrectly linked apicula image replace
+        # them merely because it has more pixels.
+        for key, path in texture_by_name.items():
+            merged_names[str(key).casefold()] = path
     if glb_path is not None:
         unique_fallback = merge_texture_paths(
             ordered_texture_paths_from_glb(glb_path, colocated),
@@ -296,6 +303,7 @@ def build_mesh_texture_paths_for_glb_parts(
             material_to_texture=material_to_texture,
             texture_bind_order=texture_bind_order,
             fallback_paths=unique_fallback,
+            prefer_material_bindings=prefer_material_bindings,
         )
         out.append(path)
     return out
@@ -310,6 +318,7 @@ def build_mesh_texture_paths(
     texture_bind_order: list[str] | None = None,
     fallback_paths: list[Path] | None = None,
     mesh_texture_overrides: dict[str, Path] | None = None,
+    prefer_material_bindings: bool = False,
 ) -> list[Path | None]:
     """Return one PNG path per preview mesh (trimesh dump order)."""
     texture_by_name = texture_by_name or {}
@@ -326,6 +335,9 @@ def build_mesh_texture_paths(
         colocated,
         glb_material_map,
     )
+    if prefer_material_bindings:
+        for key, path in texture_by_name.items():
+            merged_names[str(key).casefold()] = path
     if glb_path is not None:
         unique_fallback = merge_texture_paths(
             ordered_texture_paths_from_glb(glb_path, colocated),
@@ -351,6 +363,7 @@ def build_mesh_texture_paths(
             material_to_texture=material_to_texture,
             texture_bind_order=texture_bind_order,
             fallback_paths=unique_fallback,
+            prefer_material_bindings=prefer_material_bindings,
         )
         out.append(path)
     return out
@@ -502,6 +515,7 @@ def _path_for_mesh(
     material_to_texture: dict[str, str],
     texture_bind_order: list[str],
     fallback_paths: list[Path],
+    prefer_material_bindings: bool = False,
 ) -> Path | None:
     visual = getattr(mesh, "visual", None)
     material = getattr(visual, "material", None) if visual is not None else None
@@ -519,6 +533,7 @@ def _path_for_mesh(
         texture_bind_order=texture_bind_order,
         fallback_paths=fallback_paths,
         extra_lookup_keys=_mesh_lookup_keys(geom_name, mesh),
+        prefer_material_bindings=prefer_material_bindings,
     )
 
 
@@ -535,9 +550,25 @@ def _path_for_glb_part(
     texture_bind_order: list[str],
     fallback_paths: list[Path],
     extra_lookup_keys: list[str] | None = None,
+    prefer_material_bindings: bool = False,
 ) -> Path | None:
     mat_name = str(label or "").strip()
     mat_key = mat_name.casefold()
+
+    # A verified resolver binding is more trustworthy than apicula's material
+    # URI for carved Gen 5 maps, whose texture-to-material table can be parsed
+    # incorrectly even though the material dictionary names remain intact.
+    if prefer_material_bindings and mat_key:
+        tex_name = material_to_texture.get(mat_key)
+        if tex_name:
+            path = _path_for_texture_name(
+                tex_name,
+                colocated=colocated,
+                texture_by_name=texture_by_name,
+                glb_path=glb_path,
+            )
+            if path is not None:
+                return path
 
     # 1. glTF material table from apicula — authoritative, avoids index swaps.
     if mat_key and mat_key in glb_material_map:

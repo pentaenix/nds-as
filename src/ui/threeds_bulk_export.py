@@ -76,7 +76,7 @@ def create_bulk_export_action(window: object) -> QAction:
 
 
 def install_threeds_bulk_export_ui(window: object) -> None:
-    """Wire toolbar button + visibility sync for bulk Pokémon export."""
+    """Wire Advanced-menu action + visibility sync for bulk Pokémon export."""
     action = getattr(window, "_threeds_pokemon_bulk_export_action", None)
     if action is None:
         advanced_menu = getattr(window, "advanced_menu", None)
@@ -93,26 +93,12 @@ def install_threeds_bulk_export_ui(window: object) -> None:
         lambda *args, **kwargs: sync_threeds_pokemon_bulk_export_ui(window, *args, **kwargs)
     )
 
-    button = getattr(window, "_threeds_pokemon_bulk_export_button", None)
-    if button is None and hasattr(window, "export_button"):
-        from PySide6.QtWidgets import QPushButton
-
-        button = QPushButton("Bulk Pokémon…")
-        button.setToolTip(action.toolTip())
-        button.clicked.connect(action.trigger)
-        button.setEnabled(False)
-        layout = window.export_button.parentWidget().layout()
-        if layout is not None:
-            layout.insertWidget(layout.indexOf(window.export_button) + 1, button)
-        window._threeds_pokemon_bulk_export_button = button
-
     sync_threeds_pokemon_bulk_export_ui(window)
 
 
 def sync_threeds_pokemon_bulk_export_ui(window: object, *, visible: bool | None = None) -> None:
     action = getattr(window, "_threeds_pokemon_bulk_export_action", None)
-    button = getattr(window, "_threeds_pokemon_bulk_export_button", None)
-    if action is None and button is None:
+    if action is None:
         return
     if visible is None:
         rom_path = getattr(window, "rom_path", None)
@@ -128,13 +114,9 @@ def sync_threeds_pokemon_bulk_export_ui(window: object, *, visible: bool | None 
                 product_code=getattr(window, "rom_game_code", None),
             )
         )
-    if action is not None:
-        # macOS native menu bar ignores setVisible() on QAction after first hide —
-        # keep the item in Advanced always and gate with enabled state instead.
-        action.setEnabled(visible)
-    if button is not None:
-        button.setVisible(visible)
-        button.setEnabled(visible)
+    # macOS native menu bar ignores setVisible() on QAction after first hide —
+    # keep the item in Advanced always and gate with enabled state instead.
+    action.setEnabled(visible)
     update = getattr(window, "_update_status", None)
     if callable(update) and visible:
         update("Bulk Pokémon export is available under Advanced → Bulk Export All Pokémon (GLB)…")

@@ -27,3 +27,8 @@ class NdsModelModule:
 
     def home_package_stub_message(self, asset: Asset) -> str | None:
         return None
+
+    def sync_inspector(self, window: object, asset: Asset | None) -> None:
+        from ..inspector import sync_nds_tile_extractor
+
+        sync_nds_tile_extractor(window, asset)

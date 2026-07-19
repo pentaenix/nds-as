@@ -37,12 +37,14 @@ export function captureMaterialPolicy(mat, gltfMat) {
     mat.userData.gltfMaterial = gltfMat;
   }
   const renderClass = renderClassForMaterial(mat, gltfMat);
+  const extras = mat?.userData?.gltfExtensions?.extras || gltfMat?.extras || {};
   mat.userData.raePolicy = {
     renderClass,
     alphaMode: String(gltfMat?.alphaMode || 'OPAQUE').toUpperCase(),
     alphaCutoff: Number(gltfMat?.alphaCutoff ?? 0.5),
     doubleSided: !!(gltfMat?.doubleSided || mat.doubleSided),
     nitroAlpha: nitroAlphaFromSources(mat, gltfMat, null),
+    pica: extras.rae?.pica || null,
   };
 }
 
@@ -58,6 +60,13 @@ function resolvePreviewBlendMode(mat) {
   const shadowDecal = renderClass === 'uniform_decal';
   const additive = renderClass === 'additive';
   const role = materialRoleForMaterial(mat);
+  const pica = pol.pica || (mat.userData.gltfMaterial?.extras?.rae?.pica || null);
+  const matName = String(mat.userData.gltfMaterial?.name || mat.name || '').toLowerCase();
+  const vertexAlphaBlend = matName.includes('sea_iro') && !!(
+    pica?.alphaBlendEnabled
+    && pica.sourceRgbFactor === 'source_alpha'
+    && pica.destinationRgbFactor === 'one_minus_source_alpha'
+  );
 
   if (role === 'eye_iris' && (renderClass === 'mask' || alphaMode === 'MASK')) {
     return { mode: 'cutout', alphaCutoff, nitroAlpha };
@@ -79,6 +88,9 @@ function resolvePreviewBlendMode(mat) {
   }
 
   if (alphaMode === 'BLEND' || renderClass === 'blend') {
+    if (vertexAlphaBlend) {
+      return { mode: 'blend', alphaCutoff, nitroAlpha };
+    }
     if (hasCutout && !hasPartial) {
       return { mode: 'cutout', alphaCutoff, nitroAlpha };
     }
@@ -164,6 +176,21 @@ function applyPreviewBlendMode(mat, blend) {
       break;
     default:
       break;
+  }
+
+  const pica = pol.pica;
+  if (pica && pica.authoritative !== false) {
+    mat.depthWrite = !!pica.depthWriteEnabled;
+    const matName = String(src?.name || mat.name || '').toLowerCase();
+    const skipAlphaTest = matName.includes('sea_iro');
+    if (pica.alphaTestEnabled && !skipAlphaTest) {
+      const reference = Math.max(0, Math.min(1, Number(pica.alphaTestReference) || 0));
+      if (pica.alphaTestFunction === 'greater') {
+        mat.alphaTest = Math.max(mat.alphaTest, reference + 1 / 255);
+      } else if (pica.alphaTestFunction === 'greater_or_equal') {
+        mat.alphaTest = Math.max(mat.alphaTest, reference);
+      }
+    }
   }
 
   mat.needsUpdate = true;
@@ -360,6 +387,9 @@ export function applyRaeMaterialPolicy(root) {
     const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
     for (const mat of mats) {
       if (!mat) continue;
+      if (obj.geometry?.attributes?.color?.itemSize >= 4) {
+        mat.vertexColors = true;
+      }
       if (!mat.userData.raePolicy) {
         captureMaterialPolicy(mat, mat.userData.gltfMaterial || null);
       }
@@ -367,7 +397,9 @@ export function applyRaeMaterialPolicy(root) {
       const renderClass = mat.userData.raePolicy?.renderClass || renderClassForMaterial(mat);
       const role = materialRoleForMaterial(mat, mat.userData.gltfMaterial || null);
       const blend = resolvePreviewBlendMode(mat);
+      const matName = String(mat.userData.gltfMaterial?.name || mat.name || '').toLowerCase();
       let order = renderClass === 'uniform_decal' ? 0 : (blend.mode === 'blend' || blend.mode === 'additive') ? 2 : 1;
+      if (matName.includes('sea_iro')) order = 1;
       if (role === 'eye_sclera') order = 2;
       if (role === 'eye_iris') order = 3;
       obj.renderOrder = order;
@@ -395,6 +427,7 @@ export function installMapMaterialMotion(root, mapMotion) {
     clips: mapMotion.clips,
     frameRate: Number(mapMotion.frameRate) || MAP_MOTION_FPS,
     defaultClip: mapMotion.defaultClip || mapMotion.clips[0]?.id || null,
+    overlayClips: Array.isArray(mapMotion.overlayClips) ? mapMotion.overlayClips.slice() : [],
     activeClipId: null,
     playing: false,
     elapsedMs: 0,
@@ -429,9 +462,15 @@ function resetMapMotionOffset(mat) {
   mat.needsUpdate = true;
 }
 
-function applyMapMotionClipToRoot(root, clip) {
+function applyMapMotionClipToRoot(root, clip, extraClips = []) {
   if (!root || !clip) return 0;
-  const byMaterial = new Map((clip.tracks || []).map((track) => [track.material, track]));
+  const clips = [clip, ...(extraClips || [])].filter(Boolean);
+  const byMaterial = new Map();
+  for (const activeClip of clips) {
+    for (const track of activeClip.tracks || []) {
+      byMaterial.set(track.material, track);
+    }
+  }
   let count = 0;
   root.traverse((obj) => {
     if (!obj.isMesh || !obj.material) return;
@@ -470,9 +509,15 @@ function sampleMapMotionMeshVisibility(root, visMap, frameIndex) {
 export function startMapMaterialMotion(root, clipId) {
   const mapMotion = root?.userData?.raeMapMaterialMotion;
   if (!mapMotion) return false;
-  const clip = findMapMotionClip(mapMotion, clipId ?? mapMotion.defaultClip);
+  const resolvedId = clipId ?? mapMotion.defaultClip;
+  const clip = findMapMotionClip(mapMotion, resolvedId);
   if (!clip?.tracks?.length && !clip?.meshVisibility) return false;
-  applyMapMotionClipToRoot(root, clip);
+  const overlayClips = resolvedId === mapMotion.defaultClip
+    ? (mapMotion.overlayClips || [])
+        .map((id) => findMapMotionClip(mapMotion, id))
+        .filter((overlay) => overlay?.tracks?.length)
+    : [];
+  applyMapMotionClipToRoot(root, clip, overlayClips);
   mapMotion.activeClipId = clip.id;
   mapMotion.playing = true;
   mapMotion.elapsedMs = 0;

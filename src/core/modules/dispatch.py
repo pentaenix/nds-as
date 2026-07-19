@@ -79,6 +79,17 @@ class PlatformDispatch:
         return modules.model.supports_model_inspector(asset)
 
     @staticmethod
+    def sync_model_inspector(asset, *, window: object, rom_platform_id: str | None) -> None:
+        modules = (
+            modules_for_asset(asset, rom_platform_id=rom_platform_id)
+            if asset is not None
+            else get_platform_modules(rom_platform_id or "nds")
+        )
+        sync = getattr(modules.model, "sync_inspector", None)
+        if callable(sync):
+            sync(window, asset)
+
+    @staticmethod
     def install_toolkit(window: object, *, rom_platform_id: str | None = None) -> None:
         from ...core.registry import active_platforms
         from .platform_boundaries import TOOLKIT_PLATFORM_IDS

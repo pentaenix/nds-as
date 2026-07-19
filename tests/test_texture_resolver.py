@@ -7,6 +7,9 @@ from rae.model_texture_resolver import build_preview_texture_maps, resolve_model
 from rae.nitro_models import MaterialBinding
 from rae.scanner import Asset
 from rae.texture_library import TextureLibrary, TextureLibraryStore
+from rae.platforms.nds.model_texture_resolver import ModelTextureResolution, ResolvedMaterialTexture
+from rae.platforms.nds.nitro.types import DecodedImage
+from rae.platforms.nds.nitro_models import NsbmdManifest
 from test_decoders import make_btx0_4bpp
 
 
@@ -29,6 +32,46 @@ def test_texture_library_lists_exact_btx_texture_name():
     assert len(matches) == 1
     assert matches[0].texture_asset_id == "tex"
     assert lib.decode_binding(matches[0]) is not None
+
+
+def test_carved_map_prefers_material_name_over_unreliable_cross_binding():
+    from rae.platforms.nds.model_texture_resolver import _texture_request_names
+
+    model = asset("map", "a/0/0/8/file_0012.bin#carved_0x14.nsbmd", "BMD0", b"BMD0")
+    model.carved = True
+    material = MaterialBinding("gake01a", "ue_grass01", "ue_grass01_pl")
+
+    assert _texture_request_names(model, material)[:2] == ["gake01a", "ue_grass01"]
+
+
+def test_carved_map_material_frame_name_accepts_dot_variant():
+    from rae.platforms.nds.model_texture_resolver import _texture_request_names
+
+    model = asset("map", "a/0/0/8/file_0012.bin#carved_0x14.nsbmd", "BMD0", b"BMD0")
+    model.carved = True
+    material = MaterialBinding("shore01_1", None, None)
+
+    assert _texture_request_names(model, material) == ["shore01_1", "shore01.1"]
+
+
+def test_verified_binding_restores_material_key_over_corrupt_manifest_alias(tmp_path: Path):
+    cliff = tmp_path / "gake01a.png"
+    grass = tmp_path / "ue_grass01.png"
+    cliff.touch()
+    grass.touch()
+    cliff_image = DecodedImage("gake01a", 16, 16, b"\0" * (16 * 16 * 4), "test")
+    grass_image = DecodedImage("ue_grass01", 16, 32, b"\0" * (16 * 32 * 4), "test")
+    resolution = ModelTextureResolution(
+        "textured_verified",
+        NsbmdManifest(materials=[MaterialBinding("gake01a", "ue_grass01")]),
+        bindings=[ResolvedMaterialTexture("gake01a", "gake01a", None, "tex", "tex.nsbtx", cliff_image, "exact")],
+        decoded_images=[cliff_image, grass_image],
+    )
+
+    texture_map, material_map, _order = build_preview_texture_maps(resolution, [cliff, grass])
+
+    assert material_map["gake01a"] == "gake01a"
+    assert texture_map["gake01a"] == cliff
 
 
 def test_model_resolver_uses_exact_texture_dictionary_match():
