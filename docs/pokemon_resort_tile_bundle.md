@@ -160,6 +160,18 @@ the original position, rotation, pack, and model index instead of guessing from
 terrain material names. This resolver is owned entirely by the NDS platform and
 does not change the shared renderer or another platform's modules.
 
+Black/White and Black 2/White 2 place their AB building packs in different
+NARC paths. RAE selects the release-specific model/texture pair from its actual
+`AB` and `BTX0` members, then validates the pack against the map's placed model
+ids. An AB building definition may reference a separate door model at bytes
+`0x04..0x05` followed by its signed local X/Y/Z offset. Exact-map composition
+adds the door's closed state at that offset. Standalone building preview, GLB,
+and `.tile` export include the same door plus its embedded open/close clips.
+Door skeletal and material clips are interaction states: exact maps keep their
+bind-pose door closed, and a focused building waits for the Animations tab's
+Play action instead of looping the door automatically. Shared door UIDs omitted
+from an individual AB pack are resolved from the release's other AB bundles.
+
 AreaData material animation is resolved again after terrain and placed objects
 are composed. This matters for models such as `wbt_fountain`: its
 `wbt_foun_01*` and `wbt_foun_02*` tracks live in the map BTA resource even
@@ -379,6 +391,17 @@ The open-ocean body's opaque lower plane and translucent upper plane carry
 source-derived world UV bases, which keeps their independent scroll directions
 continuous across adjacent 1x1 placements. Beach and rock transitions retain
 their authored mesh UV islands and are never assigned the body's world basis.
+
+## Canonical Generation V grass set
+
+The Resort Grass tab can be rebuilt from exact Black/White map cells without
+Pokemon DS Map Studio. `grass01ax` supplies a repeatable 1x1 ground cell.
+`ue_grass01` retains the AreaData `BTA0` UV-motion track (240 source frames,
+30 Hz Nitro source cadence, 15 Hz overworld playback). `yamagrs01` is reduced
+from repeated map occurrences to eight walkable 1x1 height fields: four
+directional straight ramps and four high-corner ramps. Each bundle embeds its
+top-down orthographic preview and preserves a zero-height lower edge with a
+one-tile upper edge for Resort ramp pairing.
 
 ## Headless NDS tile export API
 

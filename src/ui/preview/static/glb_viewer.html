@@ -34,6 +34,28 @@
       font: 13px/1.4 sans-serif;
       background: rgba(0, 0, 0, 0.55);
     }
+    #pan-knob {
+      position: fixed;
+      left: 12px;
+      bottom: 12px;
+      z-index: 4;
+      width: 34px;
+      height: 34px;
+      border: 1px solid rgba(255, 255, 255, 0.48);
+      border-radius: 50%;
+      padding: 0;
+      color: rgba(255, 255, 255, 0.9);
+      background: rgba(17, 23, 31, 0.78);
+      box-shadow: 0 2px 9px rgba(0, 0, 0, 0.38);
+      cursor: grab;
+      user-select: none;
+      touch-action: none;
+      font: 20px/32px sans-serif;
+      text-align: center;
+    }
+    #pan-knob:hover { background: rgba(34, 46, 61, 0.9); }
+    #pan-knob.dragging { cursor: grabbing; background: rgba(48, 72, 96, 0.94); }
+    #pan-knob::before { content: "✥"; }
   </style>
   <script type="importmap">
   {
@@ -45,6 +67,7 @@
 </head>
 <body class="bg-checkered">
   <div id="error"></div>
+  <button id="pan-knob" type="button" aria-label="Drag to move the 3D view" title="Drag to move the 3D view"></button>
   <script>
     window.addEventListener('unhandledrejection', (e) => {
       const el = document.getElementById('error');
@@ -97,7 +120,7 @@
     let camera;
     let pivot;
     let disposeLighting = () => {};
-    let cam = { yaw: 35, pitch: 28, zoomFactor: 1 };
+    let cam = { yaw: 35, pitch: 28, zoomFactor: 1, panX: 0, panY: 0 };
     let animId = 0;
     let currentUrl = '';
     let activeLoadToken = 0;
@@ -293,6 +316,11 @@
         Math.cos(yaw) * Math.cos(pitch) * dist,
       );
       camera.lookAt(0, 0, 0);
+      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+      const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+      const target = right.multiplyScalar(cam.panX || 0).add(up.multiplyScalar(cam.panY || 0));
+      camera.position.add(target);
+      camera.lookAt(target);
     }
 
     function disposeModel(root) {
@@ -592,6 +620,43 @@
         cam.yaw += dx * 0.35;
         cam.pitch = Math.max(-80, Math.min(80, cam.pitch + dy * 0.25));
       });
+      const panKnob = document.getElementById('pan-knob');
+      let panning = false;
+      let panPointerId = -1;
+      let panLastX = 0;
+      let panLastY = 0;
+      panKnob?.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        panning = true;
+        panPointerId = e.pointerId;
+        panLastX = e.clientX;
+        panLastY = e.clientY;
+        panKnob.classList.add('dragging');
+        panKnob.setPointerCapture?.(e.pointerId);
+        e.preventDefault();
+        e.stopPropagation();
+      });
+      panKnob?.addEventListener('pointermove', (e) => {
+        if (!panning || e.pointerId !== panPointerId) return;
+        const dx = e.clientX - panLastX;
+        const dy = e.clientY - panLastY;
+        panLastX = e.clientX;
+        panLastY = e.clientY;
+        const visibleWorldHeight = (orbitExtent * 1.1) / Math.max(cam.zoomFactor || 1, 0.001);
+        const worldPerPixel = visibleWorldHeight / Math.max(window.innerHeight, 1);
+        cam.panX -= dx * worldPerPixel;
+        cam.panY += dy * worldPerPixel;
+        e.preventDefault();
+        e.stopPropagation();
+      });
+      const stopPanning = (e) => {
+        if (!panning || (e?.pointerId !== undefined && e.pointerId !== panPointerId)) return;
+        panning = false;
+        panPointerId = -1;
+        panKnob?.classList.remove('dragging');
+      };
+      panKnob?.addEventListener('pointerup', stopPanning);
+      panKnob?.addEventListener('pointercancel', stopPanning);
       renderer.domElement.addEventListener('wheel', (e) => {
         const factor = e.deltaY > 0 ? 1.1 : 0.9;
         cam.zoomFactor = Math.max(0.2, Math.min(8, (cam.zoomFactor || 1) * factor));
@@ -866,6 +931,8 @@
         cam.yaw = 35;
         cam.pitch = 28;
         cam.zoomFactor = 1;
+        cam.panX = 0;
+        cam.panY = 0;
         if (pivot?.children.length) {
           fitCamera(window.innerWidth, window.innerHeight);
         }

@@ -1821,12 +1821,22 @@ class NdsMapObjectsWidget(QWidget):
         self.export_map_button.setEnabled(True)
         self.export_all_button.setEnabled(self.variant_combo.count() > 1)
         self.objects.clear()
+
+        door_count = 0
+        inferred_door_count = 0
         for preview_index, preview in enumerate(composition.previews):
             placement = preview.placement
+            door = preview.door
+            if door is not None:
+                door_count += 1
+                inferred_door_count += int(door.source == "event_warp")
+            model_label = f"{preview.model.name}  [model {preview.model.index}]"
+            if door is not None:
+                model_label += f"  +  {door.model.name} (closed)"
             item = QTreeWidgetItem(
                 [
                     str(placement.index),
-                    f"{preview.model.name}  [model {preview.model.index}]",
+                    model_label,
                     f"{placement.x:g}, {placement.y:g}, {placement.z:g}",
                     f"{placement.rotation_degrees}°",
                 ]
@@ -1834,7 +1844,19 @@ class NdsMapObjectsWidget(QWidget):
             item.setData(0, Qt.ItemDataRole.UserRole, preview_index)
             item.setToolTip(
                 1,
-                f"{composition.objects.model_archive_path}, pack {composition.objects.area.building_pack}, model {preview.model.index}",
+                f"{composition.objects.model_archive_path}, pack {composition.objects.area.building_pack}, model {preview.model.index}"
+                + (
+                    f"\nAnimated door {door.model.index}: {door.model.name}; "
+                    + (
+                        f"inferred from destination {door.interior_family} and event warp "
+                        f"(confidence {door.confidence:.0%})."
+                        if door.source == "event_warp"
+                        else "referenced directly by the building's AB record."
+                    )
+                    + " Select the building and press Play to animate it."
+                    if door is not None
+                    else "\nNo explicit or high-confidence event-warp door resolves for this placement."
+                ),
             )
             self.objects.addTopLevelItem(item)
         for column in range(4):
@@ -1843,7 +1865,9 @@ class NdsMapObjectsWidget(QWidget):
         location = "outside" if area.is_outside else "inside"
         self.summary.setText(
             f"Exact AreaData textures and DS animations loaded; {len(composition.previews)} placed model(s) "
-            f"loaded from {location} building pack {area.building_pack}; "
+            f"and {door_count} animated door attachment(s) loaded "
+            f"({door_count - inferred_door_count} explicit, {inferred_door_count} inferred from ROM event warps) from "
+            f"{location} building pack {area.building_pack}; "
             f"variant {composition.objects.variant_label} (AreaData {area.index}, "
             + (
                 f"Zone {composition.objects.zone_index})."
@@ -2005,7 +2029,10 @@ class NdsMapObjectsWidget(QWidget):
         tabs = getattr(self._window, "preview_inspector_tabs", None)
         animation_index = getattr(self._window, "_inspector_tab_nds_animations", None)
         if animations is not None:
-            count = animations.set_glb(selected.glb_path, autoplay=True)
+            # Building door clips are brief interaction states. Keep the
+            # selected model in its closed bind pose until the user presses
+            # Play instead of looping a door continuously in the viewport.
+            count = animations.set_glb(selected.glb_path, autoplay=False)
             if tabs is not None and animation_index is not None:
                 tabs.setTabVisible(animation_index, bool(count))
         try:
@@ -2014,7 +2041,8 @@ class NdsMapObjectsWidget(QWidget):
             motion = (((read_glb(selected.glb_path).json.get("extras") or {}).get("rae") or {}).get("mapMaterialMotion") or {})
             default_clip = str(motion.get("defaultClip") or "")
             preview = getattr(self._window, "preview", None)
-            if default_clip and preview is not None:
+            has_interaction_door = selected.door is not None
+            if default_clip and preview is not None and not has_interaction_door:
                 for delay in (650, 1300):
                     QTimer.singleShot(delay, lambda clip=default_clip: preview.play_glb_animation(clip))
         except Exception:

@@ -8,8 +8,10 @@ from __future__ import annotations
 import re
 import shutil
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from math import cos, radians, sin
 from pathlib import Path
+from statistics import median
 from typing import Callable
 
 from ...core.assets import Asset
@@ -71,6 +73,45 @@ class Gen5BuildingModel:
 
 
 @dataclass(frozen=True)
+class Gen5BuildingDoor:
+    model: Gen5BuildingModel
+    translation: tuple[float, float, float]
+
+
+@dataclass(frozen=True)
+class Gen5PlacedDoor:
+    """A door attached to one placed building, with its ROM provenance."""
+
+    placement_index: int
+    model: Gen5BuildingModel
+    translation: tuple[float, float, float]
+    source: str
+    confidence: float
+    destination_zone: int | None = None
+    interior_family: str = ""
+
+
+@dataclass(frozen=True)
+class _Gen5Warp:
+    destination_zone: int
+    x: int
+    y: int
+    z: int
+    width: int
+    height: int
+
+
+@dataclass(frozen=True)
+class _DoorProfile:
+    interior_family: str
+    door_model_index: int
+    door_model_name: str
+    correction: tuple[float, float, float]
+    examples: int
+    confidence: float
+
+
+@dataclass(frozen=True)
 class Gen5MapVariant:
     """One exportable geometry/AreaData combination for a Gen 5 map."""
 
@@ -89,10 +130,12 @@ class Gen5MapObjectSet:
     area: Gen5AreaData
     placements: tuple[Gen5MapPlacement, ...]
     models: dict[int, Gen5BuildingModel]
+    doors: tuple[Gen5PlacedDoor, ...]
     unresolved_model_indices: tuple[int, ...]
     terrain_data: bytes
     map_texture_data: bytes
     material_animation_data: bytes | None
+    additional_material_animation_data: tuple[bytes, ...]
     pattern_animation_data: bytes | None
     texture_data: bytes
     model_archive_path: str
@@ -107,6 +150,7 @@ class Gen5ObjectPreview:
     placement: Gen5MapPlacement
     model: Gen5BuildingModel
     glb_path: Path
+    door: Gen5PlacedDoor | None = None
 
 
 @dataclass(frozen=True)
@@ -286,6 +330,29 @@ def embedded_model_animation_resources(metadata: bytes) -> tuple[tuple[str, byte
     return tuple(resources)
 
 
+def building_door_attachment(
+    building: Gen5BuildingModel,
+    models: dict[int, Gen5BuildingModel],
+) -> Gen5BuildingDoor | None:
+    """Return the door model and authored local offset from an AB definition."""
+    if len(building.metadata) < 12:
+        return None
+    door_id = struct.unpack_from("<H", building.metadata, 4)[0]
+    if door_id == 0xFFFF or door_id == building.index:
+        return None
+    door = models.get(door_id)
+    if door is None:
+        return None
+    # The three signed shorts following the door definition id are local model
+    # coordinates. Apicula's map handoff negates Nitro Z, matching the placed
+    # object transform used below.
+    x, y, z = struct.unpack_from("<hhh", building.metadata, 6)
+    return Gen5BuildingDoor(
+        model=door,
+        translation=(float(x), float(y), -float(z)),
+    )
+
+
 def _narc_files(data: bytes, virtual_path: str) -> list[bytes]:
     from .narc import NarcArchive, looks_like_narc
 
@@ -373,6 +440,126 @@ def _matrix_zone_references(
         if matrix_index in zones_by_matrix:
             references.setdefault(map_id, (matrix_index, zones_by_matrix[matrix_index]))
     return references
+
+
+def _matrix_map_locations(
+    matrix_files: list[bytes],
+    zone_data: bytes,
+) -> dict[int, tuple[int, int, int, int]]:
+    """Return map -> (matrix, zone, cell x, cell y) for live matrix cells."""
+    locations: dict[int, tuple[int, int, int, int]] = {}
+    for map_id, location in _matrix_all_map_locations(matrix_files, zone_data):
+        locations.setdefault(map_id, location)
+    return locations
+
+
+def _matrix_all_map_locations(
+    matrix_files: list[bytes],
+    zone_data: bytes,
+) -> tuple[tuple[int, tuple[int, int, int, int]], ...]:
+    """Return every live matrix occurrence, including reused map geometry."""
+    zone_by_matrix: dict[int, int] = {}
+    for zone_index in range(len(zone_data) // _ZONE_RECORD_SIZE):
+        matrix_index = struct.unpack_from(
+            "<H", zone_data, zone_index * _ZONE_RECORD_SIZE + 4
+        )[0]
+        zone_by_matrix.setdefault(matrix_index, zone_index)
+    locations: list[tuple[int, tuple[int, int, int, int]]] = []
+    for matrix_index, data in enumerate(matrix_files):
+        if len(data) < 8:
+            continue
+        include_headers, width, height = struct.unpack_from("<IHH", data, 0)
+        count = width * height
+        maps_end = 8 + count * 4
+        headers_end = maps_end + count * 4
+        if count <= 0 or maps_end > len(data):
+            continue
+        map_ids = struct.unpack_from(f"<{count}I", data, 8)
+        for cell, map_id in enumerate(map_ids):
+            if map_id == 0xFFFFFFFF:
+                continue
+            zone_index = zone_by_matrix.get(matrix_index)
+            if include_headers and headers_end <= len(data):
+                candidate = struct.unpack_from("<I", data, maps_end + cell * 4)[0]
+                if candidate != 0xFFFFFFFF:
+                    zone_index = candidate
+            if zone_index is not None:
+                locations.append(
+                    (
+                        map_id,
+                        (matrix_index, zone_index, cell % width, cell // width),
+                    )
+                )
+    return tuple(locations)
+
+
+def _parse_gen5_warps(data: bytes) -> tuple[_Gen5Warp, ...]:
+    """Read the fixed-size warp section of a Gen 5 event file."""
+    if len(data) < 8:
+        return ()
+    furniture_count = data[4]
+    actor_count = data[5]
+    warp_count = data[6]
+    # Event sections are ordered, rather than packed backward from EOF:
+    # 8-byte header, 20-byte furniture records, 36-byte actor records, then
+    # 20-byte warps. Trigger records that follow are variable across versions.
+    start = 8 + furniture_count * 20 + actor_count * 36
+    if start < 8 or start + warp_count * 20 > len(data):
+        return ()
+    warps: list[_Gen5Warp] = []
+    for index in range(warp_count):
+        offset = start + index * 20
+        destination_zone = struct.unpack_from("<H", data, offset)[0]
+        x, y, z, width, height = struct.unpack_from("<hhhhh", data, offset + 8)
+        warps.append(
+            _Gen5Warp(
+                destination_zone=destination_zone,
+                x=x,
+                y=y,
+                z=z,
+                width=width,
+                height=height,
+            )
+        )
+    return tuple(warps)
+
+
+def _zone_event_index(zone_data: bytes, zone_index: int) -> int | None:
+    offset = zone_index * _ZONE_RECORD_SIZE
+    if offset < 0 or offset + _ZONE_RECORD_SIZE > len(zone_data):
+        return None
+    # Field 11 in the BW/B2W2 ZoneData record selects a/1/2/5.
+    return struct.unpack_from("<H", zone_data, offset + 22)[0]
+
+
+def _placement_local_point(
+    placement: Gen5MapPlacement,
+    world_x: float,
+    world_y: float,
+    world_z: float,
+) -> tuple[float, float, float]:
+    """Transform a GLB-world point into the placement's local coordinates."""
+    angle = radians(placement.rotation_degrees)
+    dx = world_x - placement.x
+    dz = world_z - (-placement.z)
+    return (
+        cos(angle) * dx - sin(angle) * dz,
+        world_y - placement.y,
+        sin(angle) * dx + cos(angle) * dz,
+    )
+
+
+def _placed_door_world_point(
+    placement: Gen5MapPlacement,
+    translation: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    angle = radians(placement.rotation_degrees)
+    x, y, z = translation
+    return (
+        placement.x + cos(angle) * x + sin(angle) * z,
+        placement.y + y,
+        -placement.z - sin(angle) * x + cos(angle) * z,
+    )
 
 
 def _matrix_zone_for_map(
@@ -566,6 +753,501 @@ def _map_variants(
     return tuple(variants)
 
 
+def _gen5_building_archives(
+    rom_files: dict[str, bytes],
+    *,
+    outside: bool,
+) -> tuple[str, str, list[bytes], list[bytes]]:
+    """Select the matching BW or B2W2 model/texture archive pair.
+
+    The two Gen 5 releases use the same AreaData records but moved the AB
+    building packs. Checking the actual AB/BTX0 members keeps this resolver
+    release-independent instead of treating Black/White texture data as a
+    malformed B2W2 model pack.
+    """
+    candidates = (
+        (("a/2/2/9", "a/1/7/6"), ("a/2/2/5", "a/1/7/4"))
+        if outside
+        else (("a/2/3/0", "a/1/7/7"), ("a/2/2/6", "a/1/7/5"))
+    )
+    for model_path, texture_path in candidates:
+        if model_path not in rom_files or texture_path not in rom_files:
+            continue
+        model_packs = _narc_files(rom_files[model_path], model_path)
+        texture_packs = _narc_files(rom_files[texture_path], texture_path)
+        if any(payload[:2] == b"AB" for payload in model_packs) and any(
+            payload[:4] == b"BTX0" for payload in texture_packs
+        ):
+            return model_path, texture_path, model_packs, texture_packs
+    kind = "outside" if outside else "inside"
+    raise ValueError(f"ROM is missing a recognized Gen 5 {kind} building archive pair")
+
+
+def _gen5_outside_model_packs(rom_files: dict[str, bytes]) -> list[bytes]:
+    try:
+        return _gen5_building_archives(rom_files, outside=True)[2]
+    except ValueError:
+        return []
+
+
+_DOOR_PROFILE_CACHE: dict[str, dict[str, _DoorProfile]] = {}
+
+
+def _matrix_map_ids(data: bytes) -> tuple[int, ...]:
+    if len(data) < 8:
+        return ()
+    _headers, width, height = struct.unpack_from("<IHH", data, 0)
+    count = width * height
+    if count <= 0 or 8 + count * 4 > len(data):
+        return ()
+    return tuple(
+        map_id
+        for map_id in struct.unpack_from(f"<{count}I", data, 8)
+        if map_id != 0xFFFFFFFF
+    )
+
+
+def _interior_family_for_zone(
+    zone_index: int,
+    zone_data: bytes,
+    matrix_files: list[bytes],
+    maps: list[bytes],
+) -> str:
+    offset = zone_index * _ZONE_RECORD_SIZE
+    if offset < 0 or offset + _ZONE_RECORD_SIZE > len(zone_data):
+        return ""
+    matrix_index = struct.unpack_from("<H", zone_data, offset + 4)[0]
+    if matrix_index >= len(matrix_files):
+        return ""
+    names: list[str] = []
+    for map_id in _matrix_map_ids(matrix_files[matrix_index]):
+        if map_id >= len(maps):
+            continue
+        try:
+            name = _terrain_model_name(maps[map_id]).casefold()
+        except ValueError:
+            continue
+        if name:
+            names.append(name)
+    return next((name for name in names if name.startswith("m_")), names[0] if names else "")
+
+
+def _learn_door_profiles(
+    cache_key: str,
+    rom_files: dict[str, bytes],
+) -> dict[str, _DoorProfile]:
+    """Learn entrance-family door choices and offsets from explicit ROM pairs."""
+    cached = _DOOR_PROFILE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    required = ("a/0/0/8", "a/0/0/9", "a/0/1/2", "a/0/1/3", "a/1/2/5")
+    if any(path not in rom_files for path in required):
+        _DOOR_PROFILE_CACHE[cache_key] = {}
+        return {}
+    maps = _narc_files(rom_files["a/0/0/8"], "a/0/0/8")
+    matrices = _narc_files(rom_files["a/0/0/9"], "a/0/0/9")
+    zone_files = _narc_files(rom_files["a/0/1/2"], "a/0/1/2")
+    events = _narc_files(rom_files["a/1/2/5"], "a/1/2/5")
+    if not zone_files:
+        _DOOR_PROFILE_CACHE[cache_key] = {}
+        return {}
+    zone_data = zone_files[0]
+    area_data = rom_files["a/0/1/3"]
+    locations = _matrix_all_map_locations(matrices, zone_data)
+    try:
+        _model_path, _texture_path, model_packs, _texture_packs = _gen5_building_archives(
+            rom_files, outside=True
+        )
+    except ValueError:
+        _DOOR_PROFILE_CACHE[cache_key] = {}
+        return {}
+    parsed_packs: dict[int, dict[int, Gen5BuildingModel]] = {}
+    observations: dict[
+        str,
+        list[tuple[int, str, tuple[float, float, float]]],
+    ] = {}
+    for map_id, (_matrix, zone_index, cell_x, cell_y) in locations:
+        if map_id >= len(maps):
+            continue
+        zone_offset = zone_index * _ZONE_RECORD_SIZE
+        if zone_offset + _ZONE_RECORD_SIZE > len(zone_data):
+            continue
+        try:
+            area_index = struct.unpack_from("<H", zone_data, zone_offset + 2)[0]
+            area = parse_area_data(area_data, area_index)
+            if not area.is_outside or area.building_pack >= len(model_packs):
+                continue
+            placements = parse_map_placements(maps[map_id])
+        except ValueError:
+            continue
+        event_index = _zone_event_index(zone_data, zone_index)
+        if event_index is None or event_index >= len(events):
+            continue
+        warps = [
+            warp
+            for warp in _parse_gen5_warps(events[event_index])
+            if warp.width == 1 and warp.height == 1
+        ]
+        if not warps:
+            continue
+        pack_index = area.building_pack
+        placement_ids = {placement.model_index for placement in placements}
+        if placement_ids:
+            scores: list[tuple[int, int, int]] = []
+            for candidate_index, payload in enumerate(model_packs):
+                if candidate_index not in parsed_packs:
+                    try:
+                        parsed = parse_ab_building_pack(payload)
+                        parsed_packs[candidate_index] = _complete_referenced_door_models(
+                            parsed, model_packs
+                        )
+                    except ValueError:
+                        parsed_packs[candidate_index] = {}
+                coverage = len(placement_ids & set(parsed_packs[candidate_index]))
+                scores.append((coverage, int(candidate_index == area.building_pack), -candidate_index))
+            if scores:
+                best = max(scores)
+                if best[0] > 0:
+                    pack_index = -best[2]
+        if pack_index not in parsed_packs:
+            try:
+                parsed = parse_ab_building_pack(model_packs[pack_index])
+                parsed_packs[pack_index] = _complete_referenced_door_models(
+                    parsed, model_packs
+                )
+            except ValueError:
+                parsed_packs[pack_index] = {}
+        models = parsed_packs[pack_index]
+        center_x = cell_x * 512 + 256
+        center_z = cell_y * 512 + 256
+        candidates = [
+            (
+                warp,
+                float(warp.x - center_x),
+                float(warp.y),
+                float(warp.z - center_z),
+            )
+            for warp in warps
+            if abs(warp.x - center_x) <= 256 and abs(warp.z - center_z) <= 256
+        ]
+        used_warps: set[int] = set()
+        for placement in placements:
+            building = models.get(placement.model_index)
+            if building is None:
+                continue
+            door = building_door_attachment(building, models)
+            if door is None:
+                continue
+            door_world = _placed_door_world_point(placement, door.translation)
+            nearest: tuple[float, int, _Gen5Warp, float, float, float] | None = None
+            for warp_index, (warp, world_x, world_y, world_z) in enumerate(candidates):
+                if warp_index in used_warps:
+                    continue
+                distance = ((world_x - door_world[0]) ** 2 + (world_z - door_world[2]) ** 2) ** 0.5
+                candidate = (distance, warp_index, warp, world_x, world_y, world_z)
+                if nearest is None or candidate[0] < nearest[0]:
+                    nearest = candidate
+            if nearest is None or nearest[0] > 64.0:
+                continue
+            _distance, warp_index, warp, world_x, world_y, world_z = nearest
+            family = _interior_family_for_zone(
+                warp.destination_zone, zone_data, matrices, maps
+            )
+            if not family:
+                continue
+            used_warps.add(warp_index)
+            local = _placement_local_point(placement, world_x, world_y, world_z)
+            correction = tuple(
+                door.translation[index] - local[index] for index in range(3)
+            )
+            observations.setdefault(family, []).append(
+                (door.model.index, door.model.name, correction)
+            )
+    profiles: dict[str, _DoorProfile] = {}
+    for family, values in observations.items():
+        counts: dict[tuple[int, str], int] = {}
+        for model_index, model_name, _correction in values:
+            key = (model_index, model_name)
+            counts[key] = counts.get(key, 0) + 1
+        (model_index, model_name), example_count = max(
+            counts.items(), key=lambda item: (item[1], item[0][1])
+        )
+        matching = [
+            correction
+            for candidate_index, candidate_name, correction in values
+            if (candidate_index, candidate_name) == (model_index, model_name)
+        ]
+        dominance = example_count / len(values)
+        # One-off pairings are useful diagnostics but too weak to synthesize a
+        # missing AB relationship. Requiring two unanimous ROM examples keeps
+        # inferred doors limited to genuinely reusable interior families.
+        if example_count < 2 or dominance < 1.0:
+            continue
+        profiles[family] = _DoorProfile(
+            interior_family=family,
+            door_model_index=model_index,
+            door_model_name=model_name,
+            correction=tuple(median(axis) for axis in zip(*matching)),
+            examples=example_count,
+            confidence=min(0.99, 0.84 + example_count * 0.03),
+        )
+    corrections_by_door: dict[tuple[int, str], list[tuple[float, float, float]]] = {}
+    for values in observations.values():
+        for model_index, model_name, correction in values:
+            corrections_by_door.setdefault((model_index, model_name), []).append(correction)
+    archetype_values: dict[str, list[tuple[int, str]]] = {}
+    seen_definitions: set[tuple[int, int, str]] = set()
+    for pack_index, pack_models in parsed_packs.items():
+        for building in pack_models.values():
+            definition_key = (pack_index, building.index, building.name)
+            if definition_key in seen_definitions:
+                continue
+            seen_definitions.add(definition_key)
+            archetype = _building_archetype(building.name)
+            if not archetype:
+                continue
+            door = building_door_attachment(building, pack_models)
+            if door is not None:
+                archetype_values.setdefault(archetype, []).append(
+                    (door.model.index, door.model.name)
+                )
+    for archetype, values in archetype_values.items():
+        counts: dict[tuple[int, str], int] = {}
+        for key in values:
+            counts[key] = counts.get(key, 0) + 1
+        (model_index, model_name), example_count = max(
+            counts.items(), key=lambda item: (item[1], item[0][1])
+        )
+        dominance = example_count / len(values)
+        corrections = corrections_by_door.get((model_index, model_name), [])
+        if example_count < 2 or dominance < 1.0 or not corrections:
+            continue
+        profiles[f"model:{archetype}"] = _DoorProfile(
+            interior_family=f"model:{archetype}",
+            door_model_index=model_index,
+            door_model_name=model_name,
+            correction=tuple(median(axis) for axis in zip(*corrections)),
+            examples=example_count,
+            confidence=min(0.95, 0.80 + example_count * 0.03),
+        )
+    _DOOR_PROFILE_CACHE[cache_key] = profiles
+    return profiles
+
+
+def _looks_like_entrance_building(name: str) -> bool:
+    value = name.casefold()
+    return any(
+        token in value
+        for token in (
+            "build", "house", "shop", "center", "school", "gym", "rest",
+            "labo", "cafe", "tower", "gate", "mart", "hotel", "airport",
+        )
+    )
+
+
+def _building_archetype(name: str) -> str:
+    """Reduce town-specific exterior names to a reusable building family."""
+    value = re.sub(r"[^a-z0-9]", "", name.casefold())
+    for token in ("building", "build", "house", "shop", "mart", "hotel"):
+        offset = value.find(token)
+        if offset >= 0:
+            return value[offset:]
+    return ""
+
+
+def _complete_referenced_door_models(
+    models: dict[int, Gen5BuildingModel],
+    model_packs: list[bytes],
+) -> dict[int, Gen5BuildingModel]:
+    """Fill shared door definitions omitted from a particular AB pack.
+
+    Black reuses a global door UID table, but a small number of area packs
+    reference a door whose model pair is only stored in another AB bundle.
+    Resolve only explicit metadata references and only door-named resources so
+    unrelated same-UID building models can never leak between area packs.
+    """
+    missing: set[int] = set()
+    for model in models.values():
+        if len(model.metadata) < 6:
+            continue
+        door_id = struct.unpack_from("<H", model.metadata, 4)[0]
+        if door_id not in {0xFFFF, model.index} and door_id not in models:
+            missing.add(door_id)
+    if not missing:
+        return models
+    completed = dict(models)
+    for payload in model_packs:
+        try:
+            candidates = parse_ab_building_pack(payload)
+        except ValueError:
+            continue
+        for model_id in tuple(missing):
+            candidate = candidates.get(model_id)
+            if candidate is None or "door" not in candidate.name.casefold():
+                continue
+            completed[model_id] = candidate
+            missing.remove(model_id)
+        if not missing:
+            break
+    return completed
+
+
+def _resolve_placed_doors(
+    *,
+    rom_path: str | Path,
+    rom_files: dict[str, bytes],
+    selected_map: int,
+    placements: tuple[Gen5MapPlacement, ...],
+    models: dict[int, Gen5BuildingModel],
+    model_packs: list[bytes],
+) -> tuple[dict[int, Gen5BuildingModel], tuple[Gen5PlacedDoor, ...]]:
+    """Combine explicit AB doors with conservative event-warp inference."""
+    resolved_models = dict(models)
+    placed_doors: list[Gen5PlacedDoor] = []
+    explicit_placements: set[int] = set()
+    for placement in placements:
+        building = resolved_models.get(placement.model_index)
+        if building is None:
+            continue
+        door = building_door_attachment(building, resolved_models)
+        if door is None:
+            continue
+        explicit_placements.add(placement.index)
+        placed_doors.append(
+            Gen5PlacedDoor(
+                placement_index=placement.index,
+                model=door.model,
+                translation=door.translation,
+                source="ab",
+                confidence=1.0,
+            )
+        )
+    required = ("a/0/0/8", "a/0/0/9", "a/0/1/2", "a/1/2/5")
+    if any(path not in rom_files for path in required):
+        return resolved_models, tuple(placed_doors)
+    maps = _narc_files(rom_files["a/0/0/8"], "a/0/0/8")
+    matrices = _narc_files(rom_files["a/0/0/9"], "a/0/0/9")
+    zone_files = _narc_files(rom_files["a/0/1/2"], "a/0/1/2")
+    events = _narc_files(rom_files["a/1/2/5"], "a/1/2/5")
+    if not zone_files:
+        return resolved_models, tuple(placed_doors)
+    zone_data = zone_files[0]
+    location = _matrix_map_locations(matrices, zone_data).get(selected_map)
+    if location is None:
+        return resolved_models, tuple(placed_doors)
+    _matrix_index, zone_index, cell_x, cell_y = location
+    event_index = _zone_event_index(zone_data, zone_index)
+    if event_index is None or event_index >= len(events):
+        return resolved_models, tuple(placed_doors)
+    profiles = _learn_door_profiles(str(Path(rom_path).resolve()), rom_files)
+    if not profiles:
+        return resolved_models, tuple(placed_doors)
+    center_x = cell_x * 512 + 256
+    center_z = cell_y * 512 + 256
+    warps = [
+        (
+            warp,
+            float(warp.x - center_x),
+            float(warp.y),
+            float(warp.z - center_z),
+        )
+        for warp in _parse_gen5_warps(events[event_index])
+        if warp.width == 1
+        and warp.height == 1
+        and abs(warp.x - center_x) <= 256
+        and abs(warp.z - center_z) <= 256
+    ]
+    # Remove event entrances already explained by authored AB doors.
+    unmatched_warps: list[tuple[_Gen5Warp, float, float, float]] = []
+    explicit_world = [
+        _placed_door_world_point(
+            placement,
+            next(
+                door.translation
+                for door in placed_doors
+                if door.placement_index == placement.index
+            ),
+        )
+        for placement in placements
+        if placement.index in explicit_placements
+    ]
+    for warp, world_x, world_y, world_z in warps:
+        if any(
+            ((world_x - point[0]) ** 2 + (world_z - point[2]) ** 2) ** 0.5 <= 64.0
+            for point in explicit_world
+        ):
+            continue
+        unmatched_warps.append((warp, world_x, world_y, world_z))
+    candidates = [
+        placement
+        for placement in placements
+        if placement.index not in explicit_placements
+        and (model := resolved_models.get(placement.model_index)) is not None
+        and _looks_like_entrance_building(model.name)
+    ]
+    used_placements: set[int] = set()
+    for warp, world_x, world_y, world_z in unmatched_warps:
+        family = _interior_family_for_zone(
+            warp.destination_zone, zone_data, matrices, maps
+        )
+        available = [
+            placement for placement in candidates if placement.index not in used_placements
+        ]
+        if not available:
+            continue
+        placement = min(
+            available,
+            key=lambda item: (
+                (world_x - item.x) ** 2 + (world_z - (-item.z)) ** 2,
+                item.index,
+            ),
+        )
+        distance = (
+            (world_x - placement.x) ** 2 + (world_z - (-placement.z)) ** 2
+        ) ** 0.5
+        if distance > 80.0:
+            continue
+        building = resolved_models[placement.model_index]
+        profile = profiles.get(family) or profiles.get(
+            f"model:{_building_archetype(building.name)}"
+        )
+        if profile is None:
+            continue
+        door_model = resolved_models.get(profile.door_model_index)
+        if door_model is None or door_model.name != profile.door_model_name:
+            door_model = None
+            for payload in model_packs:
+                try:
+                    candidate = parse_ab_building_pack(payload).get(profile.door_model_index)
+                except ValueError:
+                    continue
+                if candidate is not None and candidate.name == profile.door_model_name:
+                    door_model = candidate
+                    resolved_models[candidate.index] = candidate
+                    break
+        if door_model is None:
+            continue
+        local = _placement_local_point(
+            placement, world_x, world_y, world_z
+        )
+        translation = tuple(
+            local[index] + profile.correction[index] for index in range(3)
+        )
+        used_placements.add(placement.index)
+        placed_doors.append(
+            Gen5PlacedDoor(
+                placement_index=placement.index,
+                model=door_model,
+                translation=translation,
+                source="event_warp",
+                confidence=profile.confidence,
+                destination_zone=warp.destination_zone,
+                interior_family=family,
+            )
+        )
+    return resolved_models, tuple(sorted(placed_doors, key=lambda item: item.placement_index))
+
+
 def resolve_gen5_map_objects(
     rom_path: str | Path,
     virtual_path: str,
@@ -675,7 +1357,7 @@ def resolve_gen5_map_objects(
         # building pack cannot satisfy this map's placed model IDs, prefer the
         # exact texture/model-score fallback instead.
         if selected_map not in references and placements and area.is_outside:
-            outside_model_packs = _narc_files(rom_files["a/2/2/5"], "a/2/2/5")
+            outside_model_packs = _gen5_outside_model_packs(rom_files)
             try:
                 inferred_models = parse_ab_building_pack(outside_model_packs[area.building_pack])
             except (IndexError, ValueError):
@@ -709,11 +1391,7 @@ def resolve_gen5_map_objects(
                         area = fallback
                         matrix_index, zone_index = -1, -1
     else:
-        outside_model_packs = (
-            _narc_files(rom_files["a/2/2/5"], "a/2/2/5")
-            if "a/2/2/5" in rom_files
-            else []
-        )
+        outside_model_packs = _gen5_outside_model_packs(rom_files)
         area = _fallback_area_for_map(
             terrain_data=terrain_data,
             placements=placements,
@@ -738,6 +1416,7 @@ def resolve_gen5_map_objects(
     if area.map_texture >= len(map_textures):
         raise ValueError(f"Map texture {area.map_texture} is outside a/0/1/4")
     material_animation_data = None
+    additional_material_animation_data: list[bytes] = []
     if area.translate_animation != 0xFF and "a/0/6/8" in rom_files:
         animations = _narc_files(rom_files["a/0/6/8"], "a/0/6/8")
         if area.translate_animation < len(animations):
@@ -748,17 +1427,68 @@ def resolve_gen5_map_objects(
     if area.sequential_animation != 0xFF and "a/0/6/9" in rom_files:
         patterns = _narc_files(rom_files["a/0/6/9"], "a/0/6/9")
         if area.sequential_animation < len(patterns):
-            pattern_animation_data = bytes(patterns[area.sequential_animation])
+            candidate = bytes(patterns[area.sequential_animation])
+            # Black/White's sequential archive is not homogeneous. Some
+            # entries are ordinary Nitro BTA0 UV animation files (not the
+            # custom texture-pattern container used by other AreaData rows).
+            # Route by the payload magic so grass/wind motion is not silently
+            # handed to the wrong decoder.
+            if candidate[:4] == b"BTA0":
+                if material_animation_data is None:
+                    material_animation_data = candidate
+                else:
+                    additional_material_animation_data.append(candidate)
+            else:
+                pattern_animation_data = candidate
 
-    model_archive_path = "a/2/2/5" if area.is_outside else "a/2/2/6"
-    texture_archive_path = "a/1/7/4" if area.is_outside else "a/1/7/5"
-    if model_archive_path not in rom_files or texture_archive_path not in rom_files:
-        raise ValueError("ROM is missing the building model or texture archive selected by AreaData")
-    model_packs = _narc_files(rom_files[model_archive_path], model_archive_path)
-    texture_packs = _narc_files(rom_files[texture_archive_path], texture_archive_path)
+    model_archive_path, texture_archive_path, model_packs, texture_packs = (
+        _gen5_building_archives(rom_files, outside=area.is_outside)
+    )
+    placement_ids = {item.model_index for item in placements}
+    if placement_ids:
+        pack_scores: list[tuple[int, int, int, int]] = []
+        for pack_index, payload in enumerate(model_packs):
+            try:
+                definitions = set(parse_ab_building_pack(payload))
+            except ValueError:
+                continue
+            resolved_count = len(placement_ids & definitions)
+            # Prefer complete coverage, then the AreaData index when it is
+            # genuinely usable, then the nearest pack for deterministic ties.
+            pack_scores.append(
+                (
+                    resolved_count,
+                    int(pack_index == area.building_pack),
+                    -abs(pack_index - area.building_pack),
+                    -pack_index,
+                )
+            )
+        if pack_scores:
+            best_score = max(pack_scores)
+            if best_score[0] > 0:
+                best_pack = -best_score[3]
+                if best_pack != area.building_pack:
+                    area = replace(area, building_pack=best_pack)
     if area.building_pack >= len(model_packs) or area.building_pack >= len(texture_packs):
         raise ValueError(f"Building pack {area.building_pack} is outside its model/texture archive")
-    models = parse_ab_building_pack(model_packs[area.building_pack])
+    try:
+        models = parse_ab_building_pack(model_packs[area.building_pack])
+        models = _complete_referenced_door_models(models, model_packs)
+    except ValueError:
+        # Some AreaData records point at an empty/non-AB placeholder building
+        # pack. The terrain and its AreaData textures/animations are still
+        # exact and exportable. Keep the placement IDs in
+        # ``unresolved_model_indices`` so the UI reports the missing objects
+        # instead of making the entire map (and its extractable terrain) fail.
+        models = {}
+    models, placed_doors = _resolve_placed_doors(
+        rom_path=rom_path,
+        rom_files=rom_files,
+        selected_map=selected_map,
+        placements=placements,
+        models=models,
+        model_packs=model_packs,
+    )
     missing_models = sorted({item.model_index for item in placements if item.model_index not in models})
     variants = _map_variants(maps, selected_map, area_data, area)
     variant_key = f"{selected_map}:{area.index}"
@@ -776,10 +1506,12 @@ def resolve_gen5_map_objects(
         area=area,
         placements=placements,
         models=models,
+        doors=placed_doors,
         unresolved_model_indices=tuple(missing_models),
         terrain_data=terrain_data,
         map_texture_data=bytes(map_textures[area.map_texture]),
         material_animation_data=material_animation_data,
+        additional_material_animation_data=tuple(additional_material_animation_data),
         pattern_animation_data=pattern_animation_data,
         texture_data=bytes(texture_packs[area.building_pack]),
         model_archive_path=model_archive_path,
@@ -809,6 +1541,7 @@ def build_gen5_map_composition(
         merge_glb_skeletal_animations,
         retain_default_skeletal_animation,
         scale_glb_skeletal_animation_durations,
+        strip_all_animations,
     )
 
     if not terrain_glb.is_file():
@@ -826,9 +1559,12 @@ def build_gen5_map_composition(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if progress:
+        area_bta_count = int(objects.material_animation_data is not None) + len(
+            objects.additional_material_animation_data
+        )
         progress(
             f"Converting terrain with exact AreaData texture {objects.area.map_texture}"
-            + (f", BTA0 animation {objects.area.translate_animation}" if objects.material_animation_data else "")
+            + (f", {area_bta_count} BTA0 animation resource(s)" if area_bta_count else "")
             + (f", and pattern animation {objects.area.sequential_animation}…" if objects.pattern_animation_data else "…")
         )
     terrain_asset = Asset(
@@ -851,18 +1587,23 @@ def build_gen5_map_composition(
         original_data=objects.map_texture_data,
     )
     terrain_siblings = [map_texture_asset]
-    material_animation_asset = None
-    if objects.material_animation_data:
-        material_animation_asset = Asset(
-            asset_id=f"gen5-map-animation-{objects.area.translate_animation}",
-            virtual_path=f"a/0/6/8/file_{objects.area.translate_animation:04d}.bin.nsbta",
+    area_bta_files = [
+        *([objects.material_animation_data] if objects.material_animation_data else []),
+        *objects.additional_material_animation_data,
+    ]
+    material_animation_assets = [
+        Asset(
+            asset_id=f"gen5-map-animation-{objects.map_file_index}-{index}",
+            virtual_path=f"area_bta_{index:02d}.nsbta",
             kind="Texture SRT animation",
             magic="BTA0",
             extension=".nsbta",
-            data=objects.material_animation_data,
-            original_data=objects.material_animation_data,
+            data=payload,
+            original_data=payload,
         )
-        terrain_siblings.append(material_animation_asset)
+        for index, payload in enumerate(area_bta_files)
+    ]
+    terrain_siblings.extend(material_animation_assets)
     if objects.pattern_animation_data:
         terrain_siblings.append(
             Asset(
@@ -917,7 +1658,16 @@ def build_gen5_map_composition(
     model_bta_files: dict[int, list[bytes]] = {}
     model_btp_files: dict[int, list[bytes]] = {}
     model_pattern_images: dict[int, list[Path]] = {}
-    for model_index in sorted({item.model_index for item in objects.placements if item.model_index in objects.models}):
+    placed_model_indices = {
+        item.model_index for item in objects.placements if item.model_index in objects.models
+    }
+    placement_by_index = {placement.index: placement for placement in objects.placements}
+    door_by_placement = {door.placement_index: door for door in objects.doors}
+    conversion_indices = placed_model_indices | {
+        door.model.index for door in door_by_placement.values()
+    }
+    door_model_indices = {door.model.index for door in door_by_placement.values()}
+    for model_index in sorted(conversion_indices):
         model = objects.models[model_index]
         if progress:
             progress(f"Converting placed model {model_index}: {model.name}…")
@@ -969,7 +1719,7 @@ def build_gen5_map_composition(
             # fountain is the canonical example), not only terrain materials.
             sibling_assets=[
                 texture_asset,
-                *([material_animation_asset] if material_animation_asset else []),
+                *material_animation_assets,
                 *model_animation_assets,
             ],
             output_format="glb",
@@ -1008,6 +1758,50 @@ def build_gen5_map_composition(
         converted[model_index] = embedded_glb
         composed_sources[model_index] = default_glb
 
+    # A Gen 5 door is an independent animated model referenced by the
+    # building's AB definition. Assemble it for standalone preview/export, and
+    # assemble its closed/default state for the exact map. This keeps door
+    # open/close clips available on a building GLB without forcing every state
+    # to play simultaneously in the full-map ambient animation.
+    preview_sources_by_placement: dict[int, Path] = {}
+    composed_sources_by_placement: dict[int, Path] = {}
+    for placement_index, door in door_by_placement.items():
+        placement = placement_by_index.get(placement_index)
+        if placement is None or placement.model_index not in converted:
+            continue
+        building_index = placement.model_index
+        building = objects.models[building_index]
+        assembly_dir = out_dir / f"placement_{placement_index:02d}_assembly"
+        assembly_dir.mkdir(parents=True, exist_ok=True)
+        standalone = assembly_dir / f"{building.name}_with_{door.model.name}.glb"
+        compose_glb_scenes(
+            [
+                GlbScenePart(converted[building_index], building.name),
+                GlbScenePart(
+                    converted[door.model.index],
+                    f"door_{door.model.name}",
+                    translation=door.translation,
+                ),
+            ],
+            standalone,
+        )
+        closed_door = assembly_dir / f"{door.model.name}_closed.glb"
+        strip_all_animations(read_glb(converted[door.model.index])).write(closed_door)
+        default = assembly_dir / f"{building.name}_with_door_default.glb"
+        compose_glb_scenes(
+            [
+                GlbScenePart(composed_sources[building_index], building.name),
+                GlbScenePart(
+                    closed_door,
+                    f"door_{door.model.name}",
+                    translation=door.translation,
+                ),
+            ],
+            default,
+        )
+        preview_sources_by_placement[placement_index] = standalone
+        composed_sources_by_placement[placement_index] = default
+
     if progress:
         progress(f"Composing {len(objects.placements)} placed object(s) with the terrain…")
     scene_parts = [GlbScenePart(terrain_glb, "terrain")]
@@ -1016,16 +1810,27 @@ def build_gen5_map_composition(
         if placement.model_index not in converted:
             continue
         model = objects.models[placement.model_index]
-        glb = converted[placement.model_index]
+        glb = preview_sources_by_placement.get(
+            placement.index, converted[placement.model_index]
+        )
         scene_parts.append(
             GlbScenePart(
-                composed_sources[placement.model_index],
+                composed_sources_by_placement.get(
+                    placement.index, composed_sources[placement.model_index]
+                ),
                 f"object_{placement.index:02d}_{model.name}",
                 translation=(placement.x, placement.y, -placement.z),
                 rotation_degrees=placement.rotation_degrees,
             )
         )
-        previews.append(Gen5ObjectPreview(placement=placement, model=model, glb_path=glb))
+        previews.append(
+            Gen5ObjectPreview(
+                placement=placement,
+                model=model,
+                glb_path=glb,
+                door=door_by_placement.get(placement.index),
+            )
+        )
 
     composed_glb = out_dir / f"map_{objects.map_file_index:04d}_with_objects.glb"
     compose_glb_scenes(scene_parts, composed_glb)
@@ -1044,10 +1849,11 @@ def build_gen5_map_composition(
     # Resolve against the final material table so terrain and separately placed
     # object effects participate in the same exact AreaData clip.
     bta_files = [
-        *([objects.material_animation_data] if objects.material_animation_data else []),
+        *area_bta_files,
         *(
             animation
             for model_index in converted
+            if model_index not in door_model_indices
             for animation in model_bta_files.get(model_index, [])
         ),
     ]

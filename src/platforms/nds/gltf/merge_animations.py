@@ -277,3 +277,13 @@ def retain_default_skeletal_animation(glb: GlbData) -> GlbData:
     non_skeletal = [animation for animation in animations if not _is_skeletal_animation(animation)]
     gltf["animations"] = [*non_skeletal, default]
     return GlbData(json=gltf, bin_chunk=glb.bin_chunk)
+
+
+def strip_all_animations(glb: GlbData) -> GlbData:
+    """Return a completely static bind-pose GLB for interaction-only props."""
+    gltf = copy.deepcopy(glb.json)
+    gltf.pop("animations", None)
+    rae = ((gltf.get("extras") or {}).get("rae") or {})
+    if isinstance(rae, dict):
+        rae.pop("mapMaterialMotion", None)
+    return GlbData(json=gltf, bin_chunk=glb.bin_chunk)
