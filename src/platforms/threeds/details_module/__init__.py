@@ -26,7 +26,17 @@ class ThreedsDetailsModule:
         elif kind == "world_model":
             lines.append(f"3DS world model — {descriptor.get('name', '?')}")
             lines.append(f"GARC {descriptor.get('garc')} slot {descriptor.get('slot')}")
-            lines.append("Export options: GLB, texture PNGs, raw payload.")
+            compositions = descriptor.get("world_compositions") or []
+            if compositions:
+                lines.append("Complete-map compositions:")
+                for item in compositions:
+                    slots = " + ".join(f"{int(slot):04d}" for slot in item.get("slots") or [])
+                    default = " (default preview)" if item.get("id") == descriptor.get("composition_id") else ""
+                    lines.append(f"- {item.get('label', item.get('id', '?'))}: slots {slots}{default}")
+                lines.append("Export options include each complete GLB/GLBZ/texture set, this layer by itself, and the backend Attend environment catalog profile.")
+            else:
+                lines.append("No separate outer map is cataloged; this includes self-contained/closed maps.")
+                lines.append("Export options: GLB, lossless GLBZ, texture PNGs, Attend environment catalog, raw payload.")
         elif kind == "texture_bank":
             lines.append(f"3DS texture — {descriptor.get('name', '?')}")
             lines.append(f"GARC {descriptor.get('garc')} slot {descriptor.get('slot')}")

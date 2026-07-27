@@ -24,6 +24,7 @@ from .motion import (
     eye_expression_frame_translations,
     bake_motion,
     build_world_map_material_motion,
+    build_world_environment_states,
     mesh_bind_visibility,
     visibility_track_export,
     world_visibility_gltf_animations,
@@ -358,9 +359,60 @@ def _composite_sea_color_rgba(
     return bytes(rgba), width, height
 
 
+def _composite_beach_sand_rgba(
+    mat: GfMaterial,
+    tex_objects: dict[str, object],
+) -> tuple[bytes, int, int] | None:
+    """Flatten USUM's dry-sand + wet-sand + shoreline-mask TEV stack.
+
+    ``hama_jime`` does not draw three translucent planes. Its third ``alfa``
+    unit selects between the two sand maps inside one PICA fragment shader.
+    Baking that selection keeps the beach surface intact in glTF while the
+    independently moving wave materials remain separate draw layers.
+    """
+    if "hama_jime" not in mat.name.casefold():
+        return None
+    units = sorted(
+        (unit for unit in mat.texture_units if unit.name),
+        key=lambda unit: unit.unit_index,
+    )
+    if len(units) != 3 or not _is_alfa_mask_unit_name(units[2].name):
+        return None
+    dry_tex = tex_objects.get(units[0].name)
+    wet_tex = tex_objects.get(units[1].name)
+    mask_tex = tex_objects.get(units[2].name)
+    if dry_tex is None or wet_tex is None or mask_tex is None:
+        return None
+    try:
+        dry = bytearray(_bake_gf_texture_colors(dry_tex.decode_rgba(), mat))
+        wet = wet_tex.decode_rgba()
+        mask = mask_tex.decode_rgba()
+    except Exception:
+        return None
+    width, height = dry_tex.width, dry_tex.height
+    if wet_tex.width != width or wet_tex.height != height:
+        wet = _resize_rgba_nearest(
+            wet, wet_tex.width, wet_tex.height, width, height
+        )
+    if mask_tex.width != width or mask_tex.height != height:
+        mask = _resize_rgba_nearest(
+            mask, mask_tex.width, mask_tex.height, width, height
+        )
+    for i in range(0, len(dry), 4):
+        amount = max(mask[i], mask[i + 1], mask[i + 2])
+        inverse = 255 - amount
+        for channel in range(3):
+            dry[i + channel] = (
+                dry[i + channel] * inverse + wet[i + channel] * amount
+            ) // 255
+        dry[i + 3] = max(dry[i + 3], wet[i + 3])
+    return bytes(dry), width, height
+
+
 def _uses_vertex_alpha_blend(mat: GfMaterial) -> bool:
     """Beach water tint: alpha blend driven by per-vertex color on ``G_seacolor``."""
-    if "sea_iro" not in mat.name.casefold():
+    name = mat.name.casefold()
+    if "sea_iro" not in name or "sea_iro047" in name:
         return False
     if mat.render_state is None:
         return False
@@ -371,6 +423,16 @@ def _uses_vertex_alpha_blend(mat: GfMaterial) -> bool:
         str(extras.get("sourceRgbFactor") or "") == "source_alpha"
         and str(extras.get("destinationRgbFactor") or "") == "one_minus_source_alpha"
     )
+
+
+def _world_environment_material_role(material_name: str) -> str | None:
+    """Semantic render role for battle-background water passes."""
+    low = material_name.casefold()
+    if any(token in low for token in ("sea_iro", "mz1_iro", "taki_mz0")):
+        return "water_base"
+    if "nami" in low:
+        return "water_overlay"
+    return None
 
 
 def _is_gf_glow_overlay_material(mat: GfMaterial) -> bool:
@@ -523,9 +585,13 @@ def _resolve_material_texture_rgba(
 ) -> tuple[bytes, int, int] | None:
     """Decode GF texture units for glTF export.
 
-    Floor TEV stacks (e.g. ``stag02`` / sand ``jime`` layers) stay on unit 0 only.
-    Simple base + ``*alfa*`` glow pairs are flattened first.
+    Beach sand's three-unit TEV stack and simple base + ``*alfa*`` glow pairs
+    are flattened. Independently animated water units are emitted later as
+    separate GLB draw layers.
     """
+    beach_sand = _composite_beach_sand_rgba(mat, tex_objects)
+    if beach_sand is not None:
+        return beach_sand
     if _should_composite_alfa_mask(mat):
         composite = _composite_alfa_mask_rgba(mat, tex_objects)
         if composite is not None:
@@ -805,6 +871,7 @@ def write_model_glb(
     default_form_variant: str | None = None,
     form_variants: list[FormVariantExport] | None = None,
     pica_render_state_authoritative: bool = True,
+    environment_scene: dict | None = None,
 ) -> Path:
     """Write *model* as a GLB with PNG textures embedded in the binary chunk.
 
@@ -906,6 +973,35 @@ def write_model_glb(
         texture_alpha_kind[key] = _texture_alpha_kind(png)
         return png_by_key[key]
 
+    def direct_image_for(
+        mat: GfMaterial,
+        tex_name: str,
+        texture_objects: dict[str, GfTexture],
+        *,
+        unit_index: int,
+    ) -> int | None:
+        """Embed one exact GF texture unit without flattening the TEV stack."""
+        key = f"{_material_texture_key(mat, tex_name)}|unit:{unit_index}{texture_key_suffix}"
+        if key in png_by_key:
+            return png_by_key[key]
+        tex = texture_objects.get(tex_name)
+        if tex is None:
+            return None
+        try:
+            # TEV shaders consume the original channels. Black-backed wave
+            # signals are RGB inputs, not alpha-keyed sprite cards.
+            rgba = _bake_gf_texture_colors(tex.decode_rgba(), mat)
+        except Exception:
+            return None
+        from .pica import rgba_to_png
+
+        png = rgba_to_png(rgba, tex.width, tex.height)
+        view_index = add_view(png)
+        images.append({"bufferView": view_index, "mimeType": "image/png", "name": key})
+        png_by_key[key] = len(images) - 1
+        texture_alpha_kind[key] = _texture_alpha_kind(png)
+        return png_by_key[key]
+
     def texture_for(
         mat: GfMaterial,
         name: str,
@@ -924,8 +1020,38 @@ def write_model_glb(
             texture_index_by_name[key] = len(gltf_textures) - 1
         return texture_index_by_name[key]
 
+    def texture_for_unit(
+        mat: GfMaterial,
+        unit: GfTextureUnit,
+        unit_index: int,
+        texture_objects: dict[str, GfTexture],
+    ) -> int | None:
+        source = direct_image_for(
+            mat,
+            unit.name,
+            texture_objects,
+            unit_index=unit_index,
+        )
+        if source is None:
+            return None
+        key = (
+            f"{mat.name}|{unit.name}|{unit.wrap_u}|{unit.wrap_v}"
+            f"|unit:{unit_index}{texture_key_suffix}"
+        )
+        if key not in texture_index_by_name:
+            gltf_textures.append(
+                {
+                    "sampler": sampler_for(unit.wrap_u, unit.wrap_v),
+                    "source": source,
+                    "name": f"{unit.name}__unit_{unit_index}",
+                }
+            )
+            texture_index_by_name[key] = len(gltf_textures) - 1
+        return texture_index_by_name[key]
+
     # -- materials -------------------------------------------------------------
     material_index_by_name: dict[str, int] = {}
+    tev_secondary_units: dict[str, set[int]] = {}
     material_by_name = {mat.name: mat for mat in model.materials}
     uv_transform_by_material: dict[
         str,
@@ -954,9 +1080,31 @@ def write_model_glb(
             }
             if mat.render_state is not None and mat.render_state.cull_backface_enabled:
                 entry["doubleSided"] = False
+            if "sea_iro047" in mat.name.casefold():
+                # This renderer-buffer plane is wound opposite the standalone
+                # map camera after the GF-to-glTF axis conversion.
+                entry["doubleSided"] = True
+                entry["pbrMetallicRoughness"]["baseColorFactor"] = [1.0, 1.0, 1.0, 1.0]
             albedo = next(
                 (name for name in mat.texture_names if name in tex_objects),
                 None,
+            )
+            world_tev = bool(
+                not pica_render_state_authoritative
+                and material_source is model
+                and not material_name_suffix
+                and mat.tev_stages
+                and len(mat.texture_units) > 1
+                # This cemetery floor stack is a framebuffer effect, not a
+                # self-contained surface. Its raw TEV output contains opaque
+                # black cut-outs; use the stable ROM base texture and let the
+                # separate scorch/fog cards provide the detail.
+                and "haka_jime03" not in mat.name.casefold()
+                # The outer coast's sea colour is a modulation pass over a
+                # renderer-owned buffer. Export its already-supported opaque
+                # two-texture composite; independent wave meshes still carry
+                # all visible motion.
+                and "sea_iro047" not in mat.name.casefold()
             )
             tex_key = _material_texture_key(mat, albedo) + texture_key_suffix if albedo else ""
             nitro_alpha = _material_nitro_alpha(mat)
@@ -975,7 +1123,16 @@ def write_model_glb(
             if albedo is not None:
                 unit = next((u for u in mat.texture_units if u.name == albedo), None)
                 wrap_u, wrap_v = (unit.wrap_u, unit.wrap_v) if unit else (2, 2)
-                tex_index = texture_for(mat, albedo, wrap_u, wrap_v, tex_objects)
+                if world_tev and unit is not None:
+                    tex_index = texture_for_unit(
+                        mat, unit, unit.unit_index, tex_objects
+                    )
+                    tex_key = (
+                        f"{_material_texture_key(mat, unit.name)}"
+                        f"|unit:{unit.unit_index}{texture_key_suffix}"
+                    )
+                else:
+                    tex_index = texture_for(mat, albedo, wrap_u, wrap_v, tex_objects)
                 tex_kind = texture_alpha_kind.get(tex_key, "opaque")
                 if tex_index is not None:
                     entry["pbrMetallicRoughness"]["baseColorTexture"] = {"index": tex_index}
@@ -1030,6 +1187,112 @@ def write_model_glb(
                     pica_render_state_authoritative or _uses_vertex_alpha_blend(mat)
                 ),
             )
+            environment_role = _world_environment_material_role(mat.name)
+            if environment_role:
+                entry.setdefault("extras", {}).setdefault("rae", {})[
+                    "environmentMaterial"
+                ] = {
+                    "role": environment_role,
+                    "stateDriven": environment_role == "water_base" and "iro" in mat.name.casefold(),
+                }
+            if world_tev:
+                texture_indices: dict[str, int] = {}
+                for tev_unit in mat.texture_units:
+                    if tev_unit.unit_index > 2:
+                        continue
+                    index = texture_for_unit(
+                        mat, tev_unit, tev_unit.unit_index, tex_objects
+                    )
+                    if index is None:
+                        continue
+                    texture_indices[str(tev_unit.unit_index)] = index
+                    if tev_unit.unit_index > 0:
+                        tev_secondary_units.setdefault(mat.name, set()).add(
+                            tev_unit.unit_index
+                        )
+                pica_tev = {
+                    "textureIndices": texture_indices,
+                    "stages": list(mat.tev_stages),
+                    "bufferColor": [channel / 255.0 for channel in mat.tev_buffer_color],
+                    "constantAssignments": list(mat.constant_assignments),
+                    "constantColors": [
+                        [channel / 255.0 for channel in color]
+                        for color in mat.constant_colors
+                    ],
+                }
+                if "nami" in mat.name.casefold():
+                    # Wave foam is an additive light contribution, not a
+                    # conventional translucent decal. The 3DS framebuffer
+                    # response is softer than a full-strength linear additive
+                    # pass, so retain authored alpha while reducing only the
+                    # emitted RGB contribution.
+                    pica_tev["effectColorScale"] = (
+                        0.58 if "sea_nami01" in mat.name.casefold() else 0.82
+                    )
+                if "hama_jime" in mat.name.casefold():
+                    # Beach ground uses one repeating coordinate for both sand
+                    # textures and a separate shore-distance coordinate for
+                    # the alfa ramp. Texture-unit number is not the UV-set
+                    # number in this GF shader.
+                    pica_tev["textureCoordSets"] = {
+                        "0": 0,
+                        "1": 0,
+                        "2": 1,
+                    }
+                if "sea_iro" in mat.name.casefold():
+                    # The sea-color texture is a horizontal day-cycle gradient.
+                    # GF motion holds its daylight state at U -0.5; using that
+                    # ROM-authored plateau as the preview bind prevents outer
+                    # ocean layers from flashing the purple/night state before
+                    # their material motion is installed.
+                    pica_tev["initialOffsets"] = {
+                        "0": [-0.5, 0.0],
+                        "1": [-0.5, 0.0],
+                    }
+                if "sea_iro047" in mat.name.casefold():
+                    # The N/outer beach layer is composited over the battle
+                    # renderer's ocean clear pass in-game.  A standalone GLB
+                    # has no such framebuffer, so expose its ROM gradient as
+                    # the base water while retaining vertex-edge alpha and
+                    # the separate foam/current materials above it.
+                    pica_tev["outerWaterBase"] = True
+                if mat.name.casefold().startswith("btl_n_hama_jime"):
+                    # The shader's ocean-designated fragments are black in
+                    # the source framebuffer pass. With the corrected UV
+                    # binding, key only those fragments so the sea plane below
+                    # is visible without cutting bands through the sand.
+                    pica_tev["standaloneBlackKey"] = True
+                if (
+                    mat.render_state is not None
+                    and mat.render_state.to_extras().get("alphaBlendEnabled")
+                    and "sea_iro" not in mat.name.casefold()
+                ):
+                    # Exact TEV alpha is meaningful only when Three.js places
+                    # the material in its transparent render pass. Previously
+                    # these world effects were forced opaque merely because
+                    # their source PNGs had opaque storage alpha.
+                    entry["alphaMode"] = "BLEND"
+                entry.setdefault("extras", {}).setdefault("rae", {})["picaTev"] = pica_tev
+            if "sea_iro047" in mat.name.casefold():
+                base_texture = entry.get("pbrMetallicRoughness", {}).get(
+                    "baseColorTexture", {}
+                ).get("index")
+                if base_texture is not None:
+                    # This is a renderer-owned ocean-buffer surface in the
+                    # original battle renderer. Promote it to an explicit
+                    # environment base pass even though the source material
+                    # has no standalone TEV program of its own.
+                    entry.setdefault("extras", {}).setdefault("rae", {})[
+                        "picaTev"
+                    ] = {
+                        "textureIndices": {"0": base_texture},
+                        "stages": [],
+                        "bufferColor": [0.0, 0.0, 0.0, 0.0],
+                        "constantAssignments": [],
+                        "constantColors": [],
+                        "initialOffsets": {"0": [-0.5, 0.0]},
+                        "outerWaterBase": True,
+                    }
             index_by_name[mat.name] = len(materials)
             materials.append(entry)
         return index_by_name
@@ -1351,6 +1614,50 @@ def write_model_glb(
             mat_index = material_index_by_name.get(sub.material_name)
             if mat_index is not None:
                 primitive["material"] = mat_index
+            for unit_index in sorted(tev_secondary_units.get(sub.material_name, set())):
+                source_uvs = (
+                    sub.uvs1
+                    if unit_index == 1 and len(sub.uvs1) == count
+                    else sub.uvs2
+                    if unit_index == 2 and len(sub.uvs2) == count
+                    else sub.uvs
+                )
+                if len(source_uvs) == count:
+                    source_mat = material_by_name.get(sub.material_name)
+                    layer_unit = next(
+                        (
+                            unit
+                            for unit in (source_mat.texture_units if source_mat else [])
+                            if unit.unit_index == unit_index
+                        ),
+                        None,
+                    )
+                    if layer_unit is not None:
+                        layer_uv_data = b"".join(
+                            struct.pack(
+                                "<2f",
+                                *_bake_mesh_uv(
+                                    u,
+                                    v,
+                                    layer_unit.scale[0],
+                                    layer_unit.scale[1],
+                                    layer_unit.rotation,
+                                    layer_unit.translation[0],
+                                    layer_unit.translation[1],
+                                ),
+                            )
+                            for u, v in source_uvs
+                        )
+                        layer_uv_view = add_view(layer_uv_data, target=34962)
+                        accessors.append(
+                            {
+                                "bufferView": layer_uv_view,
+                                "componentType": 5126,
+                                "count": count,
+                                "type": "VEC2",
+                            }
+                        )
+                        attributes[f"TEXCOORD_{unit_index}"] = len(accessors) - 1
             primitives.append(primitive)
         if not primitives:
             continue
@@ -1358,6 +1665,10 @@ def write_model_glb(
         mesh_node = {"mesh": len(meshes) - 1, "name": mesh.name}
         draw_priority, _ = _mesh_draw_priority(mesh)
         mesh_extras = mesh_node.setdefault("extras", {}).setdefault("rae", {})
+        if mesh.source_slot is not None:
+            mesh_extras["sourceSlot"] = mesh.source_slot
+        mesh_extras["compositionRole"] = mesh.composition_role
+        mesh_extras["compositionPriority"] = mesh.composition_priority
         if mesh.name in bind_visibility:
             mesh_extras["defaultVisible"] = bind_visibility[mesh.name]
         if draw_priority >= 2:
@@ -1708,6 +2019,24 @@ def write_model_glb(
         gltf.setdefault("extras", {}).setdefault("rae", {})[
             "mapMaterialMotion"
         ] = world_map_motion
+    if environment_scene is not None:
+        scene_metadata = dict(environment_scene)
+        scene_metadata["states"] = build_world_environment_states(world_map_motion)
+        render_passes = []
+        for material in model.materials:
+            role = _world_environment_material_role(material.name)
+            if role:
+                render_passes.append(
+                    {
+                        "material": material.name,
+                        "role": role,
+                        "priority": 0 if role == "water_base" else 10,
+                    }
+                )
+        scene_metadata["renderPasses"] = render_passes
+        gltf.setdefault("extras", {}).setdefault("rae", {})[
+            "environmentScene"
+        ] = scene_metadata
     if gltf_textures:
         gltf["samplers"] = samplers
         gltf["images"] = images

@@ -17,6 +17,12 @@ from .gf import GFMODEL_MAGIC as GFMODEL_MAGIC_U32
 from .gf import GFTEXTURE_MAGIC as GFTEXTURE_MAGIC_U32
 from .lz11 import maybe_decompress
 from .species import species_name
+from .world_composition import (
+    BATTLE_BACKGROUND_GARC,
+    apply_composition,
+    compositions_for_slot,
+    default_composition_for_slot,
+)
 
 POKEMON_MODEL_GARC = "/a/0/9/4"
 POKEMON_ICON_GARC = "/a/0/6/2"
@@ -470,6 +476,22 @@ def _scan_world_garcs(
                 "slot": sub.index,
                 "name": display,
             }
+            if dtype == "world_model" and path == BATTLE_BACKGROUND_GARC:
+                compositions = compositions_for_slot(sub.index)
+                if compositions:
+                    payload_dict["world_compositions"] = [
+                        {
+                            "id": item.id,
+                            "label": item.label,
+                            "slots": list(item.slots),
+                            "outer_slot": item.outer_slot,
+                            "confidence": item.confidence,
+                        }
+                        for item in compositions
+                    ]
+                    default_composition = default_composition_for_slot(sub.index)
+                    if default_composition is not None:
+                        payload_dict = apply_composition(payload_dict, default_composition)
             if dtype == "sprite":
                 payload_dict["sprite_index"] = sub.index
             assets.append(

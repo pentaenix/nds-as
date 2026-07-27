@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import copy
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -13,10 +14,14 @@ from .gf import (
     GFMODEL_MAGIC,
     GFTEXTURE_MAGIC,
     GfModel,
+    GfMesh,
+    GfSubMesh,
     GfTexture,
     is_gf_model,
+    is_gf_shader,
     is_gf_texture,
     parse_gf_model,
+    parse_gf_shader,
     parse_gf_texture,
 )
 from .glb import FormVariantExport, write_model_glb
@@ -48,7 +53,11 @@ def _safe_stem(descriptor: dict) -> str:
         clean = "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
         return f"pm{species:04d}_{form:02d}_{clean}" if clean else f"pm{species:04d}_{form:02d}"
     if descriptor.get("type") in ("world_model", "texture_bank"):
+        if descriptor.get("environment_scene_id"):
+            return str(descriptor["environment_scene_id"])
         garc = str(descriptor.get("garc") or "").strip("/").replace("/", "_")
+        if descriptor.get("composition_id"):
+            return f"w_{garc}_{descriptor['composition_id']}"
         return f"w_{garc}_{int(descriptor.get('slot') or 0):04d}"
     return f"group{int(descriptor.get('group') or 0):04d}"
 
@@ -106,15 +115,41 @@ def _load_world_model(descriptor: dict) -> GfModel:
     payload = read_garc_slot(descriptor["rom"], descriptor["garc"], int(descriptor["slot"]))
     for chunk in _world_payload_chunks(payload):
         if is_gf_model(chunk):
-            return parse_gf_model(chunk, _safe_stem(descriptor))
+            return _attach_world_shaders(
+                parse_gf_model(chunk, _safe_stem(descriptor)), payload
+            )
         # GFModelPack container: the GFModel section sits at an aligned offset.
         if len(chunk) >= 4 and struct.unpack_from("<I", chunk)[0] == 0x00010000:
             for offset in _find_magic_offsets(chunk, _GFMODEL_MAGIC_BYTES):
                 try:
-                    return parse_gf_model(chunk[offset:], _safe_stem(descriptor))
+                    return _attach_world_shaders(
+                        parse_gf_model(chunk[offset:], _safe_stem(descriptor)),
+                        payload,
+                    )
                 except Exception:
                     continue
     raise ValueError(f"{_slot_context(descriptor)}: no parseable GFModel in payload")
+
+
+def _attach_world_shaders(model: GfModel, payload: bytes) -> GfModel:
+    """Associate external GFL2 fragment-shader TEV state with map materials."""
+    shaders = {}
+    for offset in _find_magic_offsets(payload, _GFTEXTURE_MAGIC_BYTES):
+        candidate = payload[offset:]
+        if not is_gf_shader(candidate):
+            continue
+        try:
+            shader = parse_gf_shader(candidate)
+        except ValueError:
+            continue
+        shaders[shader.name] = shader
+    for material in model.materials:
+        shader = shaders.get(material.fragment_shader_name)
+        if shader is None:
+            continue
+        material.tev_stages = shader.stages
+        material.tev_buffer_color = shader.buffer_color
+    return model
 
 
 def _world_textures(descriptor: dict) -> list[GfTexture]:
@@ -378,6 +413,243 @@ def _model_geometry_fingerprint(model: GfModel) -> str:
     return digest.hexdigest()
 
 
+def _world_component_descriptors(descriptor: dict) -> list[dict]:
+    slots = descriptor.get("composition_slots")
+    if descriptor.get("type") != "world_model" or not isinstance(slots, list):
+        return [descriptor]
+    components: list[dict] = []
+    seen: set[int] = set()
+    for value in slots:
+        try:
+            slot = int(value)
+        except (TypeError, ValueError):
+            continue
+        if slot in seen:
+            continue
+        seen.add(slot)
+        outer_slot = descriptor.get("composition_outer_slot")
+        try:
+            is_outer = outer_slot is not None and slot == int(outer_slot)
+        except (TypeError, ValueError):
+            is_outer = False
+        components.append(
+            {
+                **descriptor,
+                "slot": slot,
+                "name": f"Battle background {slot:04d}",
+                "composition_id": None,
+                "composition_slots": None,
+                "_composition_role": "outer" if is_outer else "centre",
+                "_composition_priority": 1 if is_outer else 0,
+            }
+        )
+    if components:
+        return components
+    return [
+        {
+            **descriptor,
+            "_composition_role": "self_contained",
+            "_composition_priority": 0,
+        }
+    ]
+
+
+def _annotate_world_model(model: GfModel, descriptor: dict) -> GfModel:
+    """Attach per-layer provenance without mutating a cached parsed model."""
+    annotated = copy.deepcopy(model)
+    role = str(descriptor.get("_composition_role") or "self_contained")
+    priority = int(descriptor.get("_composition_priority") or 0)
+    try:
+        source_slot = int(descriptor.get("slot"))
+    except (TypeError, ValueError):
+        source_slot = None
+    for mesh in annotated.meshes:
+        mesh.source_slot = source_slot
+        mesh.composition_role = role
+        mesh.composition_priority = priority
+    return annotated
+
+
+def _surface_anchor(model: GfModel) -> dict[str, float]:
+    """Estimate the authored battle surface near the arena origin.
+
+    The value is metadata only: geometry is never normalized around it.  The
+    Attend runtime can therefore place Pokemon on elevated special stages
+    (notably slot 0092) while the exported model remains byte-faithful in shape.
+    """
+    candidates: list[tuple[float, float]] = []
+    fallback: list[tuple[float, float]] = []
+    floor_tokens = ("jime", "ground", "floor", "road", "stage", "yuka", "soko")
+    for mesh in model.meshes:
+        for sub in mesh.submeshes:
+            low = sub.material_name.casefold()
+            for x, y, z in sub.positions:
+                radius2 = x * x + z * z
+                if radius2 > 768.0 * 768.0:
+                    continue
+                fallback.append((radius2, y))
+                if any(token in low for token in floor_tokens):
+                    candidates.append((radius2, y))
+    pool = candidates or fallback
+    if not pool:
+        return {"x": 0.0, "y": 0.0, "z": 0.0}
+    pool.sort(key=lambda item: item[0])
+    near = sorted(y for _, y in pool[: max(8, min(len(pool), 256))])
+    y = near[len(near) // 2]
+    return {"x": 0.0, "y": float(y), "z": 0.0}
+
+
+def _environment_scene_metadata(
+    descriptor: dict,
+    components: list[dict],
+    model: GfModel,
+) -> dict:
+    scene_id = str(descriptor.get("environment_scene_id") or _safe_stem(descriptor))
+    layers = []
+    for item in components:
+        layers.append(
+            {
+                "slot": int(item.get("slot") or 0),
+                "role": str(item.get("_composition_role") or "self_contained"),
+                "priority": int(item.get("_composition_priority") or 0),
+            }
+        )
+    return {
+        "schemaVersion": 1,
+        "id": scene_id,
+        "label": str(descriptor.get("environment_scene_label") or descriptor.get("name") or scene_id),
+        "source": {
+            "garc": str(descriptor.get("garc") or ""),
+            "slots": [int(item.get("slot") or 0) for item in components],
+            "compositionId": str(descriptor.get("composition_id") or ""),
+        },
+        "layers": layers,
+        "surfaceAnchor": _surface_anchor(model),
+        "defaultTime": "day",
+        "defaultWeather": "clear",
+    }
+
+
+def _translated_world_model(model: GfModel, y_offset: float) -> GfModel:
+    """Return a private, vertically translated copy of one world layer."""
+    translated = copy.deepcopy(model)
+    for mesh in translated.meshes:
+        for submesh in mesh.submeshes:
+            submesh.positions = [
+                (x, y + y_offset, z) for x, y, z in submesh.positions
+            ]
+    return translated
+
+
+def _cemetery_floor_underlay(inner: GfModel, outer: GfModel) -> GfMesh | None:
+    """Supply the opaque battle framebuffer beneath cemetery effect meshes.
+
+    The G layer contains translucent scorch/fog polygons, but no opaque pixels
+    below their cut-outs: the game draws those over the N-layer floor buffer.
+    A standalone GLB needs that buffer represented as geometry or its alpha
+    holes expose the preview checkerboard.
+    """
+    outer_floor = next(
+        (
+            sub
+            for mesh in outer.meshes
+            for sub in mesh.submeshes
+            if "jime01" in sub.material_name.casefold()
+        ),
+        None,
+    )
+    inner_floor = next(
+        (
+            sub
+            for mesh in inner.meshes
+            for sub in mesh.submeshes
+            if "_g_" in sub.material_name.casefold()
+            and "jime01" in sub.material_name.casefold()
+            and sub.positions
+        ),
+        None,
+    )
+    if outer_floor is None or inner_floor is None:
+        return None
+    radius_x = max(abs(position[0]) for position in inner_floor.positions)
+    radius_z = max(abs(position[2]) for position in inner_floor.positions)
+    floor_y = min(position[1] for position in inner_floor.positions) - 1.0
+    # Repeat the small terrain texture instead of stretching one texel field
+    # across the whole arena. The translucent G-layer detail remains above it.
+    repeat_x = max(1.0, radius_x / 256.0)
+    repeat_z = max(1.0, radius_z / 256.0)
+    submesh = GfSubMesh(
+        material_name=outer_floor.material_name,
+        positions=[
+            (-radius_x, floor_y, -radius_z),
+            (radius_x, floor_y, -radius_z),
+            (radius_x, floor_y, radius_z),
+            (-radius_x, floor_y, radius_z),
+        ],
+        normals=[(0.0, 1.0, 0.0)] * 4,
+        uvs=[
+            (0.0, 0.0),
+            (repeat_x, 0.0),
+            (repeat_x, repeat_z),
+            (0.0, repeat_z),
+        ],
+        indices=[0, 2, 1, 0, 3, 2],
+    )
+    return GfMesh(name="rae_cemetery_floor_underlay", submeshes=[submesh])
+
+
+def _combine_world_models(
+    models: list[GfModel],
+    name: str,
+    composition_id: str = "",
+) -> GfModel:
+    """Combine USUM G/N world layers with standalone-preview compensation."""
+    if len(models) == 1:
+        return models[0]
+    if any(model.bones for model in models):
+        raise ValueError("composed battle backgrounds with skeletons are not supported")
+
+    layers = list(models)
+    if composition_id == "battle_0008_0102" and len(layers) >= 2:
+        # The beach centre is authored 24.5 GF units above the outer sand
+        # shell. The battle camera hides that pedestal; a freely orbiting map
+        # preview exposes it as a circular lip, so align the walkable floors.
+        layers[-1] = _translated_world_model(layers[-1], -24.5)
+    if composition_id == "battle_0002_0098" and len(layers) >= 2:
+        underlay = _cemetery_floor_underlay(layers[-1], layers[0])
+        if underlay is not None:
+            layers[-1].meshes.insert(0, underlay)
+
+    texture_names: list[str] = []
+    material_names: list[str] = []
+    for model in layers:
+        for texture_name in model.texture_names:
+            if texture_name not in texture_names:
+                texture_names.append(texture_name)
+        for material_name in model.material_names:
+            if material_name not in material_names:
+                material_names.append(material_name)
+    return GfModel(
+        name=name,
+        texture_names=texture_names,
+        material_names=material_names,
+        materials=[material for model in layers for material in model.materials],
+        bones=[],
+        meshes=[mesh for model in layers for mesh in model.meshes],
+    )
+
+
+def _dedupe_textures(textures: Iterable[GfTexture]) -> list[GfTexture]:
+    out: list[GfTexture] = []
+    seen: set[str] = set()
+    for texture in textures:
+        if texture.name in seen:
+            continue
+        seen.add(texture.name)
+        out.append(texture)
+    return out
+
+
 def build_model_glb(
     descriptor: dict,
     out_dir: str | Path,
@@ -396,10 +668,29 @@ def build_model_glb(
     stem = _safe_stem(base_descriptor)
     if progress:
         progress(f"3DS: parsing GFModel for {stem}…")
-    model = load_model(base_descriptor)
+    component_descriptors = _world_component_descriptors(base_descriptor)
+    component_models = [
+        _annotate_world_model(load_model(item), item)
+        for item in component_descriptors
+    ]
+    model = _combine_world_models(
+        component_models,
+        stem,
+        str(base_descriptor.get("composition_id") or ""),
+    )
+    if progress and len(component_descriptors) > 1:
+        progress(
+            "3DS: composing battle-background slots "
+            + ", ".join(f"{int(item['slot']):04d}" for item in component_descriptors)
+            + " at their shared origin…"
+        )
     if progress:
         progress("3DS: decoding textures…")
-    textures = load_textures(base_descriptor, shiny=False)
+    textures = _dedupe_textures(
+        texture
+        for item in component_descriptors
+        for texture in load_textures(item, shiny=False)
+    )
     shiny_textures: list[GfTexture] | None = None
     if base_descriptor.get("type") not in ("world_model", "texture_bank") and base_descriptor.get("species"):
         try:
@@ -463,11 +754,16 @@ def build_model_glb(
             if progress:
                 progress(f"3DS: resolving {len(missing)} shared world texture(s)…")
             textures.extend(resolve_world_textures(base_descriptor, missing, progress))
+            textures = _dedupe_textures(textures)
     if progress:
         progress("3DS: parsing GFMotion animations…")
     try:
         if base_descriptor.get("type") == "world_model":
-            motions = load_world_motions(base_descriptor)
+            motions = [
+                motion
+                for item in component_descriptors
+                for motion in load_world_motions(item)
+            ]
         else:
             motions = load_motions(base_descriptor)
     except Exception:
@@ -485,6 +781,11 @@ def build_model_glb(
         default_form_variant=f"{selected_form:02d}",
         form_variants=form_exports,
         pica_render_state_authoritative=base_descriptor.get("type") != "world_model",
+        environment_scene=(
+            _environment_scene_metadata(base_descriptor, component_descriptors, model)
+            if base_descriptor.get("type") == "world_model"
+            else None
+        ),
     )
 
 
@@ -504,7 +805,12 @@ def export_texture_pngs(
         else ((False, "normal"), (True, "shiny"))
     )
     for shiny, label in variants:
-        textures = load_textures(descriptor, shiny=shiny)
+        components = _world_component_descriptors(descriptor)
+        textures = _dedupe_textures(
+            texture
+            for item in components
+            for texture in load_textures(item, shiny=shiny)
+        )
         if progress:
             progress(f"3DS: decoding {len(textures)} {label} texture(s)…")
         for tex in textures:

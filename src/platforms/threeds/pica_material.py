@@ -147,7 +147,30 @@ def parse_pica_render_state(data: bytes) -> PicaRenderState | None:
     The cull command is the stable first output-merger command; anchoring on its
     exact header avoids treating adjacent parameter words as command headers.
     """
-    registers: dict[int, int] = {}
+    registers = parse_pica_registers(data)
+    if registers is None:
+        return None
+    if all(
+        register in registers
+        for register in (
+            GPUREG_COLOR_OPERATION,
+            GPUREG_BLEND_FUNC,
+            GPUREG_FRAGOP_ALPHA_TEST,
+            GPUREG_DEPTH_COLOR_MASK,
+        )
+    ):
+        return PicaRenderState(
+            color_operation=registers[GPUREG_COLOR_OPERATION],
+            blend_function=registers[GPUREG_BLEND_FUNC],
+            alpha_test=registers[GPUREG_FRAGOP_ALPHA_TEST],
+            depth_color_mask=registers[GPUREG_DEPTH_COLOR_MASK],
+            cull_mode=registers.get(GPUREG_CULL_MODE),
+        )
+    return None
+
+
+def parse_pica_registers(data: bytes) -> dict[int, int] | None:
+    """Return the full PICA command register map from a GF material tail."""
     search_from = 0
     while True:
         header_at = data.find(_CULL_COMMAND_HEADER, search_from)
@@ -159,29 +182,9 @@ def parse_pica_render_state(data: bytes) -> PicaRenderState | None:
         start = header_at - 4
         usable = len(data) - start
         words = list(struct.unpack_from(f"<{usable // 4}I", data, start))
+        registers: dict[int, int] = {}
         for register, parameter in read_pica_commands(words):
-            if register in {
-                GPUREG_CULL_MODE,
-                GPUREG_COLOR_OPERATION,
-                GPUREG_BLEND_FUNC,
-                GPUREG_FRAGOP_ALPHA_TEST,
-                GPUREG_DEPTH_COLOR_MASK,
-            }:
-                registers[register] = parameter
-        if all(
-            register in registers
-            for register in (
-                GPUREG_COLOR_OPERATION,
-                GPUREG_BLEND_FUNC,
-                GPUREG_FRAGOP_ALPHA_TEST,
-                GPUREG_DEPTH_COLOR_MASK,
-            )
-        ):
-            return PicaRenderState(
-                color_operation=registers[GPUREG_COLOR_OPERATION],
-                blend_function=registers[GPUREG_BLEND_FUNC],
-                alpha_test=registers[GPUREG_FRAGOP_ALPHA_TEST],
-                depth_color_mask=registers[GPUREG_DEPTH_COLOR_MASK],
-                cull_mode=registers.get(GPUREG_CULL_MODE),
-            )
+            registers[register] = parameter
+        if registers:
+            return registers
         search_from = header_at + 4

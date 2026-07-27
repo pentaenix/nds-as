@@ -536,6 +536,72 @@ def visibility_track_export(track: GfMotVisibilityTrack) -> list[bool]:
     return list(track.values)
 
 
+def _world_visibility_targets(
+    track_name: str,
+    mesh_materials: dict[str, list[str]],
+) -> list[str]:
+    """Map GF's pre-optimization visibility names to exported mesh nodes.
+
+    Battle backgrounds can retain visibility tracks for Maya-era logical
+    shapes even though the shipped GFModel combines those shapes into an
+    ``*_OptMesh``. Exact names remain authoritative. The two semantic aliases
+    below cover the shipped underwater effects whose source nodes are merged:
+    ``G_awa*`` bubbles and ``lovecus*`` schools.
+    """
+    if track_name in mesh_materials:
+        return [track_name]
+    low = track_name.casefold()
+    if "polysurface" in low:
+        return []
+    needles: tuple[str, ...] = ()
+    if "lovecus" in low:
+        needles = ("lovecus",)
+    elif re.search(r"(?:^|_)awa\d*$", low):
+        needles = ("awa", "_aw")
+    if not needles:
+        return []
+    return [
+        mesh_name
+        for mesh_name, materials in mesh_materials.items()
+        if any(
+            needle in candidate.casefold()
+            for needle in needles
+            for candidate in (mesh_name, *materials)
+        )
+    ]
+
+
+def world_visibility_track_export(
+    motion: GfMotion,
+    model: Any,
+) -> tuple[dict[str, list[bool]], dict[str, list[str]]]:
+    """Return visibility frames keyed by nodes that actually exist in the GLB.
+
+    Several logical bubble shapes may resolve to one optimized mesh. Their
+    visibility is OR-combined so the merged geometry remains visible whenever
+    any authored source shape is active. The source mapping is retained for
+    diagnostics and future lossless shape splitting.
+    """
+    mesh_materials = {
+        mesh.name: [sub.material_name for sub in mesh.submeshes]
+        for mesh in getattr(model, "meshes", [])
+    }
+    target_tracks: dict[str, list[GfMotVisibilityTrack]] = {}
+    target_sources: dict[str, list[str]] = {}
+    for track in motion.visibility_tracks:
+        for target in _world_visibility_targets(track.name, mesh_materials):
+            target_tracks.setdefault(target, []).append(track)
+            target_sources.setdefault(target, []).append(track.name)
+    exported: dict[str, list[bool]] = {}
+    for target, tracks in target_tracks.items():
+        frame_count = max((len(track.values) for track in tracks), default=0)
+        exported[target] = [
+            any(frame < len(track.values) and track.values[frame] for track in tracks)
+            for frame in range(frame_count)
+        ]
+    return exported, target_sources
+
+
 # -- evaluation ---------------------------------------------------------------
 
 
@@ -850,9 +916,11 @@ def _material_accepts_world_uv_motion(material_name: str) -> bool:
     low = material_name.casefold()
     if any(token in low for token in ("jime", "stage", "rain", "snow")):
         return False
-    # Dual-unit sea tint uses per-vertex alpha; scrolling one exported layer looks wrong.
+    # Sea tint is a dual-unit PICA TEV material.  Its long, non-looping UV
+    # track selects the time-of-day color from a gradient texture, so it must
+    # survive now that the exporter preserves the combined texture units.
     if "sea_iro" in low:
-        return False
+        return True
     if _is_scroll_material(material_name) or _is_grass_wind_material(material_name):
         return True
     if any(token in low for token in ("kusa", "ueki", "hana")):
@@ -861,9 +929,11 @@ def _material_accepts_world_uv_motion(material_name: str) -> bool:
 
 
 def _classify_uv_motion_kind(material_name: str, max_delta: float) -> str | None:
-    """Classify baked offset magnitude as wind, scroll, or skip."""
+    """Classify baked offset magnitude as palette, wind, scroll, or skip."""
     if max_delta < 1e-6:
         return None
+    if "iro" in material_name.casefold():
+        return "palette"
     if _is_scroll_material(material_name):
         return "scroll"
     if max_delta <= WIND_UV_AMP_MAX:
@@ -959,36 +1029,160 @@ def pick_ambient_overlay_clips(clips: list[dict], default_id: str | None) -> lis
             continue
         if not clip_id.startswith("ambient_"):
             continue
-        if int(clip.get("frameCount") or 0) < 300:
-            continue
         tracks = clip.get("tracks") or []
         if not tracks:
             continue
         if any(str(track.get("material") or "") in default_mats for track in tracks):
             continue
-        if any("sea_iro" in str(track.get("material") or "").casefold() for track in tracks):
+        # Long ``*_iro*`` tracks select fixed time/weather colour plateaus.
+        # Playing one as an ambient overlay is what made freshwater and ocean
+        # maps cycle through every palette continuously.
+        if any("iro" in str(track.get("material") or "").casefold() for track in tracks):
             continue
         overlays.append(clip_id)
     return overlays
 
 
+def _constant_offset_runs(offsets: list[list[float]]) -> list[tuple[int, int]]:
+    runs: list[tuple[int, int]] = []
+    start = 0
+    for frame in range(1, len(offsets)):
+        previous = offsets[frame - 1]
+        current = offsets[frame]
+        if max(abs(float(current[i]) - float(previous[i])) for i in (0, 1)) > 1e-6:
+            if frame - start >= 4:
+                runs.append((start, frame - 1))
+            start = frame
+    if len(offsets) - start >= 4:
+        runs.append((start, len(offsets) - 1))
+    return runs
+
+
+def build_world_environment_states(map_motion: dict | None) -> dict:
+    """Name the fixed time and weather states encoded by GF world motions.
+
+    The state records reference existing clips/frames; they never duplicate
+    baked motion data.  Consumers can therefore hold a time pose while still
+    playing unrelated ambient UV and visibility clips.
+    """
+    time_ids = ("dawn", "sunset", "day", "night")
+    poses: dict[str, list[dict]] = {state: [] for state in time_ids}
+    weather_groups: dict[str, dict[str, list[str]]] = {
+        "rain": {"enterClips": [], "activeClips": [], "exitClips": []},
+        "snow": {"enterClips": [], "activeClips": [], "exitClips": []},
+    }
+    clips = list((map_motion or {}).get("clips") or [])
+    for clip in clips:
+        clip_id = str(clip.get("id") or "")
+        for track in clip.get("tracks") or []:
+            material = str(track.get("material") or "").casefold()
+            offsets = track.get("frameOffsets") or []
+            if "iro" not in material or len(offsets) < 120:
+                continue
+            runs = _constant_offset_runs(offsets)
+            if len(runs) < 3:
+                continue
+            # GF's 480-frame colour selector presents four holds.  The cyan
+            # third hold is daylight, the orange second hold is sunset, and
+            # the bookend holds cover dawn/night.
+            chosen = runs[:4]
+            while len(chosen) < 4:
+                chosen.append(chosen[-1])
+            for state, run in zip(time_ids, chosen):
+                poses[state].append(
+                    {"clip": clip_id, "frame": (run[0] + run[1]) // 2}
+                )
+
+        visibility_materials = " ".join(
+            str(value) for value in clip.get("visibilityMaterials") or []
+        ).casefold()
+        weather = "rain" if "rain" in visibility_materials else "snow" if "snow" in visibility_materials else ""
+        if weather:
+            frame_count = int(clip.get("frameCount") or 0)
+            if clip.get("loop"):
+                bucket = "activeClips"
+            elif frame_count >= 60:
+                bucket = "enterClips"
+            else:
+                bucket = "exitClips"
+            weather_groups[weather][bucket].append(clip_id)
+
+    time_states = []
+    for state in ("dawn", "day", "sunset", "night"):
+        state_poses = poses[state]
+        time_states.append(
+            {
+                "id": state,
+                "label": state.replace("_", " ").title(),
+                "available": bool(state_poses) or state == "day",
+                "poses": state_poses,
+            }
+        )
+    weather_states = [
+        {"id": "clear", "label": "Clear", "available": True},
+        {"id": "cloudy", "label": "Cloudy", "available": False},
+    ]
+    for state in ("rain", "snow"):
+        groups = weather_groups[state]
+        weather_states.append(
+            {
+                "id": state,
+                "label": state.title(),
+                "available": any(groups.values()),
+                **groups,
+            }
+        )
+    return {
+        "sourceFrameRate": float((map_motion or {}).get("frameRate") or FRAME_RATE),
+        "ambientClips": [
+            clip_id
+            for clip_id in [
+                (map_motion or {}).get("defaultClip"),
+                *((map_motion or {}).get("overlayClips") or []),
+            ]
+            if clip_id
+        ],
+        "timeStates": time_states,
+        "weatherStates": weather_states,
+        "supportedTimes": [item["id"] for item in time_states if item["available"]],
+        "supportedWeather": [item["id"] for item in weather_states if item["available"]],
+    }
+
+
+def world_material_unit_name(material_name: str, unit_index: int) -> str:
+    """All PICA texture-unit tracks target their one combined GLB material."""
+    _ = unit_index
+    return material_name
+
+
 def _should_export_world_uv_track(
     track: GfMotUVTrack, motion_tracks: list[GfMotUVTrack]
 ) -> bool:
-    """Map motion targets the albedo unit exported to GLB (unit 0)."""
+    """Keep every animated GF texture unit used by a world material.
+
+    GF beach and water shaders commonly animate two or three texture units at
+    different phases.  The GLB writer exports those units as layered materials,
+    so suppressing units 1/2 here destroys the original wave composition.
+    """
     if not (track.has_translation or track.has_scale):
         return False
-    if track.unit_index == 0:
-        return True
-    same_mat = [t for t in motion_tracks if t.name == track.name]
-    if any(
-        t.unit_index == 0 and (t.has_translation or t.has_scale) for t in same_mat
-    ):
-        return False
-    # Grass/plant wind often keys unit 1 while export uses unit-0 albedo.
-    if track.unit_index == 1 and _is_grass_wind_material(track.name):
-        return True
-    return False
+    return track.unit_index >= 0
+
+
+def world_animated_texture_units(
+    motions: Iterable[GfMotion], material_name: str
+) -> set[int]:
+    """Texture units that will receive exported world UV-motion tracks."""
+    units: set[int] = set()
+    for motion in motions:
+        for track in motion.material_tracks:
+            if track.name != material_name:
+                continue
+            if not _material_accepts_world_uv_motion(track.name):
+                continue
+            if _should_export_world_uv_track(track, motion.material_tracks):
+                units.add(track.unit_index)
+    return units
 
 
 def bake_world_map_motion_clip(
@@ -1007,15 +1201,14 @@ def bake_world_map_motion_clip(
             continue
         if not _should_export_world_uv_track(track, motion.material_tracks):
             continue
-        bind = _material_unit_uv(model, track.name, 0)
+        bind = _material_unit_uv(model, track.name, track.unit_index)
         if bind is None:
             continue
         bind_sx, bind_sy, bind_tx, bind_ty = bind
-        sample_bind = _material_unit_uv(model, track.name, track.unit_index) or bind
         offsets: list[list[float]] = []
         for frame in frame_indices:
-            tx = sample_track(track.channels[3], frame, sample_bind[2])
-            ty = sample_track(track.channels[4], frame, sample_bind[3])
+            tx = sample_track(track.channels[3], frame, bind_tx)
+            ty = sample_track(track.channels[4], frame, bind_ty)
             ox, oy = gf_uv_to_map_offset(
                 bind_sx,
                 bind_sy,
@@ -1031,11 +1224,18 @@ def bake_world_map_motion_clip(
         motion_kind = _classify_uv_motion_kind(track.name, max_delta)
         if motion_kind is None:
             continue
+        if motion_kind != "palette":
+            # GF spatial world-map texture matrices move the texture surface
+            # in the opposite visual direction from a GL/three.js map offset.
+            # Palette selectors use authored atlas coordinates and must not be
+            # reversed or the outer ocean samples its black gradient band.
+            offsets = [[-ox, -oy] for ox, oy in offsets]
         baked.append(
             {
-                "material": track.name,
+                "material": world_material_unit_name(track.name, track.unit_index),
                 "frameOffsets": offsets,
                 "motionKind": motion_kind,
+                "textureUnit": track.unit_index,
             }
         )
     return baked
@@ -1049,13 +1249,14 @@ def build_world_map_material_motion(
 ) -> dict | None:
     """Build root ``extras.rae.mapMaterialMotion`` for battle / world maps."""
     names = set(material_names)
+    mesh_materials = {
+        mesh.name: [sub.material_name for sub in mesh.submeshes]
+        for mesh in getattr(model, "meshes", [])
+    }
     clips: list[dict] = []
     for index, motion in enumerate(dedupe_world_motions(motions)):
         tracks = bake_world_map_motion_clip(motion, model, material_names=names)
-        vis = {
-            track.name: visibility_track_export(track)
-            for track in motion.visibility_tracks
-        }
+        vis, visibility_sources = world_visibility_track_export(motion, model)
         if not tracks and not vis:
             continue
         clip: dict = {
@@ -1066,6 +1267,14 @@ def build_world_map_material_motion(
         }
         if vis:
             clip["meshVisibility"] = vis
+            clip["meshVisibilitySources"] = visibility_sources
+            clip["visibilityMaterials"] = sorted(
+                {
+                    material
+                    for mesh_name in vis
+                    for material in mesh_materials.get(mesh_name, [])
+                }
+            )
         clips.append(clip)
     if not clips:
         return None
@@ -1076,6 +1285,33 @@ def build_world_map_material_motion(
         "defaultClip": default_clip,
         "clips": clips,
     }
+    default_pose_clips: list[dict] = []
+    for clip in clips:
+        sea_tracks = [
+            track
+            for track in clip.get("tracks") or []
+            if "iro" in str(track.get("material") or "").casefold()
+            and int(track.get("textureUnit") or 0) == 0
+        ]
+        if not sea_tracks:
+            continue
+        offsets = sea_tracks[0].get("frameOffsets") or []
+        if len(offsets) < 300:
+            continue
+        # The GF motion holds dawn, day, dusk, and night as plateaus in one
+        # gradient-selection track.  Use the longest interior hold as the
+        # neutral daylight preview pose (for USUM beach maps this is the
+        # -0.5 U plateau), while retaining the full clip for manual playback.
+        runs = _constant_offset_runs(offsets)
+        interior = [run for run in runs if run[0] > 0 and run[1] < len(offsets) - 1]
+        if not interior:
+            continue
+        run = max(interior, key=lambda item: item[1] - item[0])
+        default_pose_clips.append(
+            {"clip": str(clip["id"]), "frame": (run[0] + run[1]) // 2}
+        )
+    if default_pose_clips:
+        payload["defaultPoseClips"] = default_pose_clips
     if overlay_clips:
         payload["overlayClips"] = overlay_clips
     return payload

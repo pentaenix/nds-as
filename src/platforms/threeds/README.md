@@ -54,4 +54,36 @@ normal or shiny.
 | `/a/0/9/4` | Pokémon models: slot 0 = species→group table, then 9 slots per form group (model, normal tex, shiny tex, extra tex, 4× motion, misc) |
 | `/a/0/6/2` | Pokémon menu icon sprites (BFLIM 64×32 RGBA5551, own ordering) |
 
+## USUM battle-background composition
+
+`/a/0/8/1` stores battle environments as centered layers rather than one model
+per complete scene. Compact `btl_G_*` arena centres are commonly surrounded by
+wider `btl_N_*` models; closed and special stages may be self-contained. RAE's
+3DS scanner attaches the matching compositions to each affected asset and the
+export menu offers both complete-map GLBs/texture sets and the selected layer
+alone.
+
+Complete export combines geometry at the shared origin, resolves textures for
+all layers, and carries every layer's GFMotion material tracks. The 3DS preview
+plays the chosen primary ambient clip plus non-conflicting ambient overlays, so
+independent coast and ocean wave motion remain active together. The mapping is
+owned by `world_composition.py`; it is not shared with the Nintendo DS island.
+
+World GLBs preserve the PICA fragment shader's six TEV stages and up to three
+independently animated texture units on one surface. Secondary vertex UV sets,
+shoreline foam, ocean swell, and counter-motion therefore retain their original
+30 fps GFMotion tracks without additive duplicate geometry. Long sea-gradient
+motions also provide the daylight bind pose used by the default preview.
+World environments export explicit base-water and overlay roles. Independent
+short ambient loops remain active as overlays, while palette-selection tracks
+are held at the chosen time/weather state instead of advancing as ambient UV.
+World-motion export converts GF spatial texture-matrix translation to the
+opposite GL map-offset direction once at this boundary; palette/time atlas
+selectors retain their authored coordinates. Consumers use the exported
+offsets directly and must not apply another direction reversal.
+Single-texture materials retain the same UV-motion contract even when they do
+not require a full TEV payload. Visibility tracks are keyed to exported nodes;
+when the shipped GFModel merges logical effect shapes into an optimized mesh,
+the export records the contributing source names in `meshVisibilitySources`.
+
 Community mappings live in `mappings/3ds/`.

@@ -110,3 +110,8 @@ PYTHONPATH=src:tests python -m unittest discover -s tests -p 'test_*.py' -q
 ```
 
 Python package name: `rae`. The `dsm` import path remains as a deprecated alias for compatibility.
+# Pokémon Attend environment export (3DS)
+
+The 3DS world export module can emit one lossless composed `.glbz` per semantic Alola Attend scene plus `alola_attend_catalog.json`. The headless entry point is `src.platforms.threeds.export_module.environment.export_attend_environment_catalog`; the UI exposes the same profile as **GLBZ Pokemon Attend environment catalog**, and complete-map entries expose **GLBZ complete map**.
+
+Each package embeds `extras.rae.environmentScene` alongside `picaTev` and `mapMaterialMotion`: source slots and centre/outer roles, composition priority, a surface anchor, a 30 fps source clock, concurrent ambient clips, discrete visibility, and named time/weather states. This code is isolated to `src/platforms/threeds`; Nintendo DS previews and exports do not use it.

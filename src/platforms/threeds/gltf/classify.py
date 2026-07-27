@@ -114,6 +114,25 @@ def _pica_render_class(material: dict) -> RenderClass | None:
     return RenderClass.MASK if pica.get("alphaTestEnabled") else RenderClass.OPAQUE
 
 
+def _uses_non_authoritative_vertex_alpha_blend(material: dict) -> bool:
+    """Keep explicit PICA vertex-alpha cards translucent on world exports.
+
+    World TEV state is intentionally non-authoritative for ordinary colour
+    evaluation, but the source-alpha/no-depth-write render state still
+    describes how opaque-storage textures such as slot 0092's animated wall
+    are composited.
+    """
+    extras = material.get("extras") or {}
+    pica = (extras.get("rae") or {}).get("pica")
+    return bool(
+        isinstance(pica, dict)
+        and pica.get("alphaBlendEnabled")
+        and str(pica.get("sourceRgbFactor") or "") == "source_alpha"
+        and str(pica.get("destinationRgbFactor") or "") == "one_minus_source_alpha"
+        and not pica.get("depthWriteEnabled", True)
+    )
+
+
 def classify_material(
     material: dict,
     *,
@@ -130,6 +149,14 @@ def classify_material(
     if pica_render_class is not None:
         return ClassificationResult(
             render_class=pica_render_class,
+            texture_meaningful_alpha=meaningful_alpha,
+            horizontal_face_fraction=horizontal_fraction,
+            nitro_alpha=nitro_alpha,
+        )
+
+    if _uses_non_authoritative_vertex_alpha_blend(material):
+        return ClassificationResult(
+            render_class=RenderClass.BLEND,
             texture_meaningful_alpha=meaningful_alpha,
             horizontal_face_fraction=horizontal_fraction,
             nitro_alpha=nitro_alpha,

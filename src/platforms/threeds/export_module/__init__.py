@@ -18,6 +18,8 @@ from ..service import (
     export_animation_payloads,
     export_texture_pngs,
 )
+from ..world_composition import apply_composition, composition_by_id
+from .environment import export_attend_environment_catalog
 
 
 class ThreedsExportModule:
@@ -30,6 +32,64 @@ class ThreedsExportModule:
 
     def export_options_for(self, asset: Asset) -> list[tuple[str, str, str]]:
         if asset.magic == "GFMD":
+            descriptor = load_descriptor(asset) or {}
+            compositions = descriptor.get("world_compositions") or []
+            if descriptor.get("type") == "world_model" and compositions:
+                default_id = str(descriptor.get("composition_id") or "")
+                options: list[tuple[str, str, str]] = []
+                for item in compositions:
+                    composition_id = str(item.get("id") or "")
+                    if not composition_id:
+                        continue
+                    label = str(item.get("label") or composition_id)
+                    suffix = " (default)" if composition_id == default_id else ""
+                    options.append(
+                        (
+                            f"glb_world_{composition_id}",
+                            f"GLB complete map{suffix}",
+                            label + ". Combines centered model layers, textures, and ambient animations.",
+                        )
+                    )
+                    options.append(
+                        (
+                            f"glbz_world_{composition_id}",
+                            f"GLBZ complete map{suffix}",
+                            label + ". Lossless compressed complete map for engine/runtime use.",
+                        )
+                    )
+                    options.append(
+                        (
+                            f"textures_world_{composition_id}",
+                            f"Complete map texture PNGs{suffix}",
+                            label + ". Decodes textures used by every composed layer.",
+                        )
+                    )
+                options.extend(
+                    [
+                        ("glb_standalone", "GLB selected layer only", "Export only this archive slot."),
+                        ("glbz_standalone", "GLBZ selected layer only", "Lossless compressed export of only this archive slot."),
+                        ("textures_standalone", "Selected layer texture PNGs", "Decode only this archive slot's textures."),
+                        (
+                            "glbz_attend_catalog",
+                            "GLBZ Pokemon Attend environment catalog",
+                            "Export every named Alola Attend environment and a validation report.",
+                        ),
+                        ("raw", "Raw model payload", "Undecoded selected GARC payload."),
+                    ]
+                )
+                return options
+            if descriptor.get("type") == "world_model":
+                return [
+                    ("glb", "GLB world model", "Self-contained world model with textures and material motion metadata."),
+                    ("glbz", "GLBZ world model", "Lossless compressed world model."),
+                    ("textures", "Texture PNGs", "Decode every world texture to PNG."),
+                    (
+                        "glbz_attend_catalog",
+                        "GLBZ Pokemon Attend environment catalog",
+                        "Export every named Alola Attend environment and a validation report.",
+                    ),
+                    ("raw", "Raw model payload", "Undecoded selected GARC payload."),
+                ]
             return [
                 (
                     "glb",
@@ -74,6 +134,47 @@ class ThreedsExportModule:
             return []
         out.mkdir(parents=True, exist_ok=True)
         progress = getattr(host, "_update_status", None)
+        if choice == "glbz_attend_catalog":
+            return export_attend_environment_catalog(
+                descriptor,
+                out / "alola_attend_environments",
+                progress=progress,
+            )
+        if (
+            choice.startswith("glb_world_")
+            or choice.startswith("glbz_world_")
+            or choice.startswith("textures_world_")
+        ):
+            composition_id = choice.split("_world_", 1)[1]
+            composition = composition_by_id(composition_id)
+            if composition is None:
+                return []
+            descriptor = apply_composition(descriptor, composition)
+            choice = (
+                "glbz"
+                if choice.startswith("glbz_world_")
+                else "glb"
+                if choice.startswith("glb_world_")
+                else "textures"
+            )
+        elif choice in {"glb_standalone", "glbz_standalone", "textures_standalone"}:
+            descriptor = {
+                key: value
+                for key, value in descriptor.items()
+                if key not in {
+                    "composition_id",
+                    "composition_label",
+                    "composition_slots",
+                    "composition_outer_slot",
+                }
+            }
+            choice = (
+                "glb"
+                if choice == "glb_standalone"
+                else "glbz"
+                if choice == "glbz_standalone"
+                else "textures"
+            )
         if choice == "glb":
             shiny = bool(getattr(host, "_export_glb_shiny", False))
             return [

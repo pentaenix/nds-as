@@ -43,8 +43,10 @@ def read_pica_commands(words: list[int]) -> list[tuple[int, int]]:
             reg = register + n + 1 if consecutive else register
             out.append((reg, words[idx]))
             idx += 1
-        # Extra parameters are padded to keep 8-byte alignment.
-        if extra and (extra & 1) == 0:
+        # PICA commands are padded to 8-byte blocks. The next command begins
+        # on an even word index regardless of consecutive/non-consecutive mode.
+        # (SPICA's PICACommandReader uses the same index-parity rule.)
+        if idx & 1:
             idx += 1
     return out
 

@@ -21,10 +21,11 @@ from .pica import (
     GPUREG_VSH_NUM_ATTR,
     read_pica_commands,
 )
-from .pica_material import PicaRenderState, parse_pica_render_state
+from .pica_material import PicaRenderState, parse_pica_registers, parse_pica_render_state
 
 GFMODEL_MAGIC = 0x15122117
 GFTEXTURE_MAGIC = 0x15041213
+GFSHADER_MAGIC = GFTEXTURE_MAGIC
 
 # GFTextureFormat -> internal PICA format index (see pica.decode_pica_texture).
 GF_TEXTURE_FORMATS: dict[int, int] = {
@@ -190,6 +191,14 @@ class GfMaterial:
     specular0: tuple[int, int, int, int] | None = None
     blend: tuple[int, int, int, int] | None = None
     render_state: PicaRenderState | None = None
+    shader_name: str = ""
+    vertex_shader_name: str = ""
+    fragment_shader_name: str = ""
+    constant_colors: tuple[tuple[int, int, int, int], ...] = ()
+    constant_assignments: tuple[int, ...] = ()
+    pica_registers: dict[int, int] = field(default_factory=dict)
+    tev_stages: tuple[dict[str, int | bool], ...] = ()
+    tev_buffer_color: tuple[int, int, int, int] = (0, 0, 0, 0)
 
 
 @dataclass(slots=True)
@@ -198,6 +207,8 @@ class GfSubMesh:
     positions: list[tuple[float, float, float]] = field(default_factory=list)
     normals: list[tuple[float, float, float]] = field(default_factory=list)
     uvs: list[tuple[float, float]] = field(default_factory=list)
+    uvs1: list[tuple[float, float]] = field(default_factory=list)
+    uvs2: list[tuple[float, float]] = field(default_factory=list)
     colors: list[tuple[float, float, float, float]] = field(default_factory=list)
     indices: list[int] = field(default_factory=list)
     # Skinning: per-submesh table mapping the local bone-index attribute value
@@ -211,6 +222,13 @@ class GfSubMesh:
 class GfMesh:
     name: str
     submeshes: list[GfSubMesh] = field(default_factory=list)
+    # World-environment provenance.  These fields remain at their neutral
+    # defaults for Pokemon and standalone models; composed USUM battle maps
+    # populate them before GLB emission so runtimes can resolve equal-depth
+    # centre/outer passes without guessing from material names.
+    source_slot: int | None = None
+    composition_role: str = "self_contained"
+    composition_priority: int = 0
 
 
 @dataclass(slots=True)
@@ -221,6 +239,67 @@ class GfModel:
     materials: list[GfMaterial] = field(default_factory=list)
     bones: list[GfBone] = field(default_factory=list)
     meshes: list[GfMesh] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class GfShader:
+    name: str
+    stages: tuple[dict[str, int | bool], ...]
+    buffer_color: tuple[int, int, int, int]
+
+
+def is_gf_shader(data: bytes) -> bool:
+    return (
+        len(data) >= 0xC0
+        and struct.unpack_from("<I", data)[0] == GFSHADER_MAGIC
+        and data[0x10:0x18].rstrip(b"\x00") == b"shader"
+    )
+
+
+def parse_gf_shader(data: bytes) -> GfShader:
+    """Decode the six PICA texture-environment stages from a GFL2 shader."""
+    if not is_gf_shader(data):
+        raise GfParseError("not a GFShader")
+    r = _Reader(data)
+    r.u32()
+    r.u32()
+    r.align16()
+    magic, _length = r.section()
+    if magic != "shader":
+        raise GfParseError("invalid GFShader section")
+    name = r.padded_string(0x40)
+    r.u32()  # hash
+    r.u32()  # program count
+    r.align16()
+    commands_length = r.u32()
+    r.u32()  # command count
+    r.u32()  # command hash
+    r.u32()  # padding
+    r.skip(0x40)  # source filename
+    if commands_length > len(data) - r.pos or commands_length % 4:
+        raise GfParseError("invalid GFShader command length")
+    words = list(
+        struct.unpack_from(f"<{commands_length // 4}I", data, r.pos)
+    )
+    registers = {register: value for register, value in read_pica_commands(words)}
+    stage_bases = (0xC0, 0xC8, 0xD0, 0xD8, 0xF0, 0xF8)
+    update = registers.get(0xE0, 0)
+    stages: list[dict[str, int | bool]] = []
+    for index, base in enumerate(stage_bases):
+        stages.append(
+            {
+                "source": registers.get(base, 0x0FFF0FFF),
+                "operand": registers.get(base + 1, 0),
+                "combiner": registers.get(base + 2, 0),
+                "color": registers.get(base + 3, 0),
+                "scale": registers.get(base + 4, 0),
+                "updateColorBuffer": bool(index in (1, 2, 3, 4) and update & (0x100 << (index - 1))),
+                "updateAlphaBuffer": bool(index in (1, 2, 3, 4) and update & (0x1000 << (index - 1))),
+            }
+        )
+    raw_color = registers.get(0xFD, 0)
+    buffer_color = tuple((raw_color >> shift) & 0xFF for shift in (0, 8, 16, 24))
+    return GfShader(name=name, stages=tuple(stages), buffer_color=buffer_color)  # type: ignore[arg-type]
 
 
 # -- GFTexture ---------------------------------------------------------------
@@ -328,22 +407,22 @@ def _parse_material(r: _Reader) -> GfMaterial:
     _magic, length = r.section()
     end = r.pos + length
     material_name = r.hash_name()
-    r.hash_name()  # shader name
-    r.hash_name()  # vertex shader name
-    r.hash_name()  # fragment shader name
+    shader_name = r.hash_name()
+    vertex_shader_name = r.hash_name()
+    fragment_shader_name = r.hash_name()
 
     r.skip(3 * 4)  # LUT hashes
     r.skip(4)      # padding
     r.skip(1)      # bump texture
-    r.skip(6)      # constant assignments
+    constant_assignments = tuple(r.bytes(6))
     r.skip(1)      # padding
-    # 12 RGBA colors: emission, ambient, diffuse, specular0, specular1,
-    # constant0-5, blend.
+    # GF/SPICA order: constant0-5, specular0, specular1, blend,
+    # emission, ambient, diffuse.
     colors = [tuple(r.bytes(4)) for _ in range(12)]
-    emission = colors[0]
-    diffuse = colors[2]
-    specular0 = colors[3]
-    blend = colors[11]
+    emission = colors[9]
+    diffuse = colors[11]
+    specular0 = colors[6]
+    blend = colors[8]
     r.skip(4 * 4)  # edge type / id-edge / edge id / projection type
     r.skip(4 * 4)  # rim/phong pow+scale
     r.skip(2 * 4)  # id edge offset enable / edge map alpha mask
@@ -379,7 +458,9 @@ def _parse_material(r: _Reader) -> GfMaterial:
             )
         )
 
-    render_state = parse_pica_render_state(r.data[r.pos:end])
+    material_tail = r.data[r.pos:end]
+    render_state = parse_pica_render_state(material_tail)
+    pica_registers = parse_pica_registers(material_tail) or {}
     r.pos = end
     return GfMaterial(
         name=material_name,
@@ -390,6 +471,12 @@ def _parse_material(r: _Reader) -> GfMaterial:
         specular0=specular0,
         blend=blend,
         render_state=render_state,
+        shader_name=shader_name,
+        vertex_shader_name=vertex_shader_name,
+        fragment_shader_name=fragment_shader_name,
+        constant_colors=tuple(colors[0:6]),
+        constant_assignments=constant_assignments,
+        pica_registers=pica_registers,
     )
 
 
@@ -594,6 +681,8 @@ def _decode_vertices(
                 ATTR_NORMAL,
                 ATTR_COLOR,
                 ATTR_TEXCOORD0,
+                ATTR_TEXCOORD1,
+                ATTR_TEXCOORD2,
                 ATTR_BONE_INDEX,
                 ATTR_BONE_WEIGHT,
             ):
@@ -606,6 +695,10 @@ def _decode_vertices(
                 sub.normals.append((scaled[0], scaled[1], scaled[2] if elements > 2 else 0.0))
             elif attr_name == ATTR_TEXCOORD0:
                 sub.uvs.append((scaled[0], scaled[1] if elements > 1 else 0.0))
+            elif attr_name == ATTR_TEXCOORD1:
+                sub.uvs1.append((scaled[0], scaled[1] if elements > 1 else 0.0))
+            elif attr_name == ATTR_TEXCOORD2:
+                sub.uvs2.append((scaled[0], scaled[1] if elements > 1 else 0.0))
             elif attr_name == ATTR_COLOR:
                 rgba = scaled + (1.0, 1.0, 1.0, 1.0)
                 sub.colors.append(

@@ -898,8 +898,9 @@
       animModel = model;
       loadedGltfParser = gltf.parser;
       const mapMotion = gltf.parser?.json?.extras?.rae?.mapMaterialMotion;
+      const environmentScene = gltf.parser?.json?.extras?.rae?.environmentScene;
       if (mapMotion) {
-        installMapMaterialMotion(model, mapMotion);
+        installMapMaterialMotion(model, mapMotion, environmentScene);
         mapMotionPlayingName = '';
       }
     }
