@@ -14,6 +14,7 @@ def all_asset_magics() -> dict[str, str]:
         _gb_magics,
         _gbc_magics,
         _threeds_magics,
+        _windows_iso_magics,
         _switch_magics,
     ):
         for magic, platform_id in loader().items():
@@ -58,6 +59,11 @@ def _threeds_magics() -> dict[str, str]:
 
 def _switch_magics() -> dict[str, str]:
     from ...platforms.switch.magics import ASSET_MAGICS
+
+    return dict(ASSET_MAGICS)
+
+def _windows_iso_magics() -> dict[str, str]:
+    from ...platforms.windows_iso.magics import ASSET_MAGICS
 
     return dict(ASSET_MAGICS)
 

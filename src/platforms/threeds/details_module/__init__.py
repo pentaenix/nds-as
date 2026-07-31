@@ -44,6 +44,16 @@ class ThreedsDetailsModule:
         elif kind == "sprite":
             lines.append(f"3DS BFLIM sprite #{descriptor.get('sprite_index')}")
             lines.append(f"GARC {descriptor.get('garc')}")
+        elif kind == "cgfx_model":
+            lines.append(f"3DS NintendoWare CGFX model — {descriptor.get('name', '?')}")
+            lines.append(f"RomFS: {descriptor.get('romfs_path')}")
+            lines.append(f"Catalog size: {int(descriptor.get('size') or 0):,} bytes")
+            lines.append("Preview resolves nearby textures and the first matching idle/skeletal animation lazily.")
+        elif kind and str(kind).startswith("cgfx_"):
+            lines.append(f"3DS NintendoWare asset — {descriptor.get('name', '?')}")
+            lines.append(f"Type: {kind}")
+            lines.append(f"RomFS: {descriptor.get('romfs_path')}")
+            lines.append(f"Catalog size: {int(descriptor.get('size') or 0):,} bytes")
         elif kind == "summary":
             lines.append(json.dumps(descriptor, indent=2, ensure_ascii=False))
         return "\n".join(lines) if lines else None

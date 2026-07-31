@@ -12,15 +12,19 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QApplication,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QRadioButton,
     QSplitter,
     QTreeWidget,
     QTreeWidgetItem,
@@ -29,12 +33,55 @@ from PySide6.QtWidgets import (
 )
 
 from ...core.assets import Asset
+from ...core.install import project_root
 
 _GEN5_MAP_RE = re.compile(r"(?:^|/)a/0/0/8/file_\d+\.bin", re.IGNORECASE)
 
 
 def _is_gen5_map_path(path: str) -> bool:
     return bool(_GEN5_MAP_RE.search(str(path or "")))
+
+
+def _default_export_directory(category: str = "") -> Path:
+    output = project_root() / "exports"
+    if category:
+        output /= category
+    output.mkdir(parents=True, exist_ok=True)
+    return output
+
+
+def _default_export_file(filename: str, category: str = "") -> str:
+    return str(_default_export_directory(category) / filename)
+
+
+def _building_export_source(selected: object, *, include_door: bool) -> Path:
+    if include_door:
+        return Path(selected.glb_path)
+    return Path(selected.doorless_glb_path or selected.glb_path)
+
+
+def _map_export_action_ids(
+    *,
+    has_selection: bool,
+    has_door: bool,
+    has_multiple_variants: bool,
+    has_discovered_doors: bool,
+    has_interior: bool = False,
+) -> tuple[str, ...]:
+    """Return only the exports that make sense for the current map context."""
+    actions = ["map"]
+    if has_interior:
+        actions.extend(("interior", "interior_kit"))
+    if has_multiple_variants:
+        actions.append("variants")
+    if has_selection:
+        actions.append("building_doorless")
+        if has_door:
+            actions.append("building_with_door")
+        actions.append("building_tile")
+    if has_discovered_doors:
+        actions.append("doors")
+    return tuple(actions)
 
 
 class _MapCompositionWorker(QThread):
@@ -1323,7 +1370,12 @@ class NdsTileExtractorWidget(QWidget):
             return
         selected = self._assembled_materials(explicitly_selected)
         suggested = f"{Path(asset.virtual_path).stem}_{explicitly_selected[0]}.tile"
-        output_name, _ = QFileDialog.getSaveFileName(self, "Export selected tile", suggested, "Pokemon Resort tile (*.tile)")
+        output_name, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export selected tile",
+            _default_export_file(suggested, "tiles"),
+            "Pokemon Resort tile (*.tile)",
+        )
         if not output_name:
             return
         output = Path(output_name)
@@ -1393,7 +1445,11 @@ class NdsTileExtractorWidget(QWidget):
                 "Focus a row with arrow-selectable tile occurrences first.",
             )
             return
-        folder_name = QFileDialog.getExistingDirectory(self, "Export every tile in this row")
+        folder_name = QFileDialog.getExistingDirectory(
+            self,
+            "Export every tile in this row",
+            str(_default_export_directory("tiles")),
+        )
         if not folder_name:
             return
 
@@ -1502,25 +1558,36 @@ class NdsMapObjectsWidget(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
         self.summary = QLabel(
-            "Gen 5 maps store buildings outside the terrain model. Load them from the map's AreaData and placement records."
+            "Select a carved Gen 5 map to resolve its externally stored buildings."
         )
-        self.summary.setWordWrap(True)
+        self.summary.setWordWrap(False)
+        self.summary.setToolTip(
+            "Gen 5 maps store buildings outside the terrain model. RAE resolves them from AreaData and placement records."
+        )
         layout.addWidget(self.summary)
 
         variant_row = QHBoxLayout()
-        variant_row.addWidget(QLabel("Season / variant"))
+        variant_row.addWidget(QLabel("Variant"))
         self.variant_combo = QComboBox()
         self.variant_combo.setToolTip(
             "Switch the map geometry and matching AreaData texture/lighting as one exact variant."
         )
         self.variant_combo.currentIndexChanged.connect(self._variant_changed)
         variant_row.addWidget(self.variant_combo, 1)
-        self.export_map_button = QPushButton("Export map…")
-        self.export_map_button.clicked.connect(self._export_exact_map_glb)
-        self.export_all_button = QPushButton("Export seasons…")
-        self.export_all_button.clicked.connect(self._export_all_variants)
-        variant_row.addWidget(self.export_map_button)
-        variant_row.addWidget(self.export_all_button)
+        self.view_combo = QComboBox()
+        self.view_combo.setToolTip("Choose whether the viewport shows the composed map or terrain alone.")
+        self.view_combo.addItem("Map + models", "composed")
+        self.view_combo.addItem("Terrain only", "terrain")
+        self.view_combo.currentIndexChanged.connect(self._view_changed)
+        variant_row.addWidget(self.view_combo)
+        self.load_button = QPushButton("Retry")
+        self.load_button.clicked.connect(self._load_objects)
+        self.load_button.setVisible(False)
+        variant_row.addWidget(self.load_button)
+        self.map_export_button = QPushButton("Export…")
+        self.map_export_button.setToolTip("Export the map, selected building, tile, or discovered doors.")
+        self.map_export_button.clicked.connect(self._show_export_dialog)
+        variant_row.addWidget(self.map_export_button)
         layout.addLayout(variant_row)
 
         self.objects = QTreeWidget()
@@ -1528,34 +1595,22 @@ class NdsMapObjectsWidget(QWidget):
         self.objects.setRootIsDecorated(False)
         self.objects.setAlternatingRowColors(True)
         self.objects.itemSelectionChanged.connect(self._selection_changed)
+        self.objects.itemDoubleClicked.connect(lambda _item, _column: self._preview_selected())
+        self.objects.setMinimumHeight(150)
+        header = self.objects.header()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         layout.addWidget(self.objects, 1)
 
-        view_row = QHBoxLayout()
-        self.load_button = QPushButton("Retry exact map load")
-        self.load_button.clicked.connect(self._load_objects)
-        self.load_button.setVisible(False)
-        self.composed_button = QPushButton("Show map + models")
-        self.composed_button.clicked.connect(self._show_composed)
-        self.terrain_button = QPushButton("Exact terrain only")
-        self.terrain_button.clicked.connect(self._show_terrain)
-        view_row.addWidget(self.load_button)
-        view_row.addStretch(1)
-        view_row.addWidget(self.composed_button)
-        view_row.addWidget(self.terrain_button)
-        layout.addLayout(view_row)
-
-        export_row = QHBoxLayout()
-        self.preview_button = QPushButton("Preview selected model")
+        footer = QHBoxLayout()
+        self.selection_status = QLabel("Select a building; double-click to preview it.")
+        footer.addWidget(self.selection_status, 1)
+        self.preview_button = QPushButton("Preview selected")
         self.preview_button.clicked.connect(self._preview_selected)
-        self.tile_button = QPushButton("Export selected as .tile…")
-        self.tile_button.clicked.connect(self._export_selected_tile)
-        self.glb_button = QPushButton("Export selected as GLB…")
-        self.glb_button.clicked.connect(self._export_selected_glb)
-        export_row.addWidget(self.preview_button)
-        export_row.addStretch(1)
-        export_row.addWidget(self.tile_button)
-        export_row.addWidget(self.glb_button)
-        layout.addLayout(export_row)
+        footer.addWidget(self.preview_button)
+        layout.addLayout(footer)
         self.set_context(None)
         app = QApplication.instance()
         if app is not None:
@@ -1579,8 +1634,8 @@ class NdsMapObjectsWidget(QWidget):
         self.variant_combo.clear()
         self.variant_combo.blockSignals(False)
         self.variant_combo.setEnabled(False)
-        self.export_map_button.setEnabled(False)
-        self.export_all_button.setEnabled(False)
+        self.map_export_button.setEnabled(False)
+        self.view_combo.setEnabled(False)
         animations = getattr(self._window, "nds_animations", None)
         tabs = getattr(self._window, "preview_inspector_tabs", None)
         animation_index = getattr(self._window, "_inspector_tab_nds_animations", None)
@@ -1600,25 +1655,32 @@ class NdsMapObjectsWidget(QWidget):
         ready = bool(asset and _is_gen5_map_path(asset.virtual_path) and self._terrain_glb)
         self.load_button.setEnabled(ready)
         self.load_button.setVisible(False)
-        self.composed_button.setEnabled(False)
-        self.terrain_button.setEnabled(False)
         self._set_selection_actions(False)
         if asset is None:
-            self.summary.setText("Select a carved Gen 5 a/0/0/8 map model.")
+            self._set_summary("Select a carved Gen 5 a/0/0/8 map model.")
         elif not _is_gen5_map_path(asset.virtual_path):
-            self.summary.setText("This model is not a carved Gen 5 a/0/0/8 map.")
+            self._set_summary("This model is not a carved Gen 5 a/0/0/8 map.")
         elif self._terrain_glb is None:
-            self.summary.setText("Preview this map once, then load its externally stored buildings.")
+            self._set_summary("Preview this map once, then load its externally stored buildings.")
         else:
-            self.summary.setText(
+            self._set_summary(
                 "Loading the exact AreaData texture, DS material animations, and placed models in the background…"
             )
             self._queue_auto_load()
 
+    def _set_summary(self, text: str, details: str = "") -> None:
+        self.summary.setText(text)
+        self.summary.setToolTip(details or text)
+
     def _set_selection_actions(self, enabled: bool) -> None:
         self.preview_button.setEnabled(enabled)
-        self.tile_button.setEnabled(enabled)
-        self.glb_button.setEnabled(enabled)
+        self.preview_button.setVisible(enabled)
+        selected = self._selected_preview() if enabled else None
+        if selected is None:
+            self.selection_status.setText("Select a building; double-click to preview it.")
+        else:
+            door_note = " · animated door" if selected.door is not None else " · no resolved door"
+            self.selection_status.setText(f"{selected.model.name}{door_note}")
 
     def _selection_changed(self) -> None:
         self._set_selection_actions(self._selected_preview() is not None)
@@ -1700,8 +1762,14 @@ class NdsMapObjectsWidget(QWidget):
         current_key = getattr(getattr(self._composition, "objects", None), "variant_key", "")
         if str(data[2]) == str(current_key):
             return
-        self.summary.setText(f"Loading {self.variant_combo.currentText()} with its exact texture and models…")
+        self._set_summary(f"Loading {self.variant_combo.currentText()} with its exact texture and models…")
         self._start_map_load(automatic=False)
+
+    def _view_changed(self, _index: int) -> None:
+        if self.view_combo.currentData() == "terrain":
+            self._show_terrain()
+        else:
+            self._show_composed()
 
     def _start_map_load(self, *, automatic: bool) -> None:
         asset = self._asset
@@ -1713,7 +1781,7 @@ class NdsMapObjectsWidget(QWidget):
                 return
             self.load_button.setVisible(bool(asset and _is_gen5_map_path(asset.virtual_path)))
             self.load_button.setEnabled(bool(asset))
-            self.summary.setText("Waiting for the source ROM and carved terrain preview; use Retry if they finish loading later.")
+            self._set_summary("Waiting for the source ROM and carved terrain preview; use Retry when ready.")
             if not automatic:
                 QMessageBox.information(self, "Map unavailable", "Open the source ROM and preview this map first.")
             return
@@ -1722,9 +1790,9 @@ class NdsMapObjectsWidget(QWidget):
         self.load_button.setEnabled(False)
         self.load_button.setVisible(False)
         self.variant_combo.setEnabled(False)
-        self.export_map_button.setEnabled(False)
-        self.export_all_button.setEnabled(False)
-        self.summary.setText("Resolving the exact map texture, material animation, and building pack…")
+        self.map_export_button.setEnabled(False)
+        self.view_combo.setEnabled(False)
+        self._set_summary("Resolving the exact map texture, animation, and building pack…")
         preview_temp = Path(getattr(self._window, "preview_temp", tempfile.gettempdir()))
         variant_data = self.variant_combo.currentData()
         map_override = int(variant_data[0]) if variant_data else None
@@ -1794,13 +1862,13 @@ class NdsMapObjectsWidget(QWidget):
             self._composition = None
             if automatic and self._auto_retry_count < 2:
                 self._auto_retry_count += 1
-                self.summary.setText("Retrying exact AreaData textures and placed models…")
+                self._set_summary("Retrying exact AreaData textures and placed models…")
                 self._queue_auto_load(200)
                 return
             self.load_button.setEnabled(True)
             self.load_button.setVisible(True)
             self.variant_combo.setEnabled(self.variant_combo.count() > 1)
-            self.summary.setText(f"Exact map could not be loaded: {error}")
+            self._set_summary("Exact map could not be loaded. Use Retry.", error)
             self._status(f"Exact map loading failed: {error}")
             return
         self._auto_retry_count = 0
@@ -1818,8 +1886,8 @@ class NdsMapObjectsWidget(QWidget):
         self.variant_combo.setCurrentIndex(current_variant_row)
         self.variant_combo.blockSignals(False)
         self.variant_combo.setEnabled(self.variant_combo.count() > 1)
-        self.export_map_button.setEnabled(True)
-        self.export_all_button.setEnabled(self.variant_combo.count() > 1)
+        self.map_export_button.setEnabled(True)
+        self.view_combo.setEnabled(True)
         self.objects.clear()
 
         door_count = 0
@@ -1863,7 +1931,7 @@ class NdsMapObjectsWidget(QWidget):
             self.objects.resizeColumnToContents(column)
         area = composition.objects.area
         location = "outside" if area.is_outside else "inside"
-        self.summary.setText(
+        details = (
             f"Exact AreaData textures and DS animations loaded; {len(composition.previews)} placed model(s) "
             f"and {door_count} animated door attachment(s) loaded "
             f"({door_count - inferred_door_count} explicit, {inferred_door_count} inferred from ROM event warps) from "
@@ -1880,10 +1948,111 @@ class NdsMapObjectsWidget(QWidget):
                 else ""
             )
         )
-        self.composed_button.setEnabled(True)
-        self.terrain_button.setEnabled(True)
+        zone = (
+            f"Zone {composition.objects.zone_index}"
+            if composition.objects.zone_index >= 0
+            else "exact-match inference"
+        )
+        self._set_summary(
+            f"{len(composition.previews)} models · {door_count} doors · {location} pack {area.building_pack} · "
+            f"{composition.objects.variant_label} · AreaData {area.index} · {zone}",
+            details,
+        )
         self.load_button.setVisible(False)
+        self.view_combo.blockSignals(True)
+        self.view_combo.setCurrentIndex(0)
+        self.view_combo.blockSignals(False)
         self._show_composed()
+
+    def _show_export_dialog(self) -> None:
+        composition = self._composition
+        if composition is None:
+            return
+        selected = self._selected_preview()
+        from .export_module.interior_map import is_gen5_interior_candidate
+
+        try:
+            has_interior = is_gen5_interior_candidate(composition.terrain_glb)
+        except Exception:
+            has_interior = False
+        action_ids = _map_export_action_ids(
+            has_selection=selected is not None,
+            has_door=bool(selected and selected.door is not None),
+            has_multiple_variants=self.variant_combo.count() > 1,
+            has_discovered_doors=any(preview.door is not None for preview in composition.previews),
+            has_interior=has_interior,
+        )
+        actions = {
+            "map": (
+                "Current map",
+                "Export the composed terrain, placed models, and animations as one GLB.",
+                self._export_exact_map_glb,
+            ),
+            "variants": (
+                "All seasons / variants",
+                "Export every resolved map variant into a folder.",
+                self._export_all_variants,
+            ),
+            "interior": (
+                "Interior shell + grid metadata",
+                "Export exact floor/wall geometry plus Resort collision, height, opening, and provenance metadata.",
+                self._export_interior_package,
+            ),
+            "interior_kit": (
+                "Interior kit pieces",
+                "Export reusable floor, wall, entrance, stair, window, and shadow material groups with a manifest.",
+                self._export_interior_kit,
+            ),
+            "building_doorless": (
+                "Selected building — doorless",
+                "Export a placement-ready building GLB for Pokémon Resort.",
+                lambda: self._export_selected_glb(include_door=False),
+            ),
+            "building_with_door": (
+                "Selected building — animated door",
+                "Export the building with its correctly placed door and animation clips.",
+                lambda: self._export_selected_glb(include_door=True),
+            ),
+            "building_tile": (
+                "Selected building as .tile",
+                "Package the selected building for the Resort map maker.",
+                self._export_selected_tile,
+            ),
+            "doors": (
+                "All discovered doors",
+                "Export every resolved animated door as a reusable .tile bundle.",
+                self._export_all_doors,
+            ),
+        }
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Export map objects")
+        dialog.setMinimumWidth(520)
+        dialog_layout = QVBoxLayout(dialog)
+        intro = QLabel("Choose what to export. Options use the current variant and selection.")
+        intro.setWordWrap(True)
+        dialog_layout.addWidget(intro)
+        radios: list[tuple[QRadioButton, object]] = []
+        for action_id in action_ids:
+            title, description, callback = actions[action_id]
+            radio = QRadioButton(title)
+            radio.setChecked(not radios)
+            dialog_layout.addWidget(radio)
+            detail = QLabel(description)
+            detail.setWordWrap(True)
+            detail.setStyleSheet("color: palette(mid); margin-left: 24px; margin-bottom: 5px;")
+            dialog_layout.addWidget(detail)
+            radios.append((radio, callback))
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        dialog_layout.addWidget(buttons)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        for radio, callback in radios:
+            if radio.isChecked():
+                callback()
+                return
 
     def _export_exact_map_glb(self) -> None:
         composition = self._composition
@@ -1893,7 +2062,10 @@ class NdsMapObjectsWidget(QWidget):
         output_name, _ = QFileDialog.getSaveFileName(
             self,
             "Export exact composed map",
-            f"map_{composition.objects.map_file_index:04d}_{safe_variant or 'exact'}.glb",
+            _default_export_file(
+                f"map_{composition.objects.map_file_index:04d}_{safe_variant or 'exact'}.glb",
+                "maps",
+            ),
             "glTF binary (*.glb)",
         )
         if not output_name:
@@ -1906,20 +2078,83 @@ class NdsMapObjectsWidget(QWidget):
         self._status(f"Exported exact composed map with buildings and animations: {output}")
         QMessageBox.information(self, "Map exported", f"Created:\n{output}")
 
+    def _choose_interior_output(self, title: str) -> Path | None:
+        composition = self._composition
+        if composition is None:
+            return None
+        default = _default_export_directory("interiors") / f"map_{composition.objects.map_file_index:04d}"
+        default.mkdir(parents=True, exist_ok=True)
+        folder_name = QFileDialog.getExistingDirectory(self, title, str(default))
+        return Path(folder_name) if folder_name else None
+
+    def _export_interior_package(self) -> None:
+        composition = self._composition
+        asset = self._asset
+        rom_path = getattr(self._window, "rom_path", None)
+        if composition is None or asset is None:
+            return
+        output_dir = self._choose_interior_output("Export interior shell and grid metadata")
+        if output_dir is None:
+            return
+        from .export_module.interior_map import export_gen5_interior_package
+
+        glb_path, metadata_path = export_gen5_interior_package(
+            composition,
+            output_dir,
+            rom_name=Path(rom_path).stem if rom_path else "",
+            virtual_path=asset.virtual_path,
+        )
+        self._status(f"Exported Resort interior package: {output_dir}")
+        QMessageBox.information(
+            self,
+            "Interior exported",
+            f"Created:\n{glb_path}\n{metadata_path}",
+        )
+
+    def _export_interior_kit(self) -> None:
+        composition = self._composition
+        asset = self._asset
+        rom_path = getattr(self._window, "rom_path", None)
+        if composition is None or asset is None:
+            return
+        output_dir = self._choose_interior_output("Export reusable interior kit")
+        if output_dir is None:
+            return
+        from .export_module.interior_map import export_gen5_interior_kit, export_gen5_interior_package
+
+        shell_path, metadata_path = export_gen5_interior_package(
+            composition,
+            output_dir,
+            rom_name=Path(rom_path).stem if rom_path else "",
+            virtual_path=asset.virtual_path,
+        )
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        manifest_path, parts = export_gen5_interior_kit(shell_path, metadata, output_dir / "kit")
+        self._status(f"Exported {len(parts)} reusable interior part(s): {manifest_path}")
+        QMessageBox.information(
+            self,
+            "Interior kit exported",
+            f"Created {len(parts)} reusable GLB part(s) and:\n{manifest_path}",
+        )
+
     def _export_all_variants(self) -> None:
         composition = self._composition
         asset = self._asset
         rom_path = getattr(self._window, "rom_path", None)
         if composition is None or asset is None or not rom_path or self._terrain_glb is None:
             return
-        folder_name = QFileDialog.getExistingDirectory(self, "Export all map seasons / variants")
+        folder_name = QFileDialog.getExistingDirectory(
+            self,
+            "Export all map seasons / variants",
+            str(_default_export_directory("maps")),
+        )
         if not folder_name:
             return
         output_dir = Path(folder_name)
         output_dir.mkdir(parents=True, exist_ok=True)
         preview_temp = Path(getattr(self._window, "preview_temp", tempfile.gettempdir()))
         written: list[Path] = []
-        self.export_all_button.setEnabled(False)
+        self.map_export_button.setEnabled(False)
         try:
             from .map_objects import build_gen5_map_composition
 
@@ -1943,7 +2178,7 @@ class NdsMapObjectsWidget(QWidget):
             QMessageBox.warning(self, "Season export failed", str(exc))
             return
         finally:
-            self.export_all_button.setEnabled(self.variant_combo.count() > 1)
+            self.map_export_button.setEnabled(self._composition is not None)
         self._status(f"Exported {len(written)} exact map variant(s) with buildings and animations.")
         QMessageBox.information(
             self,
@@ -2054,14 +2289,18 @@ class NdsMapObjectsWidget(QWidget):
         name = selected.model.name if selected is not None else "building"
         return f"{name}{suffix}"
 
-    def _export_selected_glb(self) -> None:
+    def _export_selected_glb(self, *, include_door: bool) -> None:
         selected = self._selected_preview()
         if selected is None:
             return
+        if include_door and selected.door is None:
+            QMessageBox.information(self, "No attached door", "This building has no resolved animated door.")
+            return
+        suffix = "_with_animated_door.glb" if include_door else "_doorless.glb"
         output_name, _ = QFileDialog.getSaveFileName(
             self,
-            "Export placed model",
-            self._suggested_name(".glb"),
+            "Export building with animated door" if include_door else "Export doorless building",
+            _default_export_file(self._suggested_name(suffix), "buildings"),
             "glTF binary (*.glb)",
         )
         if not output_name:
@@ -2071,8 +2310,10 @@ class NdsMapObjectsWidget(QWidget):
             output = output.with_suffix(".glb")
         from .gltf.extract import recenter_glb_geometry
 
-        recenter_glb_geometry(selected.glb_path, output)
-        self._status(f"Exported placed building GLB: {output}")
+        source = _building_export_source(selected, include_door=include_door)
+        recenter_glb_geometry(source, output)
+        flavor = "with animated door" if include_door else "doorless"
+        self._status(f"Exported {flavor} placed building GLB: {output}")
         QMessageBox.information(self, "Model exported", f"Created:\n{output}")
 
     def _export_selected_tile(self) -> None:
@@ -2083,7 +2324,7 @@ class NdsMapObjectsWidget(QWidget):
         output_name, _ = QFileDialog.getSaveFileName(
             self,
             "Export placed model as tile",
-            self._suggested_name(".tile"),
+            _default_export_file(self._suggested_name(".tile"), "tiles"),
             "Pokemon Resort tile (*.tile)",
         )
         if not output_name:
@@ -2120,6 +2361,28 @@ class NdsMapObjectsWidget(QWidget):
             )
         self._status(f"Exported placed building tile: {output}")
         QMessageBox.information(self, "Tile exported", f"Created:\n{output}")
+
+    def _export_all_doors(self) -> None:
+        composition = self._composition
+        if composition is None:
+            return
+        folder_name = QFileDialog.getExistingDirectory(
+            self,
+            "Export every discovered door",
+            str(_default_export_directory("doors")),
+        )
+        if not folder_name:
+            return
+        from .export_module.door_tile import export_all_discovered_door_tiles
+
+        output_dir = Path(folder_name)
+        written = export_all_discovered_door_tiles(composition, output_dir)
+        self._status(f"Exported {len(written)} animated door tile(s) to {output_dir}")
+        QMessageBox.information(
+            self,
+            "Doors exported",
+            f"Created {len(written)} .tile file(s) in:\n{output_dir}",
+        )
 
 
 def install_nds_tile_extractor(window: object) -> None:

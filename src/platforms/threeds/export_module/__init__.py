@@ -4,6 +4,8 @@ from pathlib import Path
 import tempfile
 
 from ....core.assets import Asset
+from ..cgfx_preview import build_cgfx_model_glb
+from ..named_romfs import read_named_romfs_payload
 from ..pokemon_bulk_export import (
     PokemonBulkExportResult,
     pokemon_bulk_export_available,
@@ -27,7 +29,7 @@ class ThreedsExportModule:
 
     def folder_export_options(self) -> list[tuple[str, str, str]]:
         return [
-            ("folder_raw", "ZIP: Raw assets", "Write raw GARC payloads for every asset in the folder."),
+            ("folder_raw", "ZIP: Raw assets", "Write original payloads for every asset in the folder."),
         ]
 
     def export_options_for(self, asset: Asset) -> list[tuple[str, str, str]]:
@@ -115,6 +117,13 @@ class ThreedsExportModule:
                 ("sprite_png", "Sprite PNG", "Decoded BFLIM sprite."),
                 ("raw", "Raw BFLIM", "Undecoded sprite payload."),
             ]
+        if asset.magic == "CGMD":
+            return [
+                ("glb_cgfx", "GLB CGFX model", "Convert the named NintendoWare model with nearby textures and a matching animation."),
+                ("raw", "Raw BCMDL/BCRES", "Original named RomFS model payload."),
+            ]
+        if asset.magic in {"CGTX", "CGSA", "CGMA", "CGCA"}:
+            return [("raw", "Raw NintendoWare asset", "Original named RomFS payload.")]
         return [("raw", "Raw descriptor", "JSON descriptor payload.")]
 
     def requires_apicula_for_folder_mode(self, mode: str) -> bool:
@@ -185,6 +194,8 @@ class ThreedsExportModule:
                     progress=progress,
                 )
             ]
+        if choice == "glb_cgfx":
+            return [build_cgfx_model_glb(descriptor, out, progress=progress)]
         if choice == "glbz":
             shiny = bool(getattr(host, "_export_glb_shiny", False))
             with tempfile.TemporaryDirectory(prefix="rae_threeds_glbz_") as temp_dir:
@@ -243,22 +254,29 @@ class ThreedsExportModule:
         )
 
     def export_blender_bundle(self, host: object, asset: Asset, out_dir: Path) -> tuple[bool, str]:
-        if asset.magic != "GFMD":
+        if asset.magic not in {"GFMD", "CGMD"}:
             return False, "Blender bundle export is only available for 3DS model assets."
         descriptor = load_descriptor(asset)
         if not descriptor:
             return False, "Missing 3DS descriptor payload."
         out_dir.mkdir(parents=True, exist_ok=True)
-        paths = [
-            build_model_glb(descriptor, out_dir),
-        ]
-        paths.extend(export_texture_pngs(descriptor, out_dir / "textures"))
+        if asset.magic == "CGMD":
+            paths = [build_cgfx_model_glb(descriptor, out_dir)]
+        else:
+            paths = [build_model_glb(descriptor, out_dir)]
+            paths.extend(export_texture_pngs(descriptor, out_dir / "textures"))
         return True, f"Wrote {len(paths)} file(s) to {out_dir}"
 
     def _export_raw(self, asset: Asset, descriptor: dict, out: Path) -> list[Path]:
         written: list[Path] = []
         kind = descriptor.get("type")
-        if kind == "sprite":
+        if kind and str(kind).startswith("cgfx_"):
+            payload = read_named_romfs_payload(descriptor)
+            name = Path(str(descriptor.get("romfs_path") or asset.suggested_filename)).name
+            path = out / name
+            path.write_bytes(payload)
+            written.append(path)
+        elif kind == "sprite":
             payload = read_garc_slot(
                 descriptor["rom"], descriptor["garc"], int(descriptor["sprite_index"])
             )

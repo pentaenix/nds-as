@@ -38,6 +38,11 @@ _IDENTITY_MATRIX = (
 )
 
 
+def interior_wall_cap_material_name(material_name: str) -> str:
+    stem = re.sub(r"[^a-z0-9_-]+", "_", str(material_name).casefold()).strip("_") or "wall"
+    return f"rae_interior_wall_top_black__{stem}"
+
+
 @dataclass(frozen=True)
 class MaterialComponent:
     material: str
@@ -742,6 +747,81 @@ def _primitive_triangle_indices(glb: GlbData, primitive: dict) -> list[tuple[int
     else:
         flat = list(range(len(positions)))
     return [tuple(flat[index : index + 3]) for index in range(0, len(flat) - 2, 3)]
+
+
+def _vertical_face_triangles(
+    glb: GlbData,
+    primitive: dict,
+    triangles: list[tuple[int, int, int]],
+    *,
+    max_vertical_normal: float = 0.35,
+) -> list[tuple[int, int, int]]:
+    """Keep lateral faces while dropping horizontal caps from wall geometry."""
+    position_index = (primitive.get("attributes") or {}).get("POSITION")
+    if not isinstance(position_index, int):
+        return triangles
+    positions = _accessor_values(glb, position_index)
+    kept: list[tuple[int, int, int]] = []
+    for triangle in triangles:
+        if any(index < 0 or index >= len(positions) for index in triangle):
+            continue
+        a, b, c = (positions[index] for index in triangle)
+        normal = _vector_cross(_vector_sub(b, a), _vector_sub(c, a))
+        length = math.sqrt(sum(component * component for component in normal))
+        if length <= 1e-8:
+            continue
+        if abs(normal[1]) <= max_vertical_normal * length:
+            kept.append(triangle)
+    return kept
+
+
+def _upward_face_triangles(
+    glb: GlbData,
+    primitive: dict,
+    triangles: list[tuple[int, int, int]],
+    *,
+    min_vertical_normal: float = 0.7,
+) -> list[tuple[int, int, int]]:
+    """Return upward wall caps so they can receive a neutral cutaway material."""
+    position_index = (primitive.get("attributes") or {}).get("POSITION")
+    if not isinstance(position_index, int):
+        return []
+    positions = _accessor_values(glb, position_index)
+    kept: list[tuple[int, int, int]] = []
+    for triangle in triangles:
+        if any(index < 0 or index >= len(positions) for index in triangle):
+            continue
+        a, b, c = (positions[index] for index in triangle)
+        normal = _vector_cross(_vector_sub(b, a), _vector_sub(c, a))
+        length = math.sqrt(sum(component * component for component in normal))
+        if length > 1e-8 and normal[1] >= min_vertical_normal * length:
+            kept.append(triangle)
+    return kept
+
+
+def _without_cutaway_edge_faces(
+    glb: GlbData,
+    primitive: dict,
+    triangles: list[tuple[int, int, int]],
+    edge: str,
+    coordinate: float,
+) -> list[tuple[int, int, int]]:
+    """Remove wall faces occupying the entrance-side boundary tile band."""
+    position_index = (primitive.get("attributes") or {}).get("POSITION")
+    if not isinstance(position_index, int):
+        return triangles
+    positions = _accessor_values(glb, position_index)
+    axis = 0 if edge in {"east", "west"} else 2
+    positive = edge in {"east", "south"}
+    kept: list[tuple[int, int, int]] = []
+    for triangle in triangles:
+        if any(index < 0 or index >= len(positions) for index in triangle):
+            continue
+        center = sum(float(positions[index][axis]) for index in triangle) / 3.0
+        outside = center >= coordinate - 1e-4 if positive else center <= coordinate + 1e-4
+        if not outside:
+            kept.append(triangle)
+    return kept
 
 
 def _triangle_components(triangles: list[tuple[int, int, int]]) -> list[list[tuple[int, int, int]]]:
@@ -1659,6 +1739,10 @@ def extract_material_primitives(
     preserve_spatial_components: bool = False,
     spatial_component_center_filter: bool = False,
     origin_y: float | None = None,
+    vertical_faces_only_materials: set[str] | None = None,
+    black_wall_cap_materials: set[str] | None = None,
+    cutaway_edge: str | None = None,
+    cutaway_coordinate: float | None = None,
 ) -> Path:
     """Keep only primitives whose glTF material names were selected.
 
@@ -1678,7 +1762,29 @@ def extract_material_primitives(
         for name, index in (component_indices or {}).items()
     }
     repeat_patches = {str(name).casefold() for name in (repeat_patch_materials or set())}
+    vertical_faces_only = {
+        str(name).strip().casefold()
+        for name in (vertical_faces_only_materials or set())
+        if str(name).strip()
+    }
+    black_wall_caps = {
+        str(name).strip().casefold()
+        for name in (black_wall_cap_materials or set())
+        if str(name).strip()
+    }
     materials = list(gltf.get("materials") or [])
+    black_cap_material_indices: dict[str, int] = {}
+    for wall_material in sorted(black_wall_caps):
+        black_cap_material_indices[wall_material] = len(materials)
+        materials.append({
+            "name": interior_wall_cap_material_name(wall_material),
+            "pbrMetallicRoughness": {
+                "baseColorFactor": [0.0, 0.0, 0.0, 1.0],
+                "metallicFactor": 0.0,
+                "roughnessFactor": 1.0,
+            },
+            "extensions": {"KHR_materials_unlit": {}},
+        })
     material_names_by_index = {
         index: str(material.get("name") or f"material_{index}").strip()
         for index, material in enumerate(materials)
@@ -1704,10 +1810,23 @@ def extract_material_primitives(
                 label = mesh_name
                 include = mesh_name.casefold() in selected
             triangles = _primitive_triangle_indices(glb, primitive)
+            filtered_to_vertical_faces = include and label.casefold() in vertical_faces_only
+            cap_triangles: list[tuple[int, int, int]] = []
+            if filtered_to_vertical_faces:
+                if label.casefold() in black_wall_caps:
+                    cap_triangles = _upward_face_triangles(glb, primitive, triangles)
+                triangles = _vertical_face_triangles(glb, primitive, triangles)
+                if cutaway_edge and cutaway_coordinate is not None:
+                    triangles = _without_cutaway_edge_faces(
+                        glb, primitive, triangles, cutaway_edge, cutaway_coordinate)
+                    cap_triangles = _without_cutaway_edge_faces(
+                        glb, primitive, cap_triangles, cutaway_edge, cutaway_coordinate)
             components = _triangle_components(triangles)
             component_start = component_cursor[label.casefold()]
             component_cursor[label.casefold()] += max(1, len(components))
             if not include:
+                continue
+            if filtered_to_vertical_faces and not triangles:
                 continue
             if spatial_tile_bounds is not None and components:
                 spatial_kept: list[dict] = []
@@ -1782,10 +1901,28 @@ def extract_material_primitives(
                         kept_primitive,
                         selected_component,
                     )
+            elif filtered_to_vertical_faces:
+                _replace_with_component_geometry(
+                    glb,
+                    gltf,
+                    bin_chunk,
+                    kept_primitive,
+                    triangles,
+                )
             kept.append(kept_primitive)
             kept_primitive_count += 1
             if isinstance(material_index, int):
                 kept_material_indices.add(material_index)
+            black_cap_material_index = black_cap_material_indices.get(label.casefold())
+            if cap_triangles and black_cap_material_index is not None and target is None:
+                cap_primitive = dict(primitive)
+                if _replace_with_component_geometry(
+                    glb, gltf, bin_chunk, cap_primitive, cap_triangles
+                ):
+                    cap_primitive["material"] = black_cap_material_index
+                    kept.append(cap_primitive)
+                    kept_primitive_count += 1
+                    kept_material_indices.add(black_cap_material_index)
         mesh["primitives"] = kept
 
     if not kept_primitive_count:
@@ -1817,13 +1954,17 @@ def extract_material_primitives(
     if not buffers:
         buffers.append({})
     buffers[0]["byteLength"] = len(bin_chunk)
-    if component_targets or spatial_tile_bounds:
+    if component_targets or spatial_tile_bounds or vertical_faces_only or black_wall_caps:
         gltf.setdefault("extras", {}).setdefault("rae", {})["tileSelection"] = {
             "components": component_targets,
             "repeatPatchMaterials": sorted(repeat_patches),
             "patchSize": float(patch_size),
             "preserveSpatialComponents": bool(preserve_spatial_components),
             "spatialComponentCenterFilter": bool(spatial_component_center_filter),
+            "verticalFacesOnlyMaterials": sorted(vertical_faces_only),
+            "blackWallCapMaterials": sorted(black_wall_caps),
+            **({"cutawayEdge": cutaway_edge, "cutawayCoordinate": cutaway_coordinate}
+               if cutaway_edge and cutaway_coordinate is not None else {}),
             **({"spatialTileBounds": list(spatial_tile_bounds)} if spatial_tile_bounds else {}),
         }
 

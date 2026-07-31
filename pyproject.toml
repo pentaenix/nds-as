@@ -41,5 +41,6 @@ markers = [
     "gba: Game Boy Advance island tests only",
     "switch: Nintendo Switch island tests only",
     "mobile: Mobile/HOME island tests only",
+    "windows_iso: Windows CD/ISO island tests only",
     "core_shared: Shared core / contract tests (run when touching dispatch or glb_policy classify)",
 ]

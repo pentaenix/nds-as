@@ -128,8 +128,11 @@ handoff and restores the authoritative exact GLB. The exact animation Play
 action performs the same check before starting a clip, which prevents the
 animation list from controlling a stale generic model.
 
-The inspector can switch between **Show map + models** and **Exact terrain
-only**. Either view becomes the Tile Extractor source, so a pond or ocean
+The inspector keeps variant, view, retry, and a single **Export…** action in one
+compact row. Its table receives the remaining vertical space, and the visible
+splitter above the inspector can be dragged to trade space with the 3D viewport.
+The view menu switches between **Map + models** and **Terrain only**. Either
+view becomes the Tile Extractor source, so a pond or ocean
 surface is extracted from the corrected map rather than an earlier heuristic
 texture preview. Extracted geometry is centered over the origin. Ordinary props
 use their lowest visible point as the ground plane. Layered water and shore
@@ -137,24 +140,26 @@ features instead use the semantic land/seam datum, recorded as
 `extras.rae.tileBounds.originY` in the GLB. Pokemon Resort Admin preserves that
 datum: sand or rock meets the map at height zero while foam, water, reflection,
 and cloud layers keep their authored negative offsets.
-**Export map…** writes that active composed GLB—not the carved terrain-only
+The export modal's **Current map** action writes that active composed GLB—not the carved terrain-only
 asset—so placed buildings, embedded textures, material motion, and model motion
 are all present. The normal **Model: GLB** export profile also detects an active
 exact-map build and writes the same composed result. This prevents a fountain
 or full-map export from becoming an empty/terrain-only GLB.
 
-The **Season / variant** control pairs geometry with its matching AreaData
+The **Variant** control pairs geometry with its matching AreaData
 record. Black 2/White 2 commonly reuse spring geometry for spring, summer, and
 autumn while changing the texture and lighting record; winter may use a
-separate `winter*` or `white*` snow mesh. **Export seasons…** builds every
+separate `winter*` or `white*` snow mesh. **All seasons / variants** in the
+export modal builds every
 listed pair as a self-contained GLB. Unreferenced seasonal and showcase maps
 are resolved through a coordinate-identical live map or, when no matrix entry
 exists, by exact texture-name coverage plus compatible placed-model IDs. An
 auxiliary `map_out*` model whose textures are absent from the ROM is reported
 as such instead of being displayed as a misleading white map.
 
-Selecting a row exposes the exact model as a standalone preview and allows it
-to be exported as a self-contained GLB or a Pokemon Resort `.tile`. Door pieces,
+Selecting a row exposes the exact model as a standalone preview; double-clicking
+is the quick preview action. The export modal then adds only the applicable
+doorless GLB, animated-door GLB, and Pokemon Resort `.tile` actions. Door pieces,
 signs, trees, and complete buildings are treated uniformly; the list reports
 the original position, rotation, pack, and model index instead of guessing from
 terrain material names. This resolver is owned entirely by the NDS platform and
@@ -171,6 +176,27 @@ Door skeletal and material clips are interaction states: exact maps keep their
 bind-pose door closed, and a focused building waits for the Animations tab's
 Play action instead of looping the door automatically. Shared door UIDs omitted
 from an individual AB pack are resolved from the release's other AB bundles.
+The signed XYZ values following the AB door id are building-local coordinates;
+their Z value is not subjected to the separate world-map Z conversion. This
+keeps entrances such as `pc_01` on the front façade instead of mirroring them
+through the building. Map Objects previews use the correctly assembled model
+and offer two explicit GLB exports: **doorless** for runtimes that place a
+separate door tile, and **with animated door** with its named open/close clips.
+NDS export dialogs start under `exports/` (`buildings/`, `doors/`, `maps/`, or
+`tiles/`) rather than the repository root.
+
+**All discovered doors** in the export modal writes every explicit or high-confidence event-warp door
+from the resolved map as its own `.tile`, rather than exporting the complete
+building assembly. Each manifest carries `interaction.door`,
+`interaction.kind: door`, the local front, open/close clip semantics, model and
+placement indices, source offset and rotation, discovery method, confidence,
+and any known destination zone/interior family. Pokemon Resort Admin can import
+the batch into an RTPKS pack without re-entering that provenance. During import,
+named node/skeletal clips are sampled into compact RTPKS vertex timelines while
+material-motion doors retain their exact UV tracks. The runtime addresses those
+clips per placed door, so copies of one tile animate independently. The first
+frame of the configured open clip becomes the resting geometry; this also keeps
+vertical doors such as `pcev02` below the floor until their upward clip runs.
 
 AreaData material animation is resolved again after terrain and placed objects
 are composed. This matters for models such as `wbt_fountain`: its
@@ -354,11 +380,11 @@ same hard-coded translucency to every blended tile.
 Map/model composition uses a direct GLB merger owned by the NDS platform; it
 does not import `trimesh` or `numpy` during startup or composition.
 
-The current RTPKS runtime supports material frame animation and RAE's exact
-material-motion timeline (UV offsets plus sparse image keyframes). Skeletal and
-node animation clips remain embedded and playable in the exported GLB, but are
-not yet converted into RTPKS tile motion; the Map Editor currently imports
-their geometry at bind pose.
+The RTPKS runtime supports material frame animation, RAE's exact material-motion
+timeline (UV offsets plus sparse image keyframes), and named node/skeletal clips
+baked to vertex timelines by Pokemon Resort Admin. Triggerable tile instances
+select the configured open or close clip without sharing playback state with
+another placement of the same tile.
 
 NDS building and tile exports are placement-ready: RAE adds a scene parent that
 centers the complete mesh on X/Z. Buildings and ordinary props place their

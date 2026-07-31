@@ -54,6 +54,7 @@ def all_platforms() -> dict[str, Platform]:
     from ..platforms.gb import GB_PLATFORM
     from ..platforms.threeds import THREEDS_PLATFORM
     from ..platforms.switch import Switch_PLATFORM
+    from ..platforms.windows_iso import WindowsIso_PLATFORM
     from ..platforms.mobile import MOBILE_PLATFORM
 
     return {
@@ -65,6 +66,7 @@ def all_platforms() -> dict[str, Platform]:
             GB_PLATFORM,
             THREEDS_PLATFORM,
             Switch_PLATFORM,
+            WindowsIso_PLATFORM,
             MOBILE_PLATFORM,
         )
     }

@@ -514,14 +514,25 @@ class ShellMixin:
         inspector_layout.addWidget(self.preview_pin_row)
         self.preview_pin_row.hide()
 
-        right_splitter = QSplitter(Qt.Vertical)
-        right_splitter.addWidget(self.preview)
-        right_splitter.addWidget(self.preview_inspector)
-        right_splitter.setSizes([500, 230])
+        self.preview_splitter = QSplitter(Qt.Vertical)
+        self.preview_splitter.setObjectName("previewInspectorSplitter")
+        self.preview_splitter.setChildrenCollapsible(False)
+        self.preview_splitter.setHandleWidth(9)
+        self.preview_splitter.setOpaqueResize(True)
+        self.preview_splitter.addWidget(self.preview)
+        self.preview_splitter.addWidget(self.preview_inspector)
+        self.preview_splitter.setStretchFactor(0, 3)
+        self.preview_splitter.setStretchFactor(1, 2)
+        self.preview_splitter.setSizes([500, 230])
+        self.preview_splitter.setStyleSheet(
+            "QSplitter#previewInspectorSplitter::handle:vertical {"
+            " background: palette(mid); border-top: 1px solid palette(light);"
+            " border-bottom: 1px solid palette(dark); margin: 2px 48px; }"
+        )
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(left)
-        splitter.addWidget(right_splitter)
+        splitter.addWidget(self.preview_splitter)
         splitter.setSizes([820, 520])
 
         browser_layout = QVBoxLayout(self.browser_workspace)

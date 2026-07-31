@@ -5,6 +5,7 @@ from pathlib import Path
 from ....core.assets import Asset
 from ....core.modules.types import ProfileSummary, Progress
 from ..container import ThreedsImage
+from ..game_catalog import identify_threeds_game
 from ..rom import scan_threeds_rom_path
 
 
@@ -33,7 +34,12 @@ class ThreedsScanModule:
                     product = part.product_code
         except Exception:
             pass
-        text = f"Nintendo 3DS image ({product})" if product else "Nintendo 3DS image"
+        game_id = identify_threeds_game(product)
+        label = {
+            "pokemon_ultra_moon": "Pokémon Ultra Moon",
+            "lbx": "LBX: Little Battlers eXperience",
+        }.get(game_id, "generic named-RomFS profile")
+        text = f"Nintendo 3DS image — {label} ({product})" if product else "Nintendo 3DS image"
         return ProfileSummary(rom_game_code=product, rom_title=title, profile_text=text)
 
     def supports_texture_library_warmup(self) -> bool:

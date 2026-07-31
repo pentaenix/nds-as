@@ -722,6 +722,8 @@ def write_tile_archive(
     preview_png: bytes | None = None,
     preview_size: int = TILE_PREVIEW_SIZE,
     footprint: tuple[int, int] | None = None,
+    default_tags: list[str] | None = None,
+    default_properties: dict[str, Any] | None = None,
 ) -> Path:
     """Write an already-prepared GLB and frame files as a versioned bundle."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -764,8 +766,12 @@ def write_tile_archive(
                 if footprint is not None
                 else {}
             ),
-            "tags": [],
-            "properties": {"source.platform": "nds", "source.asset": asset.virtual_path},
+            "tags": list(dict.fromkeys(default_tags or [])),
+            "properties": {
+                "source.platform": "nds",
+                "source.asset": asset.virtual_path,
+                **(default_properties or {}),
+            },
             "renderMode": _suggest_render_mode(model_glb),
             "collision": {"mode": "none", "autoApply": False},
         },

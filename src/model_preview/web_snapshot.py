@@ -79,6 +79,17 @@ class ModelWebSnapshotService(QObject):
             and self._widget.is_available()
         )
 
+    def set_viewport_size(self, width: int, height: int) -> None:
+        """Set the live Three.js viewport used by WYSIWYG snapshot captures."""
+        if self._widget is None:
+            return
+        self._widget.setFixedSize(max(1, int(width)), max(1, int(height)))
+        if self._host is not None:
+            self._host.adjustSize()
+        app = QApplication.instance()
+        if app is not None:
+            app.processEvents()
+
     def _capture_impl(
         self,
         glb_path: Path,

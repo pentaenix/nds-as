@@ -15,7 +15,9 @@ from ...core.assets import Asset
 from .container import GarcSubFile, ThreedsCryptoError, ThreedsImage, parse_garc
 from .gf import GFMODEL_MAGIC as GFMODEL_MAGIC_U32
 from .gf import GFTEXTURE_MAGIC as GFTEXTURE_MAGIC_U32
+from .game_catalog import identify_threeds_game
 from .lz11 import maybe_decompress
+from .named_romfs import CGFX_MAGICS, scan_named_romfs_assets
 from .species import species_name
 from .world_composition import (
     BATTLE_BACKGROUND_GARC,
@@ -255,12 +257,16 @@ def scan_threeds_rom_path(
                 f"{source.name}: NCCH partition is AES-encrypted. RAE only reads decrypted "
                 "dumps (NoCrypto flag) — re-dump the cartridge with decryption enabled."
             )
-        files = {f.path: f for f in image.romfs_files(part)}
+        romfs_entries = image.romfs_files(part)
+        files = {f.path: f for f in romfs_entries}
         report(f"3DS: RomFS parsed — {len(files)} files, product {part.product_code}")
+        game_id = identify_threeds_game(part.product_code, romfs_paths=set(files))
+        report(f"3DS: selected game profile {game_id}")
 
         summary_payload = {
             "type": "summary",
             "rom": str(source),
+            "game": game_id,
             "product_code": part.product_code,
             "romfs_files": len(files),
             "model_garc": POKEMON_MODEL_GARC if POKEMON_MODEL_GARC in files else None,
@@ -277,9 +283,23 @@ def scan_threeds_rom_path(
             )
         )
 
-        assets.extend(_scan_pokemon_models(image, files, source, report))
-        assets.extend(_scan_pokemon_icons(image, files, source, report))
-        assets.extend(_scan_world_garcs(image, files, source, report))
+        if game_id == "pokemon_ultra_moon":
+            # Keep the verified USUM GARC pipeline isolated and unchanged.
+            assets.extend(_scan_pokemon_models(image, files, source, report))
+            assets.extend(_scan_pokemon_icons(image, files, source, report))
+            assets.extend(_scan_world_garcs(image, files, source, report))
+        else:
+            assets.extend(
+                scan_named_romfs_assets(
+                    image,
+                    romfs_entries,
+                    rom_path=str(source),
+                    rom_stem=source.stem,
+                    product_code=part.product_code,
+                    game_id=game_id,
+                    report=report,
+                )
+            )
 
     report(f"3DS: scan complete — {len(assets)} rows")
     return assets
@@ -514,7 +534,7 @@ def _scan_world_garcs(
 
 def load_descriptor(asset: Asset) -> dict | None:
     """Parse the JSON descriptor payload of a 3DS asset row."""
-    if asset.magic not in {"GFMD", "GFTX", "FLIM", "3DSR"}:
+    if asset.magic not in {"GFMD", "GFTX", "FLIM", "3DSR", *CGFX_MAGICS}:
         return None
     try:
         payload = json.loads(asset.data.decode("utf-8"))

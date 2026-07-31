@@ -9,6 +9,9 @@ from .container import ThreedsImage
 # GameTDB: A2BA (generic), A2BE (NTSC-U), A2BJ (NTSC-J), A2BK (NTSC-K), A2BP (PAL).
 ULTRA_MOON_SERIAL_PREFIX = "A2B"
 
+# LBX: Little Battlers eXperience (North American retail release).
+LBX_PRODUCT_CODES: frozenset[str] = frozenset({"CTR-P-ADNE"})
+
 # Explicit product codes (cart + eShop prefixes) kept for compatibility.
 ULTRA_MOON_PRODUCT_CODES: frozenset[str] = frozenset(
     {
@@ -51,6 +54,29 @@ def is_ultra_moon_product_code(product_code: str) -> bool:
     if code in ULTRA_MOON_PRODUCT_CODES:
         return True
     return is_ultra_moon_serial(parse_product_serial(code))
+
+
+def identify_threeds_game(
+    product_code: str,
+    *,
+    romfs_paths: set[str] | frozenset[str] | None = None,
+) -> str:
+    """Return a stable game profile id without guessing from the ROM filename.
+
+    Product codes take priority.  The RomFS signature is deliberately used as
+    a fallback so regional/revision dumps can still select a useful profile.
+    Unknown games stay on the generic named-RomFS scanner.
+    """
+    code = (product_code or "").strip().upper()
+    if is_ultra_moon_product_code(code):
+        return "pokemon_ultra_moon"
+    paths = romfs_paths or frozenset()
+    if code in LBX_PRODUCT_CODES or (
+        any(path.startswith("/3ddata/") for path in paths)
+        and any(path.lower().endswith(".bcskla") for path in paths)
+    ):
+        return "lbx"
+    return "generic"
 
 
 def read_product_code(rom_path: str | Path) -> str:

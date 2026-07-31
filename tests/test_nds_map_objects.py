@@ -1,18 +1,27 @@
 from __future__ import annotations
 
 import struct
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from rae.core.assets import Asset
+from rae.platforms.nds.export_module.building_catalog import _content_key
+from rae.platforms.nds.export_module.building_dae_catalog import (
+    _submission_name,
+    _write_submission_zip,
+)
+from rae.platforms.nds.export_module.building_icons import _icon_name_for_package
 from rae.platforms.nds.export_module.service import export_viewport_matched_glb
 from rae.platforms.nds.map_objects import (
     Gen5AreaData,
+    Gen5BuildingModel,
     _matching_season_areas,
     _matrix_zone_for_map,
     _variant_name_parts,
+    building_door_attachment,
     embedded_model_animation_resources,
     map_file_index,
     parse_ab_building_pack,
@@ -20,10 +29,39 @@ from rae.platforms.nds.map_objects import (
     parse_gen5_map_container,
     parse_map_placements,
 )
-from rae.platforms.nds.inspector import NdsMapObjectsWidget
+from rae.platforms.nds.inspector import (
+    NdsMapObjectsWidget,
+    _building_export_source,
+    _default_export_directory,
+    _map_export_action_ids,
+)
 
 
 pytestmark = pytest.mark.nds
+
+
+def test_building_catalog_key_deduplicates_exact_payloads() -> None:
+    assert _content_key(b"BMD0-model", b"metadata") == _content_key(
+        b"BMD0-model", b"metadata"
+    )
+    assert _content_key(b"BMD0-model", b"metadata") != _content_key(
+        b"BMD0-model", b"other-metadata"
+    )
+
+
+def test_models_resource_zip_contains_only_dae_and_png(tmp_path: Path) -> None:
+    dae = tmp_path / "pc_01.dae"
+    texture = tmp_path / "h_kage.png"
+    dae.write_text("<COLLADA/>", encoding="utf-8")
+    texture.write_bytes(b"png")
+    output = tmp_path / "pc_01_asset.zip"
+
+    _write_submission_zip(output, [texture, dae])
+
+    with zipfile.ZipFile(output) as archive:
+        assert archive.namelist() == ["h_kage.png", "pc_01.dae"]
+    assert _submission_name("pc_01") == "PC 01"
+    assert _icon_name_for_package("pc_01_deadbeef_asset.zip") == "pc_01_deadbeef_icon.png"
 
 
 def test_map_file_index_accepts_carved_gen5_map_path() -> None:
@@ -101,6 +139,64 @@ def test_building_metadata_exposes_embedded_prop_animation() -> None:
     resources = embedded_model_animation_resources(metadata)
 
     assert resources == (("BTA0", bytes(animation)),)
+
+
+def test_building_door_attachment_keeps_authored_local_z() -> None:
+    door = Gen5BuildingModel(93, 1, "door_pc", b"BMD0", b"")
+    metadata = bytearray(12)
+    struct.pack_into("<Hhhh", metadata, 4, door.index, 0, 0, 15)
+    building = Gen5BuildingModel(0, 0, "pc_01", b"BMD0", bytes(metadata))
+
+    attachment = building_door_attachment(building, {door.index: door})
+
+    assert attachment is not None
+    assert attachment.translation == (0.0, 0.0, 15.0)
+
+
+def test_building_export_modes_choose_doorless_or_assembled_glb(tmp_path: Path) -> None:
+    doorless = tmp_path / "pc_01_doorless.glb"
+    assembled = tmp_path / "pc_01_with_animated_door.glb"
+    selected = SimpleNamespace(glb_path=assembled, doorless_glb_path=doorless)
+
+    assert _building_export_source(selected, include_door=False) == doorless
+    assert _building_export_source(selected, include_door=True) == assembled
+
+
+def test_nds_export_dialogs_default_inside_project_exports() -> None:
+    output = _default_export_directory("buildings")
+
+    assert output.name == "buildings"
+    assert output.parent.name == "exports"
+    assert (output.parent.parent / "pyproject.toml").is_file()
+
+
+def test_map_export_modal_only_offers_applicable_actions() -> None:
+    assert _map_export_action_ids(
+        has_selection=False,
+        has_door=False,
+        has_multiple_variants=False,
+        has_discovered_doors=False,
+    ) == ("map",)
+    assert _map_export_action_ids(
+        has_selection=False,
+        has_door=False,
+        has_multiple_variants=False,
+        has_discovered_doors=False,
+        has_interior=True,
+    ) == ("map", "interior", "interior_kit")
+    assert _map_export_action_ids(
+        has_selection=True,
+        has_door=True,
+        has_multiple_variants=True,
+        has_discovered_doors=True,
+    ) == (
+        "map",
+        "variants",
+        "building_doorless",
+        "building_with_door",
+        "building_tile",
+        "doors",
+    )
 
 
 def test_headerless_matrix_falls_back_to_zone_matrix_index() -> None:

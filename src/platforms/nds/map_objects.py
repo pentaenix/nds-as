@@ -150,7 +150,9 @@ class Gen5ObjectPreview:
     placement: Gen5MapPlacement
     model: Gen5BuildingModel
     glb_path: Path
+    doorless_glb_path: Path | None = None
     door: Gen5PlacedDoor | None = None
+    door_glb_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -343,13 +345,15 @@ def building_door_attachment(
     door = models.get(door_id)
     if door is None:
         return None
-    # The three signed shorts following the door definition id are local model
-    # coordinates. Apicula's map handoff negates Nitro Z, matching the placed
-    # object transform used below.
+    # The three signed shorts following the door definition id are already in
+    # the building model's local coordinate space. Map placements convert their
+    # world-space Nitro Z separately, but applying that conversion here mirrors
+    # an attached door through the building (the Pokemon Center's +15 entrance
+    # became -15 and appeared in the middle/back of the model).
     x, y, z = struct.unpack_from("<hhh", building.metadata, 6)
     return Gen5BuildingDoor(
         model=door,
-        translation=(float(x), float(y), -float(z)),
+        translation=(float(x), float(y), float(z)),
     )
 
 
@@ -1254,6 +1258,7 @@ def resolve_gen5_map_objects(
     *,
     map_index_override: int | None = None,
     area_index_override: int | None = None,
+    _rom_files: dict[str, bytes] | None = None,
 ) -> Gen5MapObjectSet:
     """Resolve a selected ``a/0/0/8`` map to its exact building pack."""
     selected_map = map_index_override
@@ -1264,8 +1269,10 @@ def resolve_gen5_map_objects(
 
     from .rom import NDSRom
 
-    rom = NDSRom.from_path(str(rom_path))
-    rom_files = {item.path: item.data for item in rom.iter_files()}
+    rom_files = _rom_files
+    if rom_files is None:
+        rom = NDSRom.from_path(str(rom_path))
+        rom_files = {item.path: item.data for item in rom.iter_files()}
     required = ("a/0/0/8", "a/0/0/9", "a/0/1/2", "a/0/1/3", "a/0/1/4")
     missing = [path for path in required if path not in rom_files]
     if missing:
@@ -1828,7 +1835,13 @@ def build_gen5_map_composition(
                 placement=placement,
                 model=model,
                 glb_path=glb,
+                doorless_glb_path=converted[placement.model_index],
                 door=door_by_placement.get(placement.index),
+                door_glb_path=(
+                    converted[door_by_placement[placement.index].model.index]
+                    if placement.index in door_by_placement
+                    else None
+                ),
             )
         )
 

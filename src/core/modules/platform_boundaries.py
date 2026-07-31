@@ -21,6 +21,7 @@ from pathlib import Path
 PLATFORM_MODULE_BUILDERS: dict[str, str] = {
     "nds": "rae.platforms.nds.platform_modules:build_nds_modules",
     "mobile": "rae.platforms.mobile.platform_modules:build_mobile_modules",
+    "windows_iso": "rae.platforms.windows_iso.platform_modules:build_windows_iso_modules",
     "switch": "rae.platforms.switch.platform_modules:build_switch_modules",
     "3ds": "rae.platforms.threeds.platform_modules:build_threeds_modules",
 }
