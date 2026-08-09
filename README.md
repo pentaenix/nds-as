@@ -8,20 +8,23 @@ RAE does **not** download ROMs, bypass copy protection, or ship extracted copyri
 
 | Platform | Folder | ROM extensions | Status |
 |----------|--------|----------------|--------|
-| Nintendo DS | `src/rae/platforms/nds/` | `.nds` | **Active** — scan, preview, export |
-| Game Boy Advance | `src/rae/platforms/gba/` | `.gba` | Planned |
-| Game Boy Color | `src/rae/platforms/gbc/` | `.gbc` | Planned |
-| Game Boy | `src/rae/platforms/gb/` | `.gb` | Planned |
-| Nintendo 3DS | `src/rae/platforms/threeds/` | `.3ds`, `.cci`, `.cxi` | Planned |
+| Nintendo DS | `src/platforms/nds/` | `.nds` | **Active** — scan, preview, export |
+| Game Boy Advance | `src/platforms/gba/` | `.gba` | Planned |
+| Game Boy Color | `src/platforms/gbc/` | `.gbc` | Planned |
+| Game Boy | `src/platforms/gb/` | `.gb` | Planned |
+| Nintendo 3DS | `src/platforms/threeds/` | `.3ds`, `.cci`, `.cxi` | Planned |
 
 ## Project layout
 
 ```text
-src/rae/
-  core/           mappings, platform registry, sessions, install
+src/
   platforms/
     nds/          DS ROM scan, Nitro decoders, audio, model export
+    mobile/       HOME / .rom mobile app support
+    home/         Pokémon HOME implementation (used via mobile)
+    android/      Android device source helpers
     gba/ gbc/ gb/ threeds/   stubs + README (contributions welcome)
+  core/           mappings, platform registry, modules dispatch
   ui/             desktop app (Qt)
   cli/            command-line tools
 mappings/
@@ -59,7 +62,7 @@ The legacy `./dsas` launcher still works but forwards to `./rae`.
 2. Run `./rae run` and open the ROM.
 3. Browse mapped folders, Raw Folders, or filter (`BMD0`, `BTX0`, `cat:models`, …).
 4. Preview assets; for models use **Set Textures** for verified material→texture binding.
-5. **Export Selected…** for raw, readable PNG, GLB (via apicula), or audio bundles.
+5. **Export Selected…** for raw, readable PNG, GLB (via apicula), Pokemon Resort `.tile`, or audio bundles.
 6. **Save Session** (`.raesession`) to continue without rescanning.
 
 ## CLI examples
@@ -79,9 +82,26 @@ Vendored Rust tool under `tools/apicula/`. `./rae install` builds it when Cargo 
 
 RAE looks for apicula on `PATH`, `RAE_APICULA` (legacy: `DSAS_APICULA`, `DSM_APICULA`), and `tools/apicula/target/release/apicula`.
 
-After apicula converts a model to GLB, RAE runs a shared **material policy** pass (`rae.glb_policy`) that writes `extras.rae.renderClass` on each material (opaque, mask, blend, uniform_decal). Ground shadows are detected from Nitro alpha + texture + geometry — not material names. See `docs/GLB_RENDER_POLICY.md`.
+After apicula converts a model to GLB, RAE runs a **NDS-owned** material policy pass (`platforms/nds/gltf/apply.py`) that writes `extras.rae.renderClass` on each material. See `docs/GLB_RENDER_POLICY.md` and `docs/agents/platform-isolation-contract.md`.
 
-3D preview uses **Qt WebEngine + three.js** (bundled under `src/rae/ui/preview/static/`). Install PySide6 Add-ons if WebEngine is missing. Set `RAE_LEGACY_GL_PREVIEW=1` to fall back to the old pyqtgraph path.
+The Nintendo DS export menu also includes **Tile: Pokemon Resort (.tile)** for
+models. It packages the self-contained GLB and any detected material texture
+frames for direct import into the Pokemon Resort Map Editor. See
+[`docs/pokemon_resort_tile_bundle.md`](docs/pokemon_resort_tile_bundle.md).
+
+3D preview uses **Qt WebEngine + three.js**. Each platform uses its own `platforms/<id>/preview/material-policy.js` (loaded via `?policy=` in the viewer URL). Install PySide6 Add-ons if WebEngine is missing. Set `RAE_LEGACY_GL_PREVIEW=1` to fall back to the old pyqtgraph path.
+
+## Agents and contributors
+
+ROM platforms are **isolated islands** under `src/platforms/<id>/` — each owns GLB policy and viewport policy.
+
+- **Hard contract:** [`docs/agents/platform-isolation-contract.md`](docs/agents/platform-isolation-contract.md)
+- **Agents:** [`AGENTS.md`](AGENTS.md) and [`docs/agents/platform-islands.md`](docs/agents/platform-islands.md)
+- **Cursor rules (this repo):** `.cursor/rules/rae-*.mdc` at the monorepo root
+- **Skill:** `.cursor/skills/rae-platform-islands/`
+- **New platform:** `python scripts/scaffold_platform.py <id> "<Label>" --ext .rom [--active]`
+- **CI guards:** `pytest tests/test_platform_import_isolation.py tests/test_platform_isolation_contract.py`
+- **Day-to-day:** `pytest -m <your-platform-id>` only
 
 ## Development
 
@@ -90,3 +110,8 @@ PYTHONPATH=src:tests python -m unittest discover -s tests -p 'test_*.py' -q
 ```
 
 Python package name: `rae`. The `dsm` import path remains as a deprecated alias for compatibility.
+# Pokémon Attend environment export (3DS)
+
+The 3DS world export module can emit one lossless composed `.glbz` per semantic Alola Attend scene plus `alola_attend_catalog.json`. The headless entry point is `src.platforms.threeds.export_module.environment.export_attend_environment_catalog`; the UI exposes the same profile as **GLBZ Pokemon Attend environment catalog**, and complete-map entries expose **GLBZ complete map**.
+
+Each package embeds `extras.rae.environmentScene` alongside `picaTev` and `mapMaterialMotion`: source slots and centre/outer roles, composition priority, a surface anchor, a 30 fps source clock, concurrent ambient clips, discrete visibility, and named time/weather states. This code is isolated to `src/platforms/threeds`; Nintendo DS previews and exports do not use it.

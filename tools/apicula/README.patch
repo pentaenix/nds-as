@@ -7,6 +7,6 @@ RAE carries a minimal fork of apicula under `tools/apicula/`.
 - `src/convert/gltf/mod.rs`: export `extras.rae.nitro` on each glTF material
   (`alpha`, `cullBackface`, `cullFrontface`, `textureAlpha`).
 
-This metadata is consumed by `rae.glb_policy` when classifying materials for
+This metadata is consumed by `platforms/<id>/gltf/` when classifying materials for
 preview and game export. Keep the diff small and extras-only when syncing with
 upstream apicula.

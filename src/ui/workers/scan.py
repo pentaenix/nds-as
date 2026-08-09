@@ -1,0 +1,99 @@
+"""ROM scan and filter background workers."""
+from __future__ import annotations
+
+from pathlib import Path
+
+from PySide6.QtCore import QThread, Signal
+
+from ...core.modules import PlatformDispatch
+from ...scanner import Asset, filter_assets_indexed
+from ...texture_library import TextureLibraryStore
+
+
+class FilterWorker(QThread):
+    finished_ok = Signal(int, list)
+    failed = Signal(int, str)
+
+    def __init__(
+        self,
+        generation: int,
+        assets: list[Asset],
+        *,
+        enabled_types: list[str],
+        mapping_query: str,
+        text_query: str,
+        search_text_by_id: dict[str, str],
+    ):
+        super().__init__()
+        self.generation = generation
+        self.assets = assets
+        self.enabled_types = list(enabled_types)
+        self.mapping_query = mapping_query
+        self.text_query = text_query
+        self.search_text_by_id = search_text_by_id
+
+    def run(self) -> None:
+        try:
+            assets = self.assets
+            if self.enabled_types:
+                allowed = frozenset(self.enabled_types)
+                assets = [asset for asset in assets if asset.magic in allowed]
+            if self.mapping_query:
+                assets = filter_assets_indexed(assets, self.mapping_query, self.search_text_by_id)
+            if self.text_query:
+                assets = filter_assets_indexed(assets, self.text_query, self.search_text_by_id)
+            self.finished_ok.emit(self.generation, assets)
+        except Exception as exc:
+            self.failed.emit(self.generation, str(exc))
+
+
+class TextureLibraryWarmupWorker(QThread):
+    progress = Signal(str)
+    finished_ok = Signal()
+    failed = Signal(str)
+
+    def __init__(self, assets: list[Asset], store: TextureLibraryStore):
+        super().__init__()
+        self.assets = list(assets)
+        self.store = store
+
+    def run(self) -> None:
+        try:
+            if self.store.is_ready_for(self.assets):
+                self.finished_ok.emit()
+                return
+            count, _digest = self.store.fingerprint(self.assets)
+            self.progress.emit(f"Indexing texture dictionaries in background ({count:,} BTX0/BMD0 file(s))...")
+            self.store.get_or_build(self.assets, progress=self.progress.emit)
+            self.progress.emit(f"Texture dictionary index ready ({count:,} archive(s) indexed).")
+            self.finished_ok.emit()
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class ScanWorker(QThread):
+    progress = Signal(str)
+    finished_ok = Signal(list, object)
+    failed = Signal(str)
+
+    def __init__(self, rom_path: str, *, deep_scan: bool = False, rom_platform_id: str | None = None):
+        super().__init__()
+        self.rom_path = rom_path
+        self.deep_scan = deep_scan
+        self.rom_platform_id = rom_platform_id or PlatformDispatch.for_rom_path(rom_path)
+
+    def run(self) -> None:
+        try:
+            assets = PlatformDispatch.scan(
+                self.rom_path,
+                rom_platform_id=self.rom_platform_id,
+                deep_scan=self.deep_scan,
+                progress=self.progress.emit,
+            )
+            self.progress.emit(
+                f"Scan complete: {len(assets)} detected asset(s). Building visible folders lazily in the UI. "
+                "Large model previews may still take time; turn off Auto Preview while browsing."
+            )
+            self.finished_ok.emit(assets, None)
+        except Exception as exc:
+            self.failed.emit(str(exc))

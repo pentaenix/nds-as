@@ -13,7 +13,7 @@ from rae.easyfind.usage.mapname import parse_mapname_bin
 from rae.easyfind.usage.place_names import display_map_name, region_group_for_code
 from rae.easyfind.usage.pokemon_gen4 import extract_pokemon_gen4_usage
 from rae.easyfind.usage.registry import merge_usage_annotations
-from rae.platforms.nds.scanner import Asset
+from rae.core.assets import Asset
 from tests.easyfind_testutil import finalize_easyfind_document
 
 

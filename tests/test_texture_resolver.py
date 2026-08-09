@@ -2,11 +2,14 @@ from pathlib import Path
 
 import pytest
 
-from rae.glb_preview_textures import build_mesh_texture_paths
+from rae.platforms.nds.gltf.preview_textures import build_mesh_texture_paths
 from rae.model_texture_resolver import build_preview_texture_maps, resolve_model_textures
 from rae.nitro_models import MaterialBinding
 from rae.scanner import Asset
 from rae.texture_library import TextureLibrary, TextureLibraryStore
+from rae.platforms.nds.model_texture_resolver import ModelTextureResolution, ResolvedMaterialTexture
+from rae.platforms.nds.nitro.types import DecodedImage
+from rae.platforms.nds.nitro_models import NsbmdManifest
 from test_decoders import make_btx0_4bpp
 
 
@@ -29,6 +32,46 @@ def test_texture_library_lists_exact_btx_texture_name():
     assert len(matches) == 1
     assert matches[0].texture_asset_id == "tex"
     assert lib.decode_binding(matches[0]) is not None
+
+
+def test_carved_map_prefers_material_name_over_unreliable_cross_binding():
+    from rae.platforms.nds.model_texture_resolver import _texture_request_names
+
+    model = asset("map", "a/0/0/8/file_0012.bin#carved_0x14.nsbmd", "BMD0", b"BMD0")
+    model.carved = True
+    material = MaterialBinding("gake01a", "ue_grass01", "ue_grass01_pl")
+
+    assert _texture_request_names(model, material)[:2] == ["gake01a", "ue_grass01"]
+
+
+def test_carved_map_material_frame_name_accepts_dot_variant():
+    from rae.platforms.nds.model_texture_resolver import _texture_request_names
+
+    model = asset("map", "a/0/0/8/file_0012.bin#carved_0x14.nsbmd", "BMD0", b"BMD0")
+    model.carved = True
+    material = MaterialBinding("shore01_1", None, None)
+
+    assert _texture_request_names(model, material) == ["shore01_1", "shore01.1"]
+
+
+def test_verified_binding_restores_material_key_over_corrupt_manifest_alias(tmp_path: Path):
+    cliff = tmp_path / "gake01a.png"
+    grass = tmp_path / "ue_grass01.png"
+    cliff.touch()
+    grass.touch()
+    cliff_image = DecodedImage("gake01a", 16, 16, b"\0" * (16 * 16 * 4), "test")
+    grass_image = DecodedImage("ue_grass01", 16, 32, b"\0" * (16 * 32 * 4), "test")
+    resolution = ModelTextureResolution(
+        "textured_verified",
+        NsbmdManifest(materials=[MaterialBinding("gake01a", "ue_grass01")]),
+        bindings=[ResolvedMaterialTexture("gake01a", "gake01a", None, "tex", "tex.nsbtx", cliff_image, "exact")],
+        decoded_images=[cliff_image, grass_image],
+    )
+
+    texture_map, material_map, _order = build_preview_texture_maps(resolution, [cliff, grass])
+
+    assert material_map["gake01a"] == "gake01a"
+    assert texture_map["gake01a"] == cliff
 
 
 def test_model_resolver_uses_exact_texture_dictionary_match():
@@ -179,8 +222,71 @@ def test_build_preview_texture_maps_uses_manifest_texture_order():
     assert texture_by_name["wall_mat"] == paths[0]
 
 
+def test_build_preview_texture_maps_shared_embedded_texture_for_all_materials():
+    from rae.model_texture_resolver import ModelTextureResolution, build_preview_texture_maps
+    from rae.nitro_models import NsbmdManifest
+    from rae.nitro_textures import DecodedImage
+
+    manifest = NsbmdManifest(
+        materials=[
+            MaterialBinding("gym01_002tga_1", None, None),
+            MaterialBinding("gym02", None, None),
+            MaterialBinding("gym_wall_lm1", None, None),
+        ],
+    )
+    rgba = b"\x00" * (16 * 16 * 4)
+    images = [DecodedImage("gym02", 16, 16, rgba, "embedded")]
+    paths = [Path("/tmp/gym02.png")]
+    for path in paths:
+        path.write_bytes(b"png")
+    resolution = ModelTextureResolution(
+        "embedded_texture",
+        manifest,
+        [],
+        images,
+        [],
+        [],
+        "",
+    )
+    texture_by_name, material_to_texture, bind_order = build_preview_texture_maps(resolution, paths)
+    assert bind_order == ["gym02"]
+    assert material_to_texture["gym01_002tga_1"] == "gym02"
+    assert material_to_texture["gym_wall_lm1"] == "gym02"
+    assert texture_by_name["gym01_002tga_1"] == paths[0]
+    assert texture_by_name["gym_wall_lm1"] == paths[0]
+
+    from rae.platforms.nds.gltf.preview_textures import build_mesh_texture_paths_for_glb_parts, parse_glb_mesh_parts
+    import json
+    import struct
+
+    gltf = {
+        "materials": [
+            {"name": "gym01_002tga_1", "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}},
+            {"name": "gym02", "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}},
+        ],
+        "textures": [{"source": 0}],
+        "images": [{"bufferView": 0, "mimeType": "image/png", "name": "gym02|gym02.tga"}],
+        "meshes": [{"primitives": [{"material": 0}, {"material": 1}]}],
+    }
+    json_bytes = json.dumps(gltf).encode("utf-8")
+    glb = Path("/tmp/gym_shared_test.glb")
+    header = struct.pack("<III", 0x46546C67, 2, 12 + 8 + len(json_bytes))
+    chunk = struct.pack("<II", len(json_bytes), 0x4E4F534A) + json_bytes
+    glb.write_bytes(header + chunk)
+    parts = parse_glb_mesh_parts(glb)
+    mesh_paths = build_mesh_texture_paths_for_glb_parts(
+        parts,
+        glb_path=glb,
+        texture_by_name=texture_by_name,
+        material_to_texture=material_to_texture,
+        texture_bind_order=bind_order,
+        fallback_paths=paths,
+    )
+    assert mesh_paths == [paths[0], paths[0]]
+
+
 def test_discover_colocated_textures_indexes_png_stems(tmp_path):
-    from rae.glb_preview_textures import discover_colocated_textures
+    from rae.platforms.nds.gltf.preview_textures import discover_colocated_textures
 
     glb = tmp_path / "pc_center.glb"
     glb.write_bytes(b"glb")
@@ -197,7 +303,7 @@ def test_discover_colocated_textures_indexes_png_stems(tmp_path):
 def test_build_mesh_texture_paths_uses_colocated_apicula_png(tmp_path):
     from types import SimpleNamespace
 
-    from rae.glb_preview_textures import build_mesh_texture_paths
+    from rae.platforms.nds.gltf.preview_textures import build_mesh_texture_paths
 
     glb = tmp_path / "model.glb"
     glb.write_bytes(b"glb")
@@ -228,7 +334,7 @@ def test_build_mesh_texture_paths_uses_glb_material_table_not_mesh_index(tmp_pat
     import struct
     from types import SimpleNamespace
 
-    from rae.glb_preview_textures import build_mesh_texture_paths
+    from rae.platforms.nds.gltf.preview_textures import build_mesh_texture_paths
 
     wall = tmp_path / "wall_tex.png"
     trim = tmp_path / "trim_tex.png"
@@ -353,7 +459,7 @@ def test_parse_glb_material_preview_states_reads_alpha(tmp_path):
     import json
     import struct
 
-    from rae.glb_preview_textures import (
+    from rae.platforms.nds.gltf.preview_textures import (
         MaterialPreviewState,
         apply_material_preview_alpha,
         parse_glb_material_preview_states,
@@ -406,7 +512,7 @@ def test_parse_glb_mesh_parts_uses_material_names(tmp_path):
     import json
     import struct
 
-    from rae.glb_preview_textures import (
+    from rae.platforms.nds.gltf.preview_textures import (
         build_mesh_texture_paths_for_glb_parts,
         parse_glb_mesh_part_labels,
         parse_glb_mesh_parts,
@@ -443,10 +549,54 @@ def test_parse_glb_mesh_parts_uses_material_names(tmp_path):
     assert [p.name if p else None for p in paths] == ["gs_pc_b.png", "h_kage.png"]
 
 
+def test_build_mesh_texture_paths_for_embedded_glb_images(tmp_path):
+    import json
+    import struct
+
+    from rae.platforms.nds.gltf.preview_textures import build_mesh_texture_paths_for_glb_parts, parse_glb_mesh_parts
+
+    body_png = tmp_path / "pm0001_00_bodya1.png"
+    eye_png = tmp_path / "pm0001_00_eye1.png"
+    body_png.write_bytes(b"png")
+    eye_png.write_bytes(b"png")
+    gltf = {
+        "materials": [
+            {"name": "BodyA", "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}},
+            {"name": "Eye", "pbrMetallicRoughness": {"baseColorTexture": {"index": 1}}},
+        ],
+        "textures": [{"source": 0}, {"source": 1}],
+        "images": [
+            {"bufferView": 0, "mimeType": "image/png", "name": "BodyA|pm0001_00_BodyA1.tga"},
+            {"bufferView": 1, "mimeType": "image/png", "name": "Eye|pm0001_00_Eye1.tga"},
+        ],
+        "meshes": [{"primitives": [{"material": 0}, {"material": 1}]}],
+    }
+    json_bytes = json.dumps(gltf).encode("utf-8")
+    glb = tmp_path / "model.glb"
+    header = struct.pack("<III", 0x46546C67, 2, 12 + 8 + len(json_bytes))
+    chunk = struct.pack("<II", len(json_bytes), 0x4E4F534A) + json_bytes
+    glb.write_bytes(header + chunk)
+
+    parts = parse_glb_mesh_parts(glb)
+    texture_by_name = {
+        "pm0001_00_bodya1": body_png,
+        "pm0001_00_eye1": eye_png,
+        "bodya": body_png,
+        "eye": eye_png,
+    }
+    paths = build_mesh_texture_paths_for_glb_parts(
+        parts,
+        glb_path=glb,
+        texture_by_name=texture_by_name,
+        material_to_texture={"bodya": "pm0001_00_bodya1", "eye": "pm0001_00_eye1"},
+    )
+    assert [p.name if p else None for p in paths] == [body_png.name, eye_png.name]
+
+
 def test_mesh_texture_override_matches_material_name(tmp_path):
     from types import SimpleNamespace
 
-    from rae.glb_preview_textures import build_mesh_texture_paths
+    from rae.platforms.nds.gltf.preview_textures import build_mesh_texture_paths
 
     tex = tmp_path / "gate_2.png"
     tex.write_bytes(b"png")
@@ -468,7 +618,7 @@ def test_mesh_texture_override_matches_material_name(tmp_path):
 def test_preview_blend_mode_treats_mask_as_cutout_not_blend():
     import numpy as np
 
-    from rae.glb_preview_textures import MaterialPreviewState
+    from rae.platforms.nds.gltf.preview_textures import MaterialPreviewState
     from rae.ui.preview.glb_preview import GlbPreviewMixin
 
     class Preview(GlbPreviewMixin):
@@ -555,7 +705,7 @@ def test_texture_baked_geometry_emits_solid_texel_quads():
 def test_best_path_for_key_prefers_colocated_full_size(tmp_path):
     from PIL import Image
 
-    from rae.glb_preview_textures import _best_path_for_key
+    from rae.platforms.nds.gltf.preview_textures import _best_path_for_key
 
     low = tmp_path / "trim_tex__resolver.png"
     high = tmp_path / "trim_tex.png"

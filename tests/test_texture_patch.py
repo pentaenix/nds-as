@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rae.glb_policy.glb_io import GlbData, read_glb
-from rae.glb_policy.texture_patch import (
+from rae.platforms.nds.gltf.glb_io import GlbData, read_glb
+from rae.platforms.nds.gltf.texture_patch import (
     patch_glb_material_textures,
     write_flipbook_preview_glbs,
     write_patched_preview_glb,
@@ -59,6 +59,43 @@ def test_write_patched_preview_glb_reclassifies_material(tmp_path: Path) -> None
     assert material["extras"]["rae"]["renderClass"] == "uniform_decal"
     factor = material["pbrMetallicRoughness"]["baseColorFactor"]
     assert factor[3] == 1.0
+
+
+def test_write_patched_preview_glb_materialless_home_mesh(tmp_path: Path) -> None:
+    """AssetStudio HOME exports often ship mesh+UVs without a materials[] table."""
+    gltf = {
+        "asset": {"version": "2.0"},
+        "meshes": [
+            {
+                "name": "pm0054_00_00_BodySkin",
+                "primitives": [{"attributes": {"POSITION": 0}, "indices": 1, "mode": 4}],
+            }
+        ],
+        "nodes": [{"mesh": 0, "name": "pm0054_00_00_BodySkin"}],
+        "scenes": [{"nodes": [0]}],
+        "accessors": [
+            {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"},
+            {"bufferView": 0, "componentType": 5123, "count": 3, "type": "SCALAR"},
+        ],
+        "bufferViews": [{"buffer": 0, "byteLength": 36}],
+        "buffers": [{"byteLength": 36}],
+    }
+    glb_path = tmp_path / "home.glb"
+    GlbData(json=gltf, bin_chunk=b"\x00" * 36).write(glb_path)
+    png_path = tmp_path / "pm0054_00_00_Body_col.png"
+    png_path.write_bytes(b"\x89PNG\r\n")
+
+    out_path = tmp_path / ".rae_preview" / "textured_home.glb"
+    write_patched_preview_glb(
+        glb_path,
+        out_path,
+        mesh_labels=["pm0054_00_00_BodySkin"],
+        mesh_texture_paths=[png_path],
+    )
+    patched = read_glb(out_path)
+    assert patched.json.get("materials")
+    assert patched.json.get("images")
+    assert patched.json["images"][0]["uri"] == "pm0054_00_00_Body_col.png"
 
 
 def test_write_patched_preview_glb_copies_png_and_patches(tmp_path: Path) -> None:

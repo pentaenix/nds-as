@@ -51,7 +51,7 @@ def test_validate_texture_ranges_catches_short_blocks():
     problems = validate_texture_ranges(tex5, pal, tex0_5)
     assert any("block2 out of range" in p or "block3 out of range" in p for p in problems)
 
-    tex0_pal = Tex0Info(block1=b"\x00" * 64, block2=b"", block3=b"", block4=b"\x00" * 4, textures=[tex], palettes=[pal])
+    tex0_pal = Tex0Info(block1=b"\xff" * 64, block2=b"", block3=b"", block4=b"\x00" * 4, textures=[tex], palettes=[pal])
     problems = validate_texture_ranges(tex, pal, tex0_pal)
     assert any("palette out of range" in p for p in problems)
 

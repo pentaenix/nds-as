@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from rae.glb_policy.texture_patch import prebake_texture_alpha
+from rae.platforms.nds.gltf.texture_patch import prebake_texture_alpha
 
 
 def test_prebake_texture_alpha_scales_channel(tmp_path: Path) -> None:

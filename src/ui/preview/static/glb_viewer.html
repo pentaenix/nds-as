@@ -1,0 +1,1031 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RAE GLB Preview</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+    }
+    body.bg-checkered {
+      background-color: #4a4a4a;
+      background-image:
+        linear-gradient(45deg, #353535 25%, transparent 25%, transparent 75%, #353535 75%, #353535),
+        linear-gradient(45deg, #353535 25%, transparent 25%, transparent 75%, #353535 75%, #353535);
+      background-size: 28px 28px;
+      background-position: 0 0, 14px 14px;
+    }
+    body.bg-white { background: #ffffff; }
+    body.bg-black { background: #141414; }
+    canvas { display: block; width: 100%; height: 100%; }
+    #error {
+      display: none;
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 0;
+      z-index: 2;
+      color: #ff88aa;
+      padding: 16px;
+      font: 13px/1.4 sans-serif;
+      background: rgba(0, 0, 0, 0.55);
+    }
+    #pan-knob {
+      position: fixed;
+      left: 12px;
+      bottom: 12px;
+      z-index: 4;
+      width: 34px;
+      height: 34px;
+      border: 1px solid rgba(255, 255, 255, 0.48);
+      border-radius: 50%;
+      padding: 0;
+      color: rgba(255, 255, 255, 0.9);
+      background: rgba(17, 23, 31, 0.78);
+      box-shadow: 0 2px 9px rgba(0, 0, 0, 0.38);
+      cursor: grab;
+      user-select: none;
+      touch-action: none;
+      font: 20px/32px sans-serif;
+      text-align: center;
+    }
+    #pan-knob:hover { background: rgba(34, 46, 61, 0.9); }
+    #pan-knob.dragging { cursor: grabbing; background: rgba(48, 72, 96, 0.94); }
+    #pan-knob::before { content: "✥"; }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./vendor/three/three.module.js"
+    }
+  }
+  </script>
+</head>
+<body class="bg-checkered">
+  <div id="error"></div>
+  <button id="pan-knob" type="button" aria-label="Drag to move the 3D view" title="Drag to move the 3D view"></button>
+  <script>
+    window.addEventListener('unhandledrejection', (e) => {
+      const el = document.getElementById('error');
+      if (!el) return;
+      el.textContent = String(e.reason?.message || e.reason || 'Viewer failed to start');
+      el.style.display = 'block';
+    });
+    window.setTimeout(() => {
+      if (!window.raeGlbPreview) {
+        const el = document.getElementById('error');
+        if (!el) return;
+        el.textContent = '3D viewer scripts did not initialize.';
+        el.style.display = 'block';
+      }
+    }, 4000);
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from './vendor/three/addons/loaders/GLTFLoader.js';
+    import { RoomEnvironment } from './vendor/three/addons/environments/RoomEnvironment.js';
+
+    const policyUrl = new URLSearchParams(location.search).get('policy');
+    if (!policyUrl) {
+      throw new Error('GLB viewer requires ?policy=<platform material-policy.js URL>');
+    }
+    const policy = await import(policyUrl);
+    const applyRaeMaterialPolicy = policy.applyRaeMaterialPolicy;
+    const applyMaterialPolicy = policy.applyMaterialPolicy;
+    const captureMaterialPolicy = policy.captureMaterialPolicy;
+    const scheduleMaterialPolicyWhenMapReady = policy.scheduleMaterialPolicyWhenMapReady;
+    const applyEyeExpressionFrame = policy.applyEyeExpressionFrame || (() => false);
+    const installGfEyeSheetTransform = policy.installGfEyeSheetTransform || (() => {});
+    const installTextureVariants = policy.installTextureVariants || (async () => {});
+    const applyTextureVariantToRoot = policy.applyTextureVariantToRoot || (() => 0);
+    const installMapMaterialMotion = policy.installMapMaterialMotion || (() => 0);
+    const startMapMaterialMotion = policy.startMapMaterialMotion || (() => false);
+    const advanceMapMaterialMotion = policy.advanceMapMaterialMotion || (() => false);
+    const pauseMapMaterialMotionFn = policy.pauseMapMaterialMotion || (() => {});
+    const stopMapMaterialMotionFn = policy.stopMapMaterialMotion || (() => {});
+    const mapMaterialMotionClipIds = policy.mapMaterialMotionClipIds || (() => []);
+
+    const BG = {
+      Checkered: null,
+      White: 0xffffff,
+      Black: 0x141414,
+    };
+
+    let renderer;
+    let scene;
+    let camera;
+    let pivot;
+    let disposeLighting = () => {};
+    let cam = { yaw: 35, pitch: 28, zoomFactor: 1, panX: 0, panY: 0 };
+    let animId = 0;
+    let currentUrl = '';
+    let activeLoadToken = 0;
+    let currentBg = 'Checkered';
+    let orbitExtent = 1;
+    const materialsByName = {};
+    const textureCache = new Map();
+    let flipbookTracks = [];
+    let flipbookPlaying = false;
+    let flipbookLastTick = 0;
+    let snapshotMode = false;
+    let animClips = [];
+    let animModel = null;
+    let animMixer = null;
+    let animLastTick = 0;
+    let animPlayingName = '';
+    let mapMotionPlayingName = '';
+    let loadedGltfParser = null;
+    let defaultMeshVisibility = {};
+    let animMeshVisibilityByName = {};
+    let activeTextureVariant = 'normal';
+    let activeFormVariant = '';
+    const MESH_VIS_FPS = 30;
+
+    function applyMeshVisibilityMap(visMap) {
+      if (!animModel || !visMap) return;
+      animModel.traverse((obj) => {
+        if (!obj.isMesh || !obj.name) return;
+        if (Object.prototype.hasOwnProperty.call(visMap, obj.name)) {
+          obj.visible = !!visMap[obj.name];
+        }
+      });
+    }
+
+    function applyDefaultMeshVisibility() {
+      applyMeshVisibilityMap(defaultMeshVisibility);
+      applyActiveFormVisibility();
+    }
+
+    function buildMeshVisibilityTables(gltf) {
+      defaultMeshVisibility = {};
+      animMeshVisibilityByName = {};
+      const nodes = gltf.parser?.json?.nodes || [];
+      for (const node of nodes) {
+        if (node.mesh === undefined || !node.name) continue;
+        const vis = node.extras?.rae?.defaultVisible;
+        if (vis !== undefined) defaultMeshVisibility[node.name] = !!vis;
+      }
+      for (const anim of gltf.parser?.json?.animations || []) {
+        const tracks = anim.extras?.rae?.meshVisibility;
+        if (tracks && anim.name) animMeshVisibilityByName[anim.name] = tracks;
+      }
+    }
+
+    function sampleAnimMeshVisibility(clipName, timeSec) {
+      const tracks = animMeshVisibilityByName[clipName];
+      if (!tracks || !animModel) return;
+      const frame = Math.max(0, Math.floor(timeSec * MESH_VIS_FPS));
+      animModel.traverse((obj) => {
+        if (!obj.isMesh || !obj.name) return;
+        const values = tracks[obj.name];
+        if (!values?.length) return;
+        const idx = Math.min(frame, values.length - 1);
+        obj.visible = !!values[idx];
+      });
+      applyActiveFormVisibility();
+    }
+
+    function applyFormVariantToRoot(root, formId) {
+      if (!root || !formId) return 0;
+      let count = 0;
+      root.traverse((obj) => {
+        if (!obj.isMesh) return;
+        const forms = obj.userData?.rae?.visibleForForms || obj.userData?.visibleForForms;
+        if (!Array.isArray(forms) || !forms.length) return;
+        obj.visible = obj.visible && forms.includes(formId);
+        count += 1;
+      });
+      return count;
+    }
+
+    function applyActiveFormVisibility() {
+      if (!animModel || !activeFormVariant) return 0;
+      return applyFormVariantToRoot(animModel, activeFormVariant);
+    }
+
+    function showError(msg) {
+      const el = document.getElementById('error');
+      el.textContent = msg;
+      el.style.display = 'block';
+    }
+
+    function clearError() {
+      const el = document.getElementById('error');
+      el.textContent = '';
+      el.style.display = 'none';
+    }
+
+    function applyBackground(name) {
+      currentBg = name in BG ? name : 'Checkered';
+      document.body.className = {
+        Checkered: 'bg-checkered',
+        White: 'bg-white',
+        Black: 'bg-black',
+      }[currentBg] || 'bg-checkered';
+      if (scene) {
+        const color = BG[currentBg];
+        scene.background = color === null ? null : new THREE.Color(color);
+      }
+    }
+
+    function promoteToUnlitPreviewMaterial(mat) {
+      if (!mat || mat.isMeshBasicMaterial) return mat;
+      const basic = new THREE.MeshBasicMaterial({
+        map: mat.map,
+        color: mat.color ? mat.color.clone() : 0xffffff,
+        transparent: mat.transparent,
+        opacity: mat.opacity,
+        alphaTest: mat.alphaTest || 0,
+        depthWrite: mat.depthWrite,
+        blending: mat.blending,
+        side: mat.side,
+        polygonOffset: mat.polygonOffset,
+        polygonOffsetFactor: mat.polygonOffsetFactor,
+        polygonOffsetUnits: mat.polygonOffsetUnits,
+      });
+      basic.userData = { ...mat.userData };
+      return basic;
+    }
+
+    function applyUnlitPreviewMaterials(root) {
+      root.traverse((obj) => {
+        if (!obj.isMesh || !obj.material) return;
+        if (Array.isArray(obj.material)) {
+          obj.material = obj.material.map(promoteToUnlitPreviewMaterial);
+        } else {
+          obj.material = promoteToUnlitPreviewMaterial(obj.material);
+        }
+      });
+    }
+
+    function applyStudioLighting(targetScene, r) {
+      const pmrem = new THREE.PMREMGenerator(r);
+      const envScene = new RoomEnvironment();
+      const envTarget = pmrem.fromScene(envScene, 0.04);
+      targetScene.environment = envTarget.texture;
+      const ambient = new THREE.AmbientLight(0xffffff, 0.55);
+      const key = new THREE.DirectionalLight(0xffffff, 1.15);
+      key.position.set(0.7, 1.4, 0.9);
+      const fill = new THREE.DirectionalLight(0xffffff, 0.45);
+      fill.position.set(-0.8, 0.4, -0.6);
+      targetScene.add(ambient, key, fill);
+      return () => {
+        targetScene.environment = null;
+        envTarget.dispose();
+        pmrem.dispose();
+        envScene.dispose?.();
+        targetScene.remove(ambient, key, fill);
+      };
+    }
+
+    function centerModelAtOrigin(model) {
+      model.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(model);
+      if (box.isEmpty()) {
+        throw new Error('Model loaded but has empty bounds');
+      }
+      const center = box.getCenter(new THREE.Vector3());
+      model.position.sub(center);
+      const size = box.getSize(new THREE.Vector3());
+      orbitExtent = Math.max(size.x, size.y, size.z, 0.01);
+    }
+
+    function fitCamera(viewW, viewH) {
+      const maxDim = orbitExtent;
+      const aspect = viewW / Math.max(viewH, 1);
+      const zoom = cam.zoomFactor ?? 1;
+      const halfH = (maxDim * 0.55) / zoom;
+      const halfW = halfH * aspect;
+      camera.left = -halfW;
+      camera.right = halfW;
+      camera.top = halfH;
+      camera.bottom = -halfH;
+      camera.near = -maxDim * 8;
+      camera.far = maxDim * 8;
+      camera.updateProjectionMatrix();
+      const yaw = (cam.yaw ?? 35) * Math.PI / 180;
+      const pitch = (cam.pitch ?? 28) * Math.PI / 180;
+      const dist = maxDim * 2.2;
+      camera.position.set(
+        Math.sin(yaw) * Math.cos(pitch) * dist,
+        Math.sin(pitch) * dist,
+        Math.cos(yaw) * Math.cos(pitch) * dist,
+      );
+      camera.lookAt(0, 0, 0);
+      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+      const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+      const target = right.multiplyScalar(cam.panX || 0).add(up.multiplyScalar(cam.panY || 0));
+      camera.position.add(target);
+      camera.lookAt(target);
+    }
+
+    function disposeModel(root) {
+      root.traverse((o) => {
+        if (o.geometry) o.geometry.dispose?.();
+        if (o.material) {
+          const mats = Array.isArray(o.material) ? o.material : [o.material];
+          for (const m of mats) {
+            m.map?.dispose?.();
+            m.dispose?.();
+          }
+        }
+      });
+    }
+
+    function stopSkeletalAnimation() {
+      if (animMixer) {
+        animMixer.stopAllAction();
+      }
+      animMixer = null;
+      animLastTick = 0;
+      animPlayingName = '';
+      if (animModel) {
+        animModel.traverse((obj) => {
+          if (obj.isSkinnedMesh) obj.skeleton?.pose();
+        });
+        applyDefaultMeshVisibility();
+      }
+    }
+
+    function isMapMaterialMotionClip(name) {
+      if (!animModel || !name) return false;
+      return mapMaterialMotionClipIds(animModel).includes(name);
+    }
+
+    function playMapMotionClip(name) {
+      if (!animModel) return false;
+      stopSkeletalAnimation();
+      stopMapMaterialMotionFn(animModel);
+      const started = startMapMaterialMotion(animModel, name);
+      mapMotionPlayingName = started ? name : '';
+      return started;
+    }
+
+    function applyEyeExpressionFrameByName(materialName, frameIndex) {
+      const mat = findMaterial(materialName);
+      return applyEyeExpressionFrame(mat, frameIndex);
+    }
+
+    function playSkeletalAnimation(name) {
+      if (!animModel || !animClips.length) return false;
+      const clip = animClips.find((c) => c.name === name);
+      if (!clip) return false;
+      const mixerRoot = animMixer?.getRoot?.();
+      if (!animMixer || mixerRoot !== animModel) {
+        if (animMixer) animMixer.stopAllAction();
+        animMixer = new THREE.AnimationMixer(animModel);
+      }
+      animMixer.stopAllAction();
+      animMixer.clipAction(clip).reset().setLoop(THREE.LoopRepeat, Infinity).play();
+      animLastTick = 0;
+      animPlayingName = name;
+      sampleAnimMeshVisibility(name, 0);
+      applyActiveFormVisibility();
+      return true;
+    }
+
+    function advanceSkeletalAnimation(now) {
+      if (!animMixer) return;
+      const dt = animLastTick ? (now - animLastTick) / 1000 : 0;
+      animLastTick = now;
+      animMixer.update(dt);
+      if (animPlayingName) {
+        const action = animMixer._actions.find((a) => a.isRunning());
+        const timeSec = action ? action.time : 0;
+        sampleAnimMeshVisibility(animPlayingName, timeSec);
+      }
+    }
+
+    function clearSceneGraph() {
+      if (!pivot) return;
+      stopSkeletalAnimation();
+      if (animModel) stopMapMaterialMotionFn(animModel);
+      mapMotionPlayingName = '';
+      animClips = [];
+      animModel = null;
+      loadedGltfParser = null;
+      defaultMeshVisibility = {};
+      animMeshVisibilityByName = {};
+      for (const key of Object.keys(materialsByName)) delete materialsByName[key];
+      textureCache.clear();
+      while (pivot.children.length) {
+        const child = pivot.children[0];
+        pivot.remove(child);
+        disposeModel(child);
+      }
+      currentUrl = '';
+      orbitExtent = 1;
+    }
+
+    async function rebuildMaterialIndex(model, gltf) {
+      for (const key of Object.keys(materialsByName)) delete materialsByName[key];
+      const installJobs = [];
+      model.traverse((obj) => {
+        if (!obj.isMesh || !obj.material) return;
+        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+        for (const mat of mats) {
+          const assoc = gltf.parser.associations.get(mat);
+          const matIndex = assoc?.materials;
+          let src = Number.isInteger(matIndex) ? gltf.parser.json.materials?.[matIndex] : null;
+          // Promoted unlit materials lose their loader association; fall back
+          // to the glTF material captured in userData or the material name.
+          if (!src) src = mat.userData?.gltfMaterial || null;
+          const name = src?.name || mat.name || (Number.isInteger(matIndex) ? `material_${matIndex}` : '');
+          if (!name) continue;
+          if (!mat.userData.raePolicy) captureMaterialPolicy(mat, src || null);
+          installGfEyeSheetTransform(mat, src || null);
+          scheduleMaterialPolicyWhenMapReady(mat);
+          if (src) mat.userData.gltfMaterial = src;
+          installJobs.push(installTextureVariants(mat, src, gltf.parser));
+          materialsByName[name] = mat;
+          materialsByName[String(name).toLowerCase()] = mat;
+        }
+      });
+      await Promise.all(installJobs);
+      const appearance = gltf.parser?.json?.extras?.rae?.appearanceVariants;
+      const defaultForm = appearance?.default?.form;
+      activeFormVariant = typeof defaultForm === 'string' ? defaultForm : '';
+      const defaultVariant = gltf.parser?.json?.extras?.rae?.textureVariants?.default;
+      if (defaultVariant === 'shiny' || defaultVariant === 'normal') {
+        activeTextureVariant = defaultVariant;
+      } else {
+        activeTextureVariant = 'normal';
+      }
+      applyTextureVariantToRoot(model, activeTextureVariant);
+    }
+
+    function setFormVariant(formId) {
+      const next = String(formId || '').trim();
+      if (!next) return 0;
+      activeFormVariant = next;
+      if (!animModel) return 0;
+      applyDefaultMeshVisibility();
+      if (animPlayingName) {
+        const action = animMixer?._actions?.find((a) => a.isRunning());
+        sampleAnimMeshVisibility(animPlayingName, action ? action.time : 0);
+      }
+      return applyActiveFormVisibility();
+    }
+
+    function setTextureVariant(variantId) {
+      const next = variantId === 'shiny' ? 'shiny' : 'normal';
+      activeTextureVariant = next;
+      if (!pivot?.children?.length) return 0;
+      return applyTextureVariantToRoot(pivot.children[0], next);
+    }
+
+    function findMaterial(name) {
+      if (!name) return null;
+      return materialsByName[name] || materialsByName[String(name).toLowerCase()] || null;
+    }
+
+    function prepareExternalTexture(tex, referenceMap) {
+      tex.flipY = false;
+      if ('colorSpace' in tex) tex.colorSpace = THREE.SRGBColorSpace;
+      if (referenceMap) {
+        tex.wrapS = referenceMap.wrapS;
+        tex.wrapT = referenceMap.wrapT;
+        tex.magFilter = referenceMap.magFilter;
+        tex.minFilter = referenceMap.minFilter;
+        tex.generateMipmaps = referenceMap.generateMipmaps;
+        if (referenceMap.repeat) tex.repeat.copy(referenceMap.repeat);
+        if (referenceMap.offset) tex.offset.copy(referenceMap.offset);
+      } else {
+        tex.magFilter = THREE.NearestFilter;
+        tex.minFilter = THREE.NearestFilter;
+        tex.generateMipmaps = false;
+      }
+      tex.needsUpdate = true;
+      return tex;
+    }
+
+    async function loadCachedTexture(url, referenceMap) {
+      if (!url) return null;
+      const cached = textureCache.get(url);
+      if (cached) return cached;
+      const loader = new THREE.TextureLoader();
+      const tex = await loader.loadAsync(url).catch(() => null);
+      if (!tex) return null;
+      prepareExternalTexture(tex, referenceMap);
+      textureCache.set(url, tex);
+      return tex;
+    }
+
+    function pauseFlipbook() {
+      flipbookPlaying = false;
+      flipbookTracks = [];
+      flipbookLastTick = 0;
+      if (animModel) pauseMapMaterialMotionFn(animModel);
+    }
+
+    async function startFlipbook(clips) {
+      pauseFlipbook();
+      if (!clips?.length || !pivot?.children.length) return { tracks: 0 };
+      const tracks = [];
+      for (const clip of clips) {
+        const mat = findMaterial(clip.material);
+        if (!mat || !clip.frameUrls?.length) continue;
+        const frames = [];
+        for (const url of clip.frameUrls) {
+          const tex = await loadCachedTexture(url, mat.map);
+          if (tex) frames.push(tex);
+        }
+        if (frames.length < 1) continue;
+        if (frames.length < 2 || clip.animate === false) {
+          mat.map = frames[0];
+          applyMaterialPolicy(mat);
+          continue;
+        }
+        mat.map = frames[0];
+        applyMaterialPolicy(mat);
+        tracks.push({
+          material: clip.material,
+          frames,
+          index: 0,
+          elapsed: 0,
+          durationMs: Math.max(16, clip.frameDurationMs || 150),
+          loop: clip.loop !== false,
+        });
+      }
+      if (!tracks.length) return { tracks: 0 };
+      flipbookTracks = tracks;
+      flipbookPlaying = true;
+      flipbookLastTick = performance.now();
+      return { tracks: tracks.length };
+    }
+
+    function advanceFlipbook(now) {
+      if (!flipbookPlaying || !flipbookTracks.length) return;
+      const dt = flipbookLastTick ? now - flipbookLastTick : 0;
+      flipbookLastTick = now;
+      for (const track of flipbookTracks) {
+        const mat = findMaterial(track.material);
+        if (!mat || track.frames.length < 2) continue;
+        track.elapsed += dt;
+        while (track.elapsed >= track.durationMs) {
+          track.elapsed -= track.durationMs;
+          const next = track.index + 1;
+          if (next >= track.frames.length) {
+            if (!track.loop) {
+              track.index = track.frames.length - 1;
+              track.elapsed = 0;
+              break;
+            }
+            track.index = 0;
+          } else {
+            track.index = next;
+          }
+          mat.map = track.frames[track.index];
+          applyMaterialPolicy(mat);
+        }
+      }
+    }
+
+    function ensureRenderer() {
+      if (renderer) return;
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, stencil: true });
+      renderer.setClearColor(0x000000, 0);
+      renderer.sortObjects = true;
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.toneMapping = THREE.NoToneMapping;
+      document.body.appendChild(renderer.domElement);
+      scene = new THREE.Scene();
+      applyBackground(currentBg);
+      camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 10000);
+      pivot = new THREE.Group();
+      pivot.position.set(0, 0, 0);
+      scene.add(pivot);
+      disposeLighting = applyStudioLighting(scene, renderer);
+
+      let dragging = false;
+      let lastX = 0;
+      let lastY = 0;
+      renderer.domElement.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        dragging = true;
+        lastX = e.clientX;
+        lastY = e.clientY;
+      });
+      window.addEventListener('mouseup', () => { dragging = false; });
+      window.addEventListener('mousemove', (e) => {
+        if (!dragging) return;
+        const dx = e.clientX - lastX;
+        const dy = e.clientY - lastY;
+        lastX = e.clientX;
+        lastY = e.clientY;
+        cam.yaw += dx * 0.35;
+        cam.pitch = Math.max(-80, Math.min(80, cam.pitch + dy * 0.25));
+      });
+      const panKnob = document.getElementById('pan-knob');
+      let panning = false;
+      let panPointerId = -1;
+      let panLastX = 0;
+      let panLastY = 0;
+      panKnob?.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        panning = true;
+        panPointerId = e.pointerId;
+        panLastX = e.clientX;
+        panLastY = e.clientY;
+        panKnob.classList.add('dragging');
+        panKnob.setPointerCapture?.(e.pointerId);
+        e.preventDefault();
+        e.stopPropagation();
+      });
+      panKnob?.addEventListener('pointermove', (e) => {
+        if (!panning || e.pointerId !== panPointerId) return;
+        const dx = e.clientX - panLastX;
+        const dy = e.clientY - panLastY;
+        panLastX = e.clientX;
+        panLastY = e.clientY;
+        const visibleWorldHeight = (orbitExtent * 1.1) / Math.max(cam.zoomFactor || 1, 0.001);
+        const worldPerPixel = visibleWorldHeight / Math.max(window.innerHeight, 1);
+        cam.panX -= dx * worldPerPixel;
+        cam.panY += dy * worldPerPixel;
+        e.preventDefault();
+        e.stopPropagation();
+      });
+      const stopPanning = (e) => {
+        if (!panning || (e?.pointerId !== undefined && e.pointerId !== panPointerId)) return;
+        panning = false;
+        panPointerId = -1;
+        panKnob?.classList.remove('dragging');
+      };
+      panKnob?.addEventListener('pointerup', stopPanning);
+      panKnob?.addEventListener('pointercancel', stopPanning);
+      renderer.domElement.addEventListener('wheel', (e) => {
+        const factor = e.deltaY > 0 ? 1.1 : 0.9;
+        cam.zoomFactor = Math.max(0.2, Math.min(8, (cam.zoomFactor || 1) * factor));
+        e.preventDefault();
+      }, { passive: false });
+
+      const resize = () => {
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        renderer.setPixelRatio(dpr);
+        renderer.setSize(w, h, false);
+        if (pivot.children.length) fitCamera(w, h);
+      };
+      window.addEventListener('resize', resize);
+      resize();
+
+      const loop = () => {
+        animId = requestAnimationFrame(loop);
+        if (!renderer || !scene || !camera) return;
+        if (!snapshotMode && pivot.children.length) {
+          fitCamera(window.innerWidth, window.innerHeight);
+        }
+        const now = performance.now();
+        advanceFlipbook(now);
+        advanceSkeletalAnimation(now);
+        if (animModel) advanceMapMaterialMotion(animModel, now);
+        if (!snapshotMode) {
+          renderer.render(scene, camera);
+        }
+      };
+      loop();
+    }
+
+    async function captureSnapshot(width, height, yaw, pitch, zoomFactor, options) {
+      ensureRenderer();
+      snapshotMode = true;
+      const opts = options || {};
+      try {
+        pauseFlipbook();
+        if (opts.opaqueGray) {
+          document.body.className = 'bg-black';
+          scene.background = new THREE.Color(0x3a3a3a);
+          renderer.setClearColor(0x3a3a3a, 1);
+        } else {
+          applyBackground(currentBg || 'Checkered');
+          scene.background = null;
+          renderer.setClearColor(0x000000, 0);
+        }
+        renderer.setPixelRatio(1);
+        renderer.setSize(width, height, false);
+        cam.yaw = yaw ?? 35;
+        cam.pitch = pitch ?? 28;
+        cam.zoomFactor = zoomFactor ?? 1;
+        if (pivot.children.length) {
+          fitCamera(width, height);
+        }
+        renderer.render(scene, camera);
+        return renderer.domElement.toDataURL('image/png');
+      } finally {
+        snapshotMode = false;
+        applyBackground(currentBg);
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        renderer.setPixelRatio(dpr);
+        renderer.setSize(w, h, false);
+        if (pivot.children.length) {
+          fitCamera(w, h);
+        }
+        renderer.render(scene, camera);
+      }
+    }
+
+    function waitForPreviewTextures(root) {
+      const waits = [];
+      root.traverse((obj) => {
+        if (!obj.isMesh || !obj.material) return;
+        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+        for (const mat of mats) {
+          const map = mat?.map;
+          if (!map) continue;
+          const img = map.image;
+          if (img && (img.complete || img.width)) continue;
+          waits.push(new Promise((resolve) => {
+            const done = () => {
+              map.needsUpdate = true;
+              resolve();
+            };
+            if (img?.addEventListener) {
+              img.addEventListener('load', done, { once: true });
+              img.addEventListener('error', done, { once: true });
+            } else {
+              resolve();
+            }
+          }));
+        }
+      });
+      return Promise.all(waits);
+    }
+
+    // Qt runJavaScript cannot return Promises — Python polls this object instead.
+    window.__raeSnapshotJob = { done: false, dataUrl: '', error: '' };
+
+    async function loadAndGrabVisible(url, yaw, pitch, zoomFactor) {
+      try {
+        await loadGlb(url);
+      } catch (err) {
+        if (!pivot?.children?.length) {
+          throw err;
+        }
+      }
+      if (!pivot?.children?.length) {
+        return '';
+      }
+      const model = pivot.children[0];
+      await waitForPreviewTextures(model);
+      applyRaeMaterialPolicy(model);
+      cam.yaw = yaw ?? 35;
+      cam.pitch = pitch ?? 28;
+      cam.zoomFactor = zoomFactor ?? 1;
+      const w = Math.max(1, window.innerWidth || 256);
+      const h = Math.max(1, window.innerHeight || 256);
+      fitCamera(w, h);
+      await new Promise((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      });
+      snapshotMode = true;
+      try {
+        renderer.render(scene, camera);
+        return renderer.domElement.toDataURL('image/png');
+      } finally {
+        snapshotMode = false;
+      }
+    }
+
+    function beginSnapshotCapture(url, yaw, pitch, zoomFactor) {
+      window.__raeSnapshotJob = { done: false, dataUrl: '', error: '' };
+      loadAndGrabVisible(url, yaw, pitch, zoomFactor)
+        .then((dataUrl) => {
+          window.__raeSnapshotJob.done = true;
+          window.__raeSnapshotJob.dataUrl = dataUrl || '';
+        })
+        .catch((err) => {
+          window.__raeSnapshotJob.done = true;
+          window.__raeSnapshotJob.error = String(err?.message || err);
+        });
+      return true;
+    }
+
+    async function loadAndCapture(url, width, height, yaw, pitch, zoomFactor, options) {
+      if (!width && !height) {
+        return loadAndGrabVisible(url, yaw, pitch, zoomFactor);
+      }
+      try {
+        await loadGlb(url);
+      } catch (err) {
+        if (!pivot?.children?.length) {
+          throw err;
+        }
+      }
+      if (pivot.children.length) {
+        const model = pivot.children[0];
+        await waitForPreviewTextures(model);
+        applyRaeMaterialPolicy(model);
+        await new Promise((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(resolve));
+        });
+        const liveW = window.innerWidth || 256;
+        const liveH = window.innerHeight || 256;
+        fitCamera(liveW, liveH);
+        renderer.render(scene, camera);
+      }
+      const captureW = width > 0 ? width : (window.innerWidth || 256);
+      const captureH = height > 0 ? height : (window.innerHeight || 256);
+      return captureSnapshot(captureW, captureH, yaw, pitch, zoomFactor, options);
+    }
+
+    async function loadGlb(url) {
+      clearError();
+      ensureRenderer();
+      if (currentUrl === url && pivot.children.length) return;
+
+      const loadToken = ++activeLoadToken;
+      pauseFlipbook();
+      clearSceneGraph();
+      currentUrl = url;
+
+      const loader = new GLTFLoader();
+      let gltf;
+      try {
+        gltf = await loader.loadAsync(url);
+      } catch (err) {
+        if (loadToken === activeLoadToken) {
+          currentUrl = '';
+        }
+        throw err;
+      }
+
+      if (loadToken !== activeLoadToken) {
+        disposeModel(gltf.scene);
+        return;
+      }
+
+      const model = gltf.scene;
+      model.traverse((obj) => {
+        if (!obj.isMesh || !obj.material) return;
+        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+        for (const mat of mats) {
+          const assoc = gltf.parser.associations.get(mat);
+          const matIndex = assoc?.materials;
+          const src = Number.isInteger(matIndex) ? gltf.parser.json.materials?.[matIndex] : null;
+          if (src?.extras) mat.userData.gltfExtensions = { extras: src.extras };
+          captureMaterialPolicy(mat, src);
+        }
+      });
+      applyUnlitPreviewMaterials(model);
+      applyRaeMaterialPolicy(model);
+      model.traverse((obj) => {
+        if (obj.isSkinnedMesh) {
+          obj.frustumCulled = false;
+          obj.normalizeSkinWeights?.();
+          obj.skeleton?.update();
+        }
+        if (obj.isMesh) obj.frustumCulled = false;
+      });
+      pivot.add(model);
+      centerModelAtOrigin(model);
+      fitCamera(window.innerWidth, window.innerHeight);
+      await rebuildMaterialIndex(model, gltf);
+      if (loadToken !== activeLoadToken) {
+        pivot.remove(model);
+        disposeModel(model);
+        return;
+      }
+      buildMeshVisibilityTables(gltf);
+      applyDefaultMeshVisibility();
+      animClips = gltf.animations || [];
+      animModel = model;
+      loadedGltfParser = gltf.parser;
+      const mapMotion = gltf.parser?.json?.extras?.rae?.mapMaterialMotion;
+      const environmentScene = gltf.parser?.json?.extras?.rae?.environmentScene;
+      if (mapMotion) {
+        installMapMaterialMotion(model, mapMotion, environmentScene);
+        mapMotionPlayingName = '';
+      }
+    }
+
+    window.raeGlbPreview = {
+      load(url) {
+        return loadGlb(url).catch((err) => {
+          showError(String(err?.message || err));
+        });
+      },
+      setBackground(name) {
+        applyBackground(name);
+        ensureRenderer();
+      },
+      setWireframe(enabled) {
+        if (!pivot) return;
+        pivot.traverse((obj) => {
+          if (!obj.isMesh) return;
+          const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+          for (const mat of mats) mat.wireframe = !!enabled;
+        });
+      },
+      clearScene() {
+        pauseFlipbook();
+        clearSceneGraph();
+        clearError();
+      },
+      resetView() {
+        cam.yaw = 35;
+        cam.pitch = 28;
+        cam.zoomFactor = 1;
+        cam.panX = 0;
+        cam.panY = 0;
+        if (pivot?.children.length) {
+          fitCamera(window.innerWidth, window.innerHeight);
+        }
+      },
+      listAnimations() {
+        const skeletal = (animClips || []).map((c) => ({ name: c.name, duration: c.duration }));
+        const mapIds = animModel ? mapMaterialMotionClipIds(animModel) : [];
+        const seen = new Set(skeletal.map((entry) => entry.name));
+        for (const id of mapIds) {
+          if (!seen.has(id)) skeletal.push({ name: id, duration: 0 });
+        }
+        return JSON.stringify(skeletal);
+      },
+      playAnimation(name) {
+        if (isMapMaterialMotionClip(name)) {
+          return playMapMotionClip(name);
+        }
+        if (animModel) stopMapMaterialMotionFn(animModel);
+        mapMotionPlayingName = '';
+        return playSkeletalAnimation(name);
+      },
+      stopAnimation() {
+        stopSkeletalAnimation();
+        if (animModel) stopMapMaterialMotionFn(animModel);
+        mapMotionPlayingName = '';
+      },
+      currentAnimation() {
+        return mapMotionPlayingName || animPlayingName;
+      },
+      setEyeExpressionFrame(materialName, frameIndex) {
+        return applyEyeExpressionFrameByName(materialName, frameIndex);
+      },
+      setTextureVariant(variantId) {
+        return setTextureVariant(variantId);
+      },
+      getTextureVariant() {
+        return activeTextureVariant;
+      },
+      getCameraState() {
+        return JSON.stringify({
+          yaw: Number(cam.yaw ?? 35),
+          pitch: Number(cam.pitch ?? 28),
+          zoomFactor: Number(cam.zoomFactor ?? 1),
+        });
+      },
+      setFormVariant(formId) {
+        return setFormVariant(formId);
+      },
+      getFormVariant() {
+        return activeFormVariant;
+      },
+      getEyeExpressionFrame(materialName) {
+        const mat = findMaterial(materialName);
+        return mat?.userData?.raeEyeSheet?.activeFrame ?? 0;
+      },
+      listEyeExpressionFrames(materialName) {
+        const mat = findMaterial(materialName);
+        const expr = mat?.userData?.gltfMaterial?.extras?.rae?.eyeExpression;
+        return JSON.stringify(expr || null);
+      },
+      startFlipbook(clips) {
+        return startFlipbook(clips);
+      },
+      pauseFlipbook() {
+        pauseFlipbook();
+      },
+      playMapMaterialMotion(clipId) {
+        if (!animModel) return false;
+        return startMapMaterialMotion(animModel, clipId);
+      },
+      pauseMapMaterialMotion() {
+        if (animModel) pauseMapMaterialMotionFn(animModel);
+      },
+      hasFlipbook() {
+        return flipbookTracks.length > 0;
+      },
+      captureSnapshot(width, height, yaw, pitch, zoomFactor) {
+        return captureSnapshot(width, height, yaw, pitch, zoomFactor);
+      },
+      loadAndCapture(url, width, height, yaw, pitch, zoomFactor) {
+        return loadAndCapture(url, width, height, yaw, pitch, zoomFactor);
+      },
+      loadAndGrabVisible(url, yaw, pitch, zoomFactor) {
+        return loadAndGrabVisible(url, yaw, pitch, zoomFactor);
+      },
+      beginSnapshotCapture(url, yaw, pitch, zoomFactor) {
+        return beginSnapshotCapture(url, yaw, pitch, zoomFactor);
+      },
+      getSnapshotJobState() {
+        return JSON.stringify(window.__raeSnapshotJob || { done: false, dataUrl: '', error: '' });
+      },
+    };
+  </script>
+</body>
+</html>
