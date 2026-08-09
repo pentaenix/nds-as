@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import tempfile
 
 from ....core.assets import Asset
 from ..cgfx_preview import build_cgfx_model_glb
+from ..lbx_catalog import lbx_exportable_path, load_lbx_catalog
+from ..lbx_submission import export_lbx_submission
 from ..named_romfs import read_named_romfs_payload
 from ..pokemon_bulk_export import (
     PokemonBulkExportResult,
@@ -118,10 +121,25 @@ class ThreedsExportModule:
                 ("raw", "Raw BFLIM", "Undecoded sprite payload."),
             ]
         if asset.magic == "CGMD":
-            return [
+            options = [
                 ("glb_cgfx", "GLB CGFX model", "Convert the named NintendoWare model with nearby textures and a matching animation."),
                 ("raw", "Raw BCMDL/BCRES", "Original named RomFS model payload."),
             ]
+            descriptor = load_descriptor(asset) or {}
+            path = str(descriptor.get("romfs_path") or "")
+            if descriptor.get("game") == "lbx" and lbx_exportable_path(path) and not (
+                path.startswith("/3ddata/coreparts/")
+                and re.search(r"\d{2}_\d{2}_l$", Path(path).stem.casefold()) is not None
+            ):
+                options.insert(
+                    0,
+                    (
+                        "models_resource_lbx",
+                        "Models Resource pack",
+                        "DAE ZIP, 148x125 icon, animated GLB, and transparent 750x650 preview.",
+                    ),
+                )
+            return options
         if asset.magic in {"CGTX", "CGSA", "CGMA", "CGCA"}:
             return [("raw", "Raw NintendoWare asset", "Original named RomFS payload.")]
         return [("raw", "Raw descriptor", "JSON descriptor payload.")]
@@ -196,6 +214,8 @@ class ThreedsExportModule:
             ]
         if choice == "glb_cgfx":
             return [build_cgfx_model_glb(descriptor, out, progress=progress)]
+        if choice == "models_resource_lbx":
+            return self._export_lbx_submission(host, descriptor, out, progress=progress)
         if choice == "glbz":
             shiny = bool(getattr(host, "_export_glb_shiny", False))
             with tempfile.TemporaryDirectory(prefix="rae_threeds_glbz_") as temp_dir:
@@ -220,6 +240,65 @@ class ThreedsExportModule:
         if choice == "raw":
             return self._export_raw(asset, descriptor, out)
         return []
+
+    def _export_lbx_submission(
+        self,
+        host: object,
+        descriptor: dict,
+        out: Path,
+        *,
+        progress=None,
+    ) -> list[Path]:
+        if descriptor.get("game") != "lbx":
+            raise ValueError("Models Resource pack export is only available for LBX CGFX models")
+        preview = getattr(host, "preview", None)
+        web_view = getattr(preview, "_web_view", None)
+        if web_view is None or not getattr(web_view, "is_available", lambda: False)():
+            raise RuntimeError("The Three.js/WebEngine previewer is required for submission icons")
+        catalog = load_lbx_catalog(str(descriptor["rom"]))
+        source_path = str(descriptor["romfs_path"])
+        job = next(
+            (
+                item for item in catalog.build_jobs()
+                if source_path in item.source_paths
+            ),
+            catalog.job_for_path(source_path),
+        )
+        from PySide6.QtWidgets import QInputDialog
+
+        title, accepted = QInputDialog.getText(
+            host,
+            "LBX Models Resource pack",
+            "Submission name:",
+            text=job.title,
+        )
+        if not accepted:
+            return []
+        title = re.sub(r"[\\/:*?\"<>|]+", " ", str(title))
+        title = " ".join(title.split()).strip(". ")
+        if not title:
+            raise ValueError("Submission name cannot be empty")
+        yaw, pitch, zoom = getattr(web_view, "camera_state", lambda: (30.0, 27.0, 0.82))()
+        web_view.set_preview_platform("3ds")
+
+        def snapshot(path: Path, _job) -> bytes | None:
+            return web_view.capture_snapshot_png(
+                path,
+                max(1, int(web_view.width())),
+                max(1, int(web_view.height())),
+                yaw_deg=yaw,
+                pitch_deg=pitch,
+                zoom_factor=zoom,
+            )
+
+        return export_lbx_submission(
+            catalog,
+            job,
+            out,
+            snapshot,
+            title_override=title,
+            progress=progress,
+        )
 
     def supports_pokemon_bulk_export(
         self,

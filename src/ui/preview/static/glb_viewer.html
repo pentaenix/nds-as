@@ -972,6 +972,13 @@
       getTextureVariant() {
         return activeTextureVariant;
       },
+      getCameraState() {
+        return JSON.stringify({
+          yaw: Number(cam.yaw ?? 35),
+          pitch: Number(cam.pitch ?? 28),
+          zoomFactor: Number(cam.zoomFactor ?? 1),
+        });
+      },
       setFormVariant(formId) {
         return setFormVariant(formId);
       },

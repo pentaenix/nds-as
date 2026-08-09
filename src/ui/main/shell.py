@@ -224,14 +224,22 @@ class ShellMixin:
 
     def _build_ui(self) -> None:
         menubar = self.menuBar()
+        self._menu_lifetime_refs: list[object] = []
+
+        def retain_menu(menu: QMenu) -> QMenu:
+            # PySide can otherwise collect the QAction wrapper returned by
+            # QMenu.menuAction(), which invalidates the related QMenu wrapper.
+            self._menu_lifetime_refs.extend((menu, menu.menuAction()))
+            return menu
+
         try:
-            # Must be set before addMenu() — calling this later (e.g. from Device Toolkit
-            # install) deletes existing QMenu wrappers on macOS.
+            # Keep the normal macOS menu bar. retain_menu() holds both each QMenu
+            # and its QAction wrapper so later toolkit additions remain valid.
             menubar.setNativeMenuBar(True)
         except Exception:
             pass
 
-        file_menu = menubar.addMenu("&File")
+        file_menu = retain_menu(menubar.addMenu("&File"))
         open_rom_action = QAction("Open ROM…", self)
         open_rom_action.setShortcut("Ctrl+O")
         open_rom_action.triggered.connect(self.open_rom)
@@ -252,7 +260,7 @@ class ShellMixin:
         export_action.triggered.connect(self.export_selected_smart)
         file_menu.addAction(export_action)
 
-        view_menu = menubar.addMenu("&View")
+        view_menu = retain_menu(menubar.addMenu("&View"))
         self.auto_preview_action = QAction("Auto Preview", self)
         self.auto_preview_action.setCheckable(True)
         self.auto_preview_action.setChecked(True)
@@ -270,7 +278,7 @@ class ShellMixin:
         show_terminal_action.triggered.connect(lambda: self.info_tabs.setCurrentWidget(self.log_box))
         view_menu.addAction(show_terminal_action)
 
-        advanced_menu = menubar.addMenu("&Advanced")
+        advanced_menu = retain_menu(menubar.addMenu("&Advanced"))
         self.advanced_menu = advanced_menu
         pin_texture_action = QAction("Pin Selected BTX0", self)
         pin_texture_action.triggered.connect(self.pin_selected_texture)
@@ -559,7 +567,7 @@ class ShellMixin:
         self._mapped_tree_parts_by_id: dict[str, tuple[str, ...]] = {}
         self._raw_tree_parts_by_id: dict[str, tuple[str, ...]] = {}
 
-        preview_menu = menubar.addMenu("&Preview")
+        preview_menu = retain_menu(menubar.addMenu("&Preview"))
         self.texture_action = QAction("Textures", self)
         self.texture_action.setCheckable(True)
         self.texture_action.setChecked(self.preview.textures_toggle.isChecked())
@@ -631,6 +639,13 @@ class ShellMixin:
             self.info_tabs.setCurrentWidget(self.log_box)
         if banner:
             self._update_status(banner)
+
+    def _sync_platform_toolkit_ui(self) -> None:
+        for callback in tuple(getattr(self, "_platform_toolkit_sync_callbacks", ())):
+            try:
+                callback()
+            except Exception as exc:
+                self._update_status(f"Platform toolkit UI could not be synchronized: {exc}")
 
     def _load_profile_summary(self) -> None:
         if not self.rom_path:

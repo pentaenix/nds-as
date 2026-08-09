@@ -1529,6 +1529,69 @@ def resolve_gen5_map_objects(
     )
 
 
+def _implicit_gate_display_placements(
+    objects: Gen5MapObjectSet,
+    terrain_glb: Path,
+) -> tuple[Gen5MapPlacement, ...]:
+    """Recover the standard Gen 5 gate monitor omitted from map actors.
+
+    Standard gates reserve a ``gate_kabe03`` wall recess and keep the matching
+    ``gelboard01`` display in their AB pack, but the game instantiates that
+    display outside the ordinary 16-byte map actor table. Fit the authored
+    display to that recess instead of hard-coding one map's world coordinate.
+    Special Bridge Gates have no recess and are intentionally left unchanged.
+    """
+    display = next(
+        (model for model in objects.models.values() if model.name.casefold() == "gelboard01"),
+        None,
+    )
+    if display is None or any(item.model_index == display.index for item in objects.placements):
+        return ()
+    try:
+        import trimesh
+
+        scene = trimesh.load(terrain_glb, force="scene", process=False)
+    except Exception:
+        return ()
+    panels = [
+        geometry.bounds
+        for geometry in scene.geometry.values()
+        if str(getattr(getattr(geometry.visual, "material", None), "name", "")).casefold()
+        == "gate_kabe03"
+    ]
+    if not panels or scene.bounds is None:
+        return ()
+    panel_min = [min(float(bounds[0][axis]) for bounds in panels) for axis in range(3)]
+    panel_max = [max(float(bounds[1][axis]) for bounds in panels) for axis in range(3)]
+    terrain_min = [float(value) for value in scene.bounds[0]]
+    terrain_max = [float(value) for value in scene.bounds[1]]
+    panel_center = [(low + high) / 2.0 for low, high in zip(panel_min, panel_max)]
+    terrain_center = [(low + high) / 2.0 for low, high in zip(terrain_min, terrain_max)]
+
+    # gelboard01 is a vertical X/Y plane. Rotate it only when the wall recess
+    # runs along Z. Select the face looking into the room, not into the wall.
+    normal_axis = 0 if panel_max[0] - panel_min[0] < panel_max[2] - panel_min[2] else 2
+    target = list(panel_center)
+    target[normal_axis] = (
+        panel_max[normal_axis]
+        if terrain_center[normal_axis] >= panel_center[normal_axis]
+        else panel_min[normal_axis]
+    )
+    target[1] = panel_center[1] - 41.0  # authored gelboard01 Y center
+    rotation_raw = 0x4000 if normal_axis == 0 else 0
+    next_index = max((item.index for item in objects.placements), default=-1) + 1
+    return (
+        Gen5MapPlacement(
+            index=next_index,
+            x=target[0],
+            y=target[1],
+            z=-target[2],
+            model_index=display.index,
+            rotation_raw=rotation_raw,
+        ),
+    )
+
+
 def build_gen5_map_composition(
     rom_path: str | Path,
     virtual_path: str,
@@ -1538,6 +1601,8 @@ def build_gen5_map_composition(
     progress: Progress | None = None,
     map_index_override: int | None = None,
     area_index_override: int | None = None,
+    additional_map_texture_indices: tuple[int, ...] = (),
+    _rom_files: dict[str, bytes] | None = None,
 ) -> Gen5MapComposition:
     """Convert placed buildings and combine them with the current terrain GLB."""
     from .exporter import convert_with_apicula
@@ -1555,11 +1620,18 @@ def build_gen5_map_composition(
         raise ValueError("Preview the terrain model before loading its placed objects")
     if progress:
         progress("Resolving Gen 5 area, zone, and building pack…")
+    rom_files = _rom_files
+    if rom_files is None:
+        from .rom import NDSRom
+
+        rom = NDSRom.from_path(str(rom_path))
+        rom_files = {item.path: item.data for item in rom.iter_files()}
     objects = resolve_gen5_map_objects(
         rom_path,
         virtual_path,
         map_index_override=map_index_override,
         area_index_override=area_index_override,
+        _rom_files=rom_files,
     )
     if out_dir.exists():
         shutil.rmtree(out_dir, ignore_errors=True)
@@ -1593,7 +1665,30 @@ def build_gen5_map_composition(
         data=objects.map_texture_data,
         original_data=objects.map_texture_data,
     )
-    terrain_siblings = [map_texture_asset]
+    texture_asset = Asset(
+        asset_id=f"gen5-building-textures-{objects.area.building_pack}",
+        virtual_path=f"{objects.texture_archive_path}/file_{objects.area.building_pack:04d}.bin.nsbtx",
+        kind="Texture",
+        magic="BTX0",
+        extension=".nsbtx",
+        data=objects.texture_data,
+        original_data=objects.texture_data,
+    )
+    terrain_siblings = [map_texture_asset, texture_asset]
+    if additional_map_texture_indices:
+        map_texture_packs = _narc_files(rom_files["a/0/1/4"], "a/0/1/4")
+        for texture_index in additional_map_texture_indices:
+            if not 0 <= texture_index < len(map_texture_packs):
+                raise ValueError(f"Additional map texture {texture_index} is outside a/0/1/4")
+            terrain_siblings.append(Asset(
+                asset_id=f"gen5-map-extra-texture-{texture_index}",
+                virtual_path=f"a/0/1/4/file_{texture_index:04d}.bin.nsbtx",
+                kind="Texture",
+                magic="BTX0",
+                extension=".nsbtx",
+                data=map_texture_packs[texture_index],
+                original_data=map_texture_packs[texture_index],
+            ))
     area_bta_files = [
         *([objects.material_animation_data] if objects.material_animation_data else []),
         *objects.additional_material_animation_data,
@@ -1650,16 +1745,11 @@ def build_gen5_map_composition(
         terrain_glb = embedded_terrain
     elif progress:
         progress("Exact terrain conversion failed; retaining the existing terrain preview as a fallback.")
-    texture_asset = Asset(
-        asset_id=f"gen5-building-textures-{objects.area.building_pack}",
-        virtual_path=f"{objects.texture_archive_path}/file_{objects.area.building_pack:04d}.bin.nsbtx",
-        kind="Texture",
-        magic="BTX0",
-        extension=".nsbtx",
-        data=objects.texture_data,
-        original_data=objects.texture_data,
-    )
-
+    implicit_gate_displays = _implicit_gate_display_placements(objects, terrain_glb)
+    if implicit_gate_displays:
+        objects = replace(objects, placements=(*objects.placements, *implicit_gate_displays))
+        if progress:
+            progress("Restored the standard gate's authored electronic display.")
     converted: dict[int, Path] = {}
     composed_sources: dict[int, Path] = {}
     model_bta_files: dict[int, list[bytes]] = {}

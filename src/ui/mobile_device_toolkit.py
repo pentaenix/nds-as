@@ -20,6 +20,7 @@ POKEMON_HOME_PACKAGE = "jp.pokemon.pokemonhome"
 KNOWN_APP_ROM_NAMES = {
     POKEMON_HOME_PACKAGE: "pokemon_home",
 }
+_MENU_LIFETIME_REFS: list[object] = []
 CANDIDATE_RE = re.compile(
     r"(unity|bundle|assetbundle|\.unity3d|\.aba$|\.abap$|Models|pokemons|pm[0-9]{4}|mitake|cache|catalog|addressable|dependencies)",
     re.IGNORECASE,
@@ -46,6 +47,7 @@ def _menu_named(menubar, title: str):
     for action in menubar.actions():
         menu = action.menu()
         if menu is not None and action.text().replace("&", "") == title:
+            _MENU_LIFETIME_REFS.extend((action, menu))
             return menu
     return None
 
@@ -54,6 +56,7 @@ def _submenu_named(menu, title: str):
     for action in menu.actions():
         sub = action.menu()
         if sub is not None and action.text().replace("&", "") == title:
+            _MENU_LIFETIME_REFS.extend((action, sub))
             return sub
     return None
 
@@ -403,8 +406,14 @@ def install_mobile_device_toolkit(window) -> None:
     from PySide6.QtGui import QAction
 
     menubar = window.menuBar()
-    menu = _menu_named(menubar, "Device Toolkit") or menubar.addMenu("Device Toolkit")
-    mobile_menu = _submenu_named(menu, "Mobile") or menu.addMenu("Mobile")
+    menu = _menu_named(menubar, "Device Toolkit")
+    if menu is None:
+        menu = menubar.addMenu("Device Toolkit")
+        _MENU_LIFETIME_REFS.extend((menu.menuAction(), menu))
+    mobile_menu = _submenu_named(menu, "Mobile")
+    if mobile_menu is None:
+        mobile_menu = menu.addMenu("Mobile")
+        _MENU_LIFETIME_REFS.extend((mobile_menu.menuAction(), mobile_menu))
 
     for action in list(mobile_menu.actions()):
         if action.text().replace("&", "") in {
@@ -423,4 +432,3 @@ def install_mobile_device_toolkit(window) -> None:
             if action.text().replace("&", "") == "Extract App ROM":
                 toolbar.removeAction(action)
                 break
-

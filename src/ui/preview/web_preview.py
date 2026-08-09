@@ -365,6 +365,22 @@ class WebGlbPreviewWidget(QWidget):
         png = self._grab_widget_png()
         return png
 
+    def camera_state(self) -> tuple[float, float, float]:
+        """Return the live viewport yaw, pitch, and zoom without changing them."""
+        raw = self._run_javascript_sync(
+            "window.raeGlbPreview.getCameraState()",
+            timeout_ms=3000,
+        )
+        try:
+            state = json.loads(raw) if isinstance(raw, str) else {}
+            return (
+                float(state.get("yaw", 35.0)),
+                float(state.get("pitch", 28.0)),
+                float(state.get("zoomFactor", 1.0)),
+            )
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return 35.0, 28.0, 1.0
+
 
 def _js_string(value: str) -> str:
     return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"

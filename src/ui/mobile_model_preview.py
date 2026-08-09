@@ -9,11 +9,19 @@ from ..platforms.mobile.model_module import MobileModelModule, MobilePreviewWork
 from ..platforms.mobile.model_module.preview import build_mobile_asset_preview
 from ..platforms.mobile.model_module.viewport import default_output_dir, finish_preview, show_preview_in_viewport
 
+_MENU_LIFETIME_REFS: list[object] = []
+
 
 def install_mobile_model_preview_tools(window) -> None:
     menubar = window.menuBar()
-    device_menu = _menu_named(menubar, "Device Toolkit") or menubar.addMenu("Device Toolkit")
-    mobile_menu = _submenu_named(device_menu, "Mobile") or device_menu.addMenu("Mobile")
+    device_menu = _menu_named(menubar, "Device Toolkit")
+    if device_menu is None:
+        device_menu = menubar.addMenu("Device Toolkit")
+        _MENU_LIFETIME_REFS.extend((device_menu.menuAction(), device_menu))
+    mobile_menu = _submenu_named(device_menu, "Mobile")
+    if mobile_menu is None:
+        mobile_menu = device_menu.addMenu("Mobile")
+        _MENU_LIFETIME_REFS.extend((mobile_menu.menuAction(), mobile_menu))
 
     for action in list(mobile_menu.actions()):
         if action.text().replace("&", "") == "Preview Selected Mobile Model":
@@ -57,6 +65,7 @@ def _menu_named(menubar, title: str):
     for action in menubar.actions():
         menu = action.menu()
         if menu is not None and action.text().replace("&", "") == title:
+            _MENU_LIFETIME_REFS.extend((action, menu))
             return menu
     return None
 
@@ -65,6 +74,7 @@ def _submenu_named(menu, title: str):
     for action in menu.actions():
         sub = action.menu()
         if sub is not None and action.text().replace("&", "") == title:
+            _MENU_LIFETIME_REFS.extend((action, sub))
             return sub
     return None
 

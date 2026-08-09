@@ -61,8 +61,7 @@ function resolvePreviewBlendMode(mat) {
   const additive = renderClass === 'additive';
   const role = materialRoleForMaterial(mat);
   const pica = pol.pica || (mat.userData.gltfMaterial?.extras?.rae?.pica || null);
-  const matName = String(mat.userData.gltfMaterial?.name || mat.name || '').toLowerCase();
-  const vertexAlphaBlend = matName.includes('sea_iro') && !!(
+  const vertexAlphaBlend = !!(
     pica?.alphaBlendEnabled
     && pica.sourceRgbFactor === 'source_alpha'
     && pica.destinationRgbFactor === 'one_minus_source_alpha'
@@ -181,6 +180,16 @@ function applyPreviewBlendMode(mat, blend) {
   const pica = pol.pica;
   if (pica && pica.authoritative !== false) {
     mat.depthWrite = !!pica.depthWriteEnabled;
+    mat.depthTest = pica.depthTestEnabled !== false;
+    if (pica.faceCulling === 'front_face') {
+      // Toon-outline shells are authored with their front faces culled. Drawing
+      // both sides makes the shell cover the actual LBX part in the viewport.
+      mat.side = THREE.BackSide;
+    } else if (pica.faceCulling === 'back_face') {
+      mat.side = THREE.FrontSide;
+    } else if (pica.faceCulling === 'never') {
+      mat.side = THREE.DoubleSide;
+    }
     const matName = String(src?.name || mat.name || '').toLowerCase();
     const skipAlphaTest = matName.includes('sea_iro');
     if (pica.alphaTestEnabled && !skipAlphaTest) {
@@ -639,6 +648,8 @@ export function applyRaeMaterialPolicy(root) {
       const blend = resolvePreviewBlendMode(mat);
       const matName = String(mat.userData.gltfMaterial?.name || mat.name || '').toLowerCase();
       let order = renderClass === 'uniform_decal' ? 0 : (blend.mode === 'blend' || blend.mode === 'additive') ? 2 : 1;
+      const picaLayer = Number(mat.userData.raePolicy?.pica?.renderLayer) || 0;
+      order += picaLayer * 4;
       if (matName.includes('sea_iro')) order = mat.userData?.raeOuterWaterBase ? 0 : 1;
       if (role === 'eye_sclera') order = 2;
       if (role === 'eye_iris') order = 3;

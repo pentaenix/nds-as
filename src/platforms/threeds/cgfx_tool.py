@@ -36,6 +36,27 @@ using SPICA.Formats.Generic.COLLADA;
 using SixLabors.ImageSharp;
 using System.Text.Json;
 
+static object[] DescribeMaterials(H3D scene) {
+    if (scene.Models.Count == 0) return Array.Empty<object>();
+    return scene.Models[0].Materials.Select(material => new {
+        name = material.Name,
+        texture = material.Texture0Name,
+        renderingPreset = material.RenderingPreset.ToString(),
+        renderLayer = material.MaterialParams.RenderLayer,
+        faceCulling = material.MaterialParams.FaceCulling.ToString(),
+        alphaTestEnabled = material.MaterialParams.AlphaTest.Enabled,
+        alphaTestFunction = material.MaterialParams.AlphaTest.Function.ToString(),
+        alphaTestReference = material.MaterialParams.AlphaTest.Reference,
+        colorSourceFactor = material.MaterialParams.BlendFunction.ColorSrcFunc.ToString(),
+        colorDestinationFactor = material.MaterialParams.BlendFunction.ColorDstFunc.ToString(),
+        alphaSourceFactor = material.MaterialParams.BlendFunction.AlphaSrcFunc.ToString(),
+        alphaDestinationFactor = material.MaterialParams.BlendFunction.AlphaDstFunc.ToString(),
+        depthTestEnabled = material.MaterialParams.DepthColorMask.Enabled,
+        depthWriteEnabled = material.MaterialParams.DepthColorMask.DepthWrite,
+        depthBufferWrite = material.MaterialParams.DepthBufferWrite
+    }).Cast<object>().ToArray();
+}
+
 if (args.Length < 2) {
     Console.Error.WriteLine("usage: Rae.CgfxBridge inspect INPUT | export OUTPUT.dae INPUT...");
     return 2;
@@ -48,7 +69,8 @@ try {
             models = scene.Models.Select(x => x.Name).ToArray(),
             textures = scene.Textures.Select(x => x.Name).ToArray(),
             skeletalAnimations = scene.SkeletalAnimations.Select(x => x.Name).ToArray(),
-            materialAnimations = scene.MaterialAnimations.Select(x => x.Name).ToArray()
+            materialAnimations = scene.MaterialAnimations.Select(x => x.Name).ToArray(),
+            materials = DescribeMaterials(scene)
         }));
         return 0;
     }
@@ -68,7 +90,8 @@ try {
         model = merged.Models[0].Name,
         textures = merged.Textures.Count,
         skeletalAnimations = merged.SkeletalAnimations.Count,
-        selectedAnimation = animationIndex >= 0 ? merged.SkeletalAnimations[0].Name : null
+        selectedAnimation = animationIndex >= 0 ? merged.SkeletalAnimations[0].Name : null,
+        materials = DescribeMaterials(merged)
     }));
     return 0;
 } catch (Exception ex) {
@@ -99,7 +122,7 @@ def ensure_cgfx_bridge(progress: Callable[[str], None] | None = None) -> Path:
     root = project_root() / "exports" / ".tooling" / "cgfx_bridge"
     spica = root / "spica"
     bridge = root / "bridge"
-    output_dir = root / "bin-v2"
+    output_dir = root / "bin-v3"
     output = output_dir / "Rae.CgfxBridge.dll"
     if output.is_file():
         return output

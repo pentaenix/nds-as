@@ -182,6 +182,8 @@ class RomLoaderMixin:
         self.session_path = None
         self.rom_game_code = ""
         self.rom_title = ""
+        if hasattr(self, "_sync_platform_toolkit_ui"):
+            self._sync_platform_toolkit_ui()
         self.easyfind_path = None
         self._selected_asset_id = None
         self._selected_btx0_texture_name = None
@@ -226,6 +228,8 @@ class RomLoaderMixin:
         self.assets = expand_btx0_texture_slots(assets)
         self.assets_by_id = {a.asset_id: a for a in self.assets}
         self._load_profile_summary()
+        if hasattr(self, "_sync_platform_toolkit_ui"):
+            self._sync_platform_toolkit_ui()
         self._focus_terminal(banner=f"ROM scan complete: {len(assets):,} asset(s) found. Starting texture dictionary index before you preview models…")
         self._warm_texture_library_async()
         self._rebuild_asset_filter_indexes()
