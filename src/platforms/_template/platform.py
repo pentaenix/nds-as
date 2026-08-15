@@ -1,4 +1,4 @@
-"""{{platform_label}} — register in core/registry.all_platforms()."""
+"""{{platform_label}} platform registration."""
 from __future__ import annotations
 
 from ...core.registry import Platform

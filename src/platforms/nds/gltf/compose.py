@@ -1,4 +1,4 @@
-"""Dependency-free GLB scene composition for the NDS island."""
+"""Dependency-free GLB scene composition for Nintendo DS assets."""
 from __future__ import annotations
 
 import copy

@@ -1,4 +1,4 @@
-"""{{platform_label}} inspector UI hooks — register tabs/commands for this island only."""
+"""{{platform_label}} inspector hooks for platform-specific tabs and commands."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

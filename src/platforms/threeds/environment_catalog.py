@@ -1,6 +1,6 @@
-"""Semantic Ultra Sun/Ultra Moon environments used by Pokemon Attend.
+"""Semantic Ultra Sun and Ultra Moon environment catalog.
 
-This catalog belongs to the 3DS platform island.  It is intentionally usable
+This catalog belongs to the Nintendo 3DS platform module and is usable
 from both the UI export module and headless callers so complete environment
 packages are reproducible without clicking through individual GARC slots.
 """

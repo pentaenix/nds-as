@@ -25,7 +25,7 @@ Each JSON file should include `"platform": "nds"` (or `gba`, `gbc`, `gb`, `3ds`)
 3. Use confidence values honestly (`verified-design-rule`, `community-known`, `heuristic`, `conflict`).
 4. Open a pull request — no personal override folders; everyone shares the same mapping set.
 
-### TODO: in-app mapping editor
+### Mapping editor roadmap
 
 We plan a UI workflow to draft mappings interactively (browse a ROM, label archives, export JSON) so contributors do not have to hand-edit large JSON files. Until then, copy an existing seed file as a template.
 

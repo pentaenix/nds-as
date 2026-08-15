@@ -1,4 +1,4 @@
-"""Enforce platform isolation contract (see docs/agents/platform-isolation-contract.md)."""
+"""Enforce the rules documented in docs/development/platform-isolation.md."""
 from __future__ import annotations
 
 import ast
@@ -139,7 +139,7 @@ def test_no_forbidden_cross_platform_imports():
         raise AssertionError(
             "Cross-platform imports detected.\n"
             f"{joined}\n\n"
-            "See docs/agents/platform-isolation-contract.md"
+            "See docs/development/platform-isolation.md"
         )
 
 
@@ -155,7 +155,7 @@ def test_no_platforms_shared_package():
     shared = project_root() / "src" / "platforms" / "shared"
     assert not shared.exists(), (
         "platforms/shared/ is forbidden. Duplicate helpers per island instead. "
-        "See docs/agents/platform-isolation-contract.md"
+        "See docs/development/platform-isolation.md"
     )
 
 
@@ -163,7 +163,7 @@ def test_no_top_level_glb_policy_package():
     glb_policy = project_root() / "src" / "glb_policy"
     assert not glb_policy.exists(), (
         "src/glb_policy/ is forbidden. Each platform owns platforms/<id>/gltf/. "
-        "See docs/agents/platform-isolation-contract.md"
+        "See docs/development/platform-isolation.md"
     )
 
 
@@ -245,7 +245,7 @@ def test_ui_platform_import_debt_not_grown():
                 f"{rel_file}: new platform import(s) {sorted(extra)}. "
                 "UI must use PlatformDispatch. Update KNOWN_UI_PLATFORM_IMPORT_DEBT "
                 "only when migrating debt, not when adding features. "
-                "See docs/agents/platform-isolation-contract.md"
+                "See docs/development/platform-isolation.md"
             )
 
 

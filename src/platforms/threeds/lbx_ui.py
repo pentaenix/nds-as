@@ -1,4 +1,4 @@
-"""Qt actions for LBX Models Resource exports, owned by the 3DS island."""
+"""Qt actions for LBX batch exports."""
 from __future__ import annotations
 
 from pathlib import Path

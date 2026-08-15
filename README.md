@@ -1,117 +1,125 @@
-# RAE — Retro Asset Extractor
+# RAE
 
-**RAE** (Retro Asset Extractor) is a local desktop app and CLI for exploring **your own legally dumped ROMs** and exporting readable assets. Nintendo DS is fully supported today; Game Boy, Game Boy Color, Game Boy Advance, and Nintendo 3DS are scaffolded for future work.
+RAE (Retro Asset Extractor) is a local desktop application and command-line
+tool for inspecting game archives and converting supported assets into standard
+formats. It is intended for research, preservation, and development workflows
+using game data that you have obtained legally.
 
-RAE does **not** download ROMs, bypass copy protection, or ship extracted copyrighted assets.
+RAE does not download game images, include encryption keys, or distribute
+extracted assets.
 
-## Platform status
+## Features
 
-| Platform | Folder | ROM extensions | Status |
-|----------|--------|----------------|--------|
-| Nintendo DS | `src/platforms/nds/` | `.nds` | **Active** — scan, preview, export |
-| Game Boy Advance | `src/platforms/gba/` | `.gba` | Planned |
-| Game Boy Color | `src/platforms/gbc/` | `.gbc` | Planned |
-| Game Boy | `src/platforms/gb/` | `.gb` | Planned |
-| Nintendo 3DS | `src/platforms/threeds/` | `.3ds`, `.cci`, `.cxi` | Planned |
+- Browse files and archives without unpacking an entire image first.
+- Identify models, textures, animations, maps, sprites, and audio by format.
+- Preview supported 2D and 3D assets in the desktop application.
+- Resolve textures stored separately from their models.
+- Export images as PNG and 3D scenes as self-contained GLB or COLLADA packages.
+- Preserve available material, hierarchy, animation, and placement metadata.
+- Save scan results and reuse conversion caches between sessions.
 
-## Project layout
+Support is format- and game-dependent. The active platform modules are Nintendo
+DS, Nintendo 3DS, Nintendo Switch, Windows CD/ISO, and mobile application
+archives. Game Boy, Game Boy Color, and Game Boy Advance modules are currently
+placeholders.
 
-```text
-src/
-  platforms/
-    nds/          DS ROM scan, Nitro decoders, audio, model export
-    mobile/       HOME / .rom mobile app support
-    home/         Pokémon HOME implementation (used via mobile)
-    android/      Android device source helpers
-    gba/ gbc/ gb/ threeds/   stubs + README (contributions welcome)
-  core/           mappings, platform registry, modules dispatch
-  ui/             desktop app (Qt)
-  cli/            command-line tools
-mappings/
-  nds/            community DS game mappings (PRs welcome)
-  gba/ gbc/ gb/ 3ds/   reserved for future mappings
-roms/             your ROM dumps (git-ignored)
-exports/          extracted output (git-ignored)
-saves/            RAE session files (git-ignored)
-```
+## Installation
 
-## Community mappings
+RAE requires Python 3.10 or newer.
 
-Mappings are **shared community data only** — path labels, categories, search presets, and relationship hints. They live under `mappings/<platform>/` and are loaded automatically. There are no personal override folders; improve mappings via pull request so everyone benefits.
-
-See `mappings/README.md` for contribution guidelines.
-
-### TODO: mapping authoring UI
-
-A planned next step is an in-app **mapping editor** so contributors can draft archive labels and search presets visually, then export JSON for a PR. CI will validate mapping files against `mappings/schema.json`.
-
-## Install
+On macOS or Linux:
 
 ```bash
 ./rae install
 ./rae run
 ```
 
-Windows: `rae.bat install` then `rae.bat run`
+On Windows:
 
-The legacy `./dsas` launcher still works but forwards to `./rae`.
+```bat
+rae.bat install
+rae.bat run
+```
 
-## Nintendo DS workflow (today)
+The installer creates a virtual environment and installs the Python
+dependencies. Some formats require optional external tools; RAE reports the
+missing dependency when a related feature is used.
 
-1. Put your `.nds` dump in `roms/`.
-2. Run `./rae run` and open the ROM.
-3. Browse mapped folders, Raw Folders, or filter (`BMD0`, `BTX0`, `cat:models`, …).
-4. Preview assets; for models use **Set Textures** for verified material→texture binding.
-5. **Export Selected…** for raw, readable PNG, GLB (via apicula), Pokemon Resort `.tile`, or audio bundles.
-6. **Save Session** (`.raesession`) to continue without rescanning.
+## Getting started
 
-## CLI examples
+1. Place a legally obtained game image in `roms/`, or open it from another
+   local directory.
+2. Start RAE with `./rae run`.
+3. Open the image and browse the detected folders or filter the asset list by
+   format.
+4. Select an asset to inspect its metadata and available previews.
+5. Use **Export Selected** to choose a supported output format.
+
+Generated files are written beneath `exports/` by default. ROMs, exports,
+caches, and saved sessions are excluded from version control.
+
+## Command line
+
+The CLI provides the same basic scan and conversion pipeline for automated
+workflows:
 
 ```bash
 ./rae info roms/game.nds
 ./rae list roms/game.nds --query BMD0
-./rae decode roms/game.nds --out exports/readable --query BTX0
+./rae decode roms/game.nds --out exports/textures --query BTX0
 ./rae convert roms/game.nds --out exports/models --query BMD0 --format glb
 ./rae audio roms/game.nds --out exports/audio
 ./rae mappings
 ```
 
-## Optional apicula (DS models)
+Run `./rae --help` or `./rae <command> --help` for the current options.
 
-Vendored Rust tool under `tools/apicula/`. `./rae install` builds it when Cargo is available.
+## Optional model conversion tools
 
-RAE looks for apicula on `PATH`, `RAE_APICULA` (legacy: `DSAS_APICULA`, `DSM_APICULA`), and `tools/apicula/target/release/apicula`.
+Nintendo DS model conversion uses the vendored `apicula` source under
+`tools/apicula/`. `./rae install` builds it when a Rust toolchain is available.
+RAE also checks `PATH`, `RAE_APICULA`, and the vendored release path.
 
-After apicula converts a model to GLB, RAE runs a **NDS-owned** material policy pass (`platforms/nds/gltf/apply.py`) that writes `extras.rae.renderClass` on each material. See `docs/GLB_RENDER_POLICY.md` and `docs/agents/platform-isolation-contract.md`.
+Three-dimensional previews use Qt WebEngine and three.js. Install the PySide6
+Add-ons package if WebEngine is unavailable. Assimp and platform-specific
+decoders are used by selected conversion pipelines.
 
-The Nintendo DS export menu also includes **Tile: Pokemon Resort (.tile)** for
-models. It packages the self-contained GLB and any detected material texture
-frames for direct import into the Pokemon Resort Map Editor. See
-[`docs/pokemon_resort_tile_bundle.md`](docs/pokemon_resort_tile_bundle.md).
+## Repository layout
 
-3D preview uses **Qt WebEngine + three.js**. Each platform uses its own `platforms/<id>/preview/material-policy.js` (loaded via `?policy=` in the viewer URL). Install PySide6 Add-ons if WebEngine is missing. Set `RAE_LEGACY_GL_PREVIEW=1` to fall back to the old pyqtgraph path.
+```text
+src/
+  core/         shared data types, registry, and platform dispatch
+  platforms/    format scanners, decoders, preview policy, and exporters
+  ui/           Qt desktop application
+  cli/          command-line interface
+mappings/       game and platform metadata
+docs/           architecture and format notes
+scripts/        maintenance and batch utilities
+tools/          optional conversion tools
+roms/           local game images; ignored by Git
+exports/        generated files; ignored by Git
+```
 
-## Agents and contributors
-
-ROM platforms are **isolated islands** under `src/platforms/<id>/` — each owns GLB policy and viewport policy.
-
-- **Hard contract:** [`docs/agents/platform-isolation-contract.md`](docs/agents/platform-isolation-contract.md)
-- **Agents:** [`AGENTS.md`](AGENTS.md) and [`docs/agents/platform-islands.md`](docs/agents/platform-islands.md)
-- **Cursor rules (this repo):** `.cursor/rules/rae-*.mdc` at the monorepo root
-- **Skill:** `.cursor/skills/rae-platform-islands/`
-- **New platform:** `python scripts/scaffold_platform.py <id> "<Label>" --ext .rom [--active]`
-- **CI guards:** `pytest tests/test_platform_import_isolation.py tests/test_platform_isolation_contract.py`
-- **Day-to-day:** `pytest -m <your-platform-id>` only
+Platform-specific parsing and rendering remain inside
+`src/platforms/<platform>/`. See the [development documentation](docs/README.md)
+before changing a platform module.
 
 ## Development
 
+Install the project, then run the relevant platform tests and the import
+boundary checks:
+
 ```bash
-PYTHONPATH=src:tests python -m unittest discover -s tests -p 'test_*.py' -q
+.venv/bin/python -m pytest -m nds
+.venv/bin/python -m pytest \
+  tests/test_platform_import_isolation.py \
+  tests/test_platform_isolation_contract.py
 ```
 
-Python package name: `rae`. The `dsm` import path remains as a deprecated alias for compatibility.
-# Pokémon Attend environment export (3DS)
+The Python package is named `rae`. The older `dsm` import path remains as a
+deprecated compatibility alias.
 
-The 3DS world export module can emit one lossless composed `.glbz` per semantic Alola Attend scene plus `alola_attend_catalog.json`. The headless entry point is `src.platforms.threeds.export_module.environment.export_attend_environment_catalog`; the UI exposes the same profile as **GLBZ Pokemon Attend environment catalog**, and complete-map entries expose **GLBZ complete map**.
+## Legal notice
 
-Each package embeds `extras.rae.environmentScene` alongside `picaTev` and `mapMaterialMotion`: source slots and centre/outer roles, composition priority, a surface anchor, a 30 fps source clock, concurrent ambient clips, discrete visibility, and named time/weather states. This code is isolated to `src/platforms/threeds`; Nintendo DS previews and exports do not use it.
+Use RAE only with files you are authorized to inspect. Contributors should not
+commit ROMs, keys, decrypted commercial data, or extracted copyrighted assets.

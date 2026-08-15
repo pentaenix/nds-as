@@ -1,4 +1,4 @@
-"""NDS texture assigner — GLB-aware path resolution (island-owned)."""
+"""Nintendo DS texture assignment with GLB-aware path resolution."""
 
 from __future__ import annotations
 

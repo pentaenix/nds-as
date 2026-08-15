@@ -432,7 +432,7 @@ one-tile upper edge for Resort ramp pairing.
 ## Headless NDS tile export API
 
 The tile extractor is also available as a Qt-independent JSON request API for
-automation and agent tools. Discovery returns stable candidate IDs plus the
+automation and editor integrations. Discovery returns stable candidate IDs plus the
 exact source bounds, layered material stack, footprint, source occurrence, and
 grounding height. Export accepts those IDs and writes the same portable `.tile`
 bundles as the modal, including embedded GLB geometry, material motion, sparse

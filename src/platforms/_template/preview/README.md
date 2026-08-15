@@ -1,19 +1,9 @@
-# {{platform_label}} viewport material policy
+# Preview material policy
 
-This folder is **platform-owned** (Ring 2). Changes here affect only
-`{{platform_id}}` preview — not NDS, 3DS, or any other island.
+`material-policy.js` contains rendering behavior specific to
+`{{platform_id}}`. The shared viewer supplies camera, animation, and loading
+infrastructure; alpha classification, culling, texture transforms, and other
+format-specific rules belong here.
 
-## Files
-
-- `material-policy.js` — WebEngine three.js material/texture policy for this console.
-
-## Wiring
-
-`model_module` must pass this policy URL when loading the shared viewer shell
-(`ui/preview/static/glb_viewer.html`). Do **not** edit the shared
-`rae-material-policy.js` for {{platform_id}}-specific behavior.
-
-## Rule
-
-When unsure, **duplicate** from another platform’s `preview/material-policy.js`
-into this folder — never share one policy file across consoles.
+Keep this policy self-contained. A change in one platform's renderer should not
+change the appearance of assets from another platform.

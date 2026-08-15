@@ -1,4 +1,4 @@
-"""Headless Pokemon Attend environment export profile for the 3DS island."""
+"""Headless environment export profile for Nintendo 3DS scenes."""
 from __future__ import annotations
 
 import hashlib

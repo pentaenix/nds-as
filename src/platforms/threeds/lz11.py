@@ -1,7 +1,7 @@
 """LZ11 decompression for 3DS GARC sub-files.
 
-Deliberately duplicated inside the 3DS island (platform isolation forbids
-importing the NDS implementation).
+Maintained inside the 3DS module because platform isolation prevents importing
+the Nintendo DS implementation.
 """
 from __future__ import annotations
 

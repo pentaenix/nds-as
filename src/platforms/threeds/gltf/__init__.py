@@ -1,4 +1,4 @@
-"""3DS-owned glTF/GLB helpers (duplicated per island — no shared top-level glb_policy)."""
+"""Nintendo 3DS glTF and GLB helpers."""
 from .apply import apply_glb_policy, apply_glb_policy as apply_platform_glb_policy
 from .classify import RenderClass, classify_material
 

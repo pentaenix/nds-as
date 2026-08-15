@@ -1,4 +1,4 @@
-"""NDS preview GLB patcher — island-owned; used via PlatformDispatch."""
+"""Nintendo DS preview GLB patcher exposed through PlatformDispatch."""
 from __future__ import annotations
 
 from pathlib import Path

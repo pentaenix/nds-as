@@ -2,8 +2,8 @@
 
 The `/a/0/8/1` archive stores arena centres (mostly ``btl_G_*``) separately
 from their much wider surroundings (mostly ``btl_N_*``).  The game combines
-them at the same origin.  Keep this catalog inside the 3DS island: these slot
-relationships and naming conventions are Game Freak/USUM-specific.
+them at the same origin. This catalog stays inside the 3DS module because the
+slot relationships and naming conventions are specific to these games.
 """
 from __future__ import annotations
 
@@ -105,4 +105,3 @@ def apply_composition(descriptor: dict, composition: WorldComposition) -> dict:
         "composition_slots": list(composition.slots),
         "composition_outer_slot": composition.outer_slot,
     }
-

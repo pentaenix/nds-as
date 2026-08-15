@@ -1,4 +1,4 @@
-"""NDS / Nitro asset magic → platform id (owned by NDS island)."""
+"""Nintendo DS and Nitro asset signatures."""
 from __future__ import annotations
 
 ASSET_MAGICS: dict[str, str] = {

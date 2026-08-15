@@ -1,4 +1,4 @@
-"""ROM-platform feature flags — keep NDS-only tools out of other islands."""
+"""Feature flags used to keep platform-specific tools scoped correctly."""
 from __future__ import annotations
 
 EASYFIND_PLATFORM_IDS: frozenset[str] = frozenset({"nds"})

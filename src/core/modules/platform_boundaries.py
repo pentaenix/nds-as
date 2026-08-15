@@ -1,11 +1,8 @@
-"""Import-boundary rules for per-platform isolation.
+"""Import boundaries for platform-specific implementations.
 
-Each ROM platform is an *island*: scan, decode, preview, export, and format hacks live
-under ``platforms/<id>/``.  Shared code is limited to contracts (this package), the
-ROM registry, and ``core/`` contracts. GLB I/O and material policy live under
-``platforms/<id>/gltf/`` (duplicated per island).
-
-Duplicating helpers per platform is preferred over cross-platform imports.
+Scanning, decoding, preview behavior, export, GLB I/O, and material policy live
+under ``platforms/<id>/``. Shared code is limited to platform-neutral contracts,
+the registry, and dispatch.
 """
 from __future__ import annotations
 
@@ -51,7 +48,7 @@ class ImportRule:
     reason: str
 
 
-# Hard bans: platform A must never import platform B.
+# Default cross-platform restrictions.
 FORBIDDEN_CROSS_PLATFORM: tuple[ImportRule, ...] = (
     ImportRule("platforms/nds", "platforms/mobile", "NDS must not depend on mobile/HOME"),
     ImportRule("platforms/nds", "platforms/home", "NDS must not depend on HOME"),
@@ -68,7 +65,7 @@ FORBIDDEN_CROSS_PLATFORM: tuple[ImportRule, ...] = (
     ImportRule("platforms/home", "platforms/nds", "HOME must not depend on NDS"),
 )
 
-# Explicit allow-list for intentional sub-layers (mobile → home/unity only).
+# Explicit exceptions for the related mobile application sub-layers.
 ALLOWED_CROSS_PLATFORM: tuple[ImportRule, ...] = (
     ImportRule("platforms/mobile", "platforms/home", "HOME is an internal mobile sub-layer"),
     ImportRule("platforms/mobile", "platforms/unity", "Unity bundles are mobile infrastructure"),

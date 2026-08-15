@@ -1,7 +1,7 @@
 """Nintendo Switch container parsing: NSP/XCI -> NCA -> RomFS.
 
-Self-contained inside the Switch island. Requires the caller-supplied
-``prod.keys`` (see keys.py); RAE ships no Nintendo key material.
+Self-contained inside the Nintendo Switch platform module. Requires the
+caller-supplied ``prod.keys`` (see keys.py); RAE ships no Nintendo key material.
 
 Crypto used:
   * NCA header: AES-128-XTS, 0x200 sectors, Nintendo (big-endian) tweak.

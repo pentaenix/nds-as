@@ -1,4 +1,4 @@
-"""Windows CD/ISO — register in core/registry.all_platforms()."""
+"""Windows CD/ISO platform registration."""
 from __future__ import annotations
 
 from ...core.registry import Platform
@@ -10,5 +10,5 @@ WindowsIso_PLATFORM = Platform(
     label="Windows CD/ISO",
     rom_extensions=(".iso",),
     status="active",
-    scan_rom_path=scan_windows_iso_rom_path if "active" == "active" else None,
+    scan_rom_path=scan_windows_iso_rom_path,
 )

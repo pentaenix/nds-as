@@ -1,4 +1,4 @@
-"""Nintendo Switch — register in core/registry.all_platforms()."""
+"""Nintendo Switch platform registration."""
 from __future__ import annotations
 
 from ...core.registry import Platform

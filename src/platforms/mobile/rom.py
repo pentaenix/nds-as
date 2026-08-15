@@ -350,7 +350,7 @@ def export_mobile_asset(asset: Asset, out: Path) -> Path:
 
 
 def export_mobile_readable(asset: Asset, out: Path) -> list[Path]:
-    """Best-effort readable export for mobile assets (extend per magic in this island)."""
+    """Best-effort readable export for recognized mobile asset signatures."""
     out_dir = Path(out)
     out_dir.mkdir(parents=True, exist_ok=True)
     return [export_mobile_asset(asset, out_dir)]

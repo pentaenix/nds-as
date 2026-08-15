@@ -67,7 +67,7 @@ class TileExportCandidate:
 
 
 def tile_export_api_schema() -> dict[str, Any]:
-    """Return the small serializable contract intended for agent tooling."""
+    """Return the compact serializable contract used by automation clients."""
     return {
         "apiVersion": API_VERSION,
         "platform": "nds",

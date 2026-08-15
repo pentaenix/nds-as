@@ -1,6 +1,6 @@
 """{{platform_label}} GLB post-process — platform-owned material policy.
 
-Implement classification in ``platforms/{{platform_id}}/gltf/`` (duplicated per island).
+Implement classification in ``platforms/{{platform_id}}/gltf/``.
 Do **not** import a shared top-level ``glb_policy`` package — it does not exist.
 """
 from __future__ import annotations

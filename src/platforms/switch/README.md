@@ -1,4 +1,4 @@
-# Nintendo Switch platform island
+# Nintendo Switch platform
 
 Reads retail **NSP/XCI** dumps: decrypts NCAs, walks RomFS, unpacks the
 Trinity ``data.trpfd`` / ``data.trpfs`` archive, and exports models as GLB.
@@ -19,7 +19,7 @@ models/textures inside TRPAKs cannot be decoded (metadata-only TRMDL reads work)
 |-------|-------|
 | NCA decrypt + RomFS | Done |
 | TRPFS / TRPFD / TRPAK unpack | Done |
-| PokeDocs hash cache (lazy download) | Done — ``roms/sv_hashes_inside_trpak.txt`` |
+| Name-hash cache (loaded on demand) | Done — ``roms/sv_hashes_inside_trpak.txt`` |
 | Scan: Pokémon models/textures/anims, maps, characters, icons | Done |
 | TRMDL + TRMSH + TRMBF + TRSKL → GLB | Done (needs Oodle at runtime) |
 | BNTX texture preview | Planned |
@@ -34,7 +34,7 @@ Typical first scan after hash cache download:
 - ~51k ``.tranm`` / ``.gfbanm`` animations (Pokémon)
 - 24 loose RomFS files (audio, Trinity headers, movies)
 
-## Island rules
+## Development notes
 
 - No imports from other ``platforms/*``.
 - UI uses ``PlatformDispatch`` only.

@@ -1,8 +1,8 @@
-# GLB render policy (RAE) — **Nintendo DS (nds) island**
+# Nintendo DS GLB rendering policy
 
 > **Isolation:** Material classification for DS belongs in `platforms/nds/gltf/`.
 > Each console duplicates its own `gltf/` tree — there is no shared top-level package.
-> See [`docs/agents/platform-isolation-contract.md`](agents/platform-isolation-contract.md).
+> See [`docs/development/platform-isolation.md`](development/platform-isolation.md).
 
 RAE post-processes apicula GLB exports so every consumer can render DS models
 without game-specific name hacks.

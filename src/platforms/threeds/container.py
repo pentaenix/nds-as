@@ -1,6 +1,6 @@
 """Nintendo 3DS container parsing (NCSD / NCCH / RomFS / GARC).
 
-Self-contained inside the 3DS island — no imports from other platforms.
+Self-contained inside the Nintendo 3DS platform module.
 
 Only *decrypted* dumps are supported: RAE never ships or applies AES keys,
 boot9, or seeddb. A ``.cci``/``.3ds`` produced by a legal cartridge dump with

@@ -1,4 +1,4 @@
-"""Merged asset-magic routing table from all platform islands."""
+"""Merged asset-signature routing table for registered platforms."""
 from __future__ import annotations
 
 from functools import lru_cache
@@ -66,4 +66,3 @@ def _windows_iso_magics() -> dict[str, str]:
     from ...platforms.windows_iso.magics import ASSET_MAGICS
 
     return dict(ASSET_MAGICS)
-

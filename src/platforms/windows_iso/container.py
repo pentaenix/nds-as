@@ -1,4 +1,4 @@
-"""ISO and InstallShield catalog access for the Windows CD/ISO island.
+"""ISO and InstallShield catalog access for the Windows CD/ISO platform.
 
 Scanning deliberately stops at catalog metadata.  The large cabinet payloads are
 cached on disk so later preview/export code can extract individual files lazily;

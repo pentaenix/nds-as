@@ -9,7 +9,7 @@ eXperience* cartridge dumps (NoCrypto `.cci`).
 ## Pipeline
 
 - `container.py` — NCSD/NCCH headers, RomFS (IVFC level 3) tree, GARC v4/v6 tables.
-- `lz11.py` — LZ11 decompression (duplicated per island rules; no NDS import).
+- `lz11.py` — platform-local LZ11 decompression.
 - `pica.py` — PICA200 command-stream reader + texture decode (swizzled 8×8
   Morton tiles; RGBA8/RGB8/RGBA5551/RGB565/RGBA4/LA8/L8/A8/LA4/L4/A4/HILO8/ETC1/ETC1A4).
 - `gf.py` — Game Freak GFModel/GFTexture parsing (bones, materials with texture
@@ -74,7 +74,7 @@ Complete export combines geometry at the shared origin, resolves textures for
 all layers, and carries every layer's GFMotion material tracks. The 3DS preview
 plays the chosen primary ambient clip plus non-conflicting ambient overlays, so
 independent coast and ocean wave motion remain active together. The mapping is
-owned by `world_composition.py`; it is not shared with the Nintendo DS island.
+  owned by `world_composition.py`; it is not shared with the Nintendo DS module.
 
 World GLBs preserve the PICA fragment shader's six TEV stages and up to three
 independently animated texture units on one surface. Secondary vertex UV sets,

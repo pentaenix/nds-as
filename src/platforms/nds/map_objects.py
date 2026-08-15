@@ -1,6 +1,6 @@
 """Pokémon Gen 5 map-object discovery and preview composition.
 
-This is intentionally an NDS platform island.  It reads the map/zone/building
+This module is specific to Nintendo DS data. It reads the map, zone, and building
 archives from a Gen 5 ROM, but does not participate in the normal model renderer.
 """
 from __future__ import annotations

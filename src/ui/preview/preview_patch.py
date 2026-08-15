@@ -7,7 +7,7 @@ from ...core.modules.dispatch import PlatformDispatch
 
 
 class PreviewGlbPatcher:
-    """UI-facing wrapper; NDS island patcher runs behind PlatformDispatch."""
+    """UI-facing wrapper for the NDS patcher exposed through PlatformDispatch."""
 
     def build_preview_glb(
         self,
